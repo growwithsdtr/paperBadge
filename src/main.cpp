@@ -12,7 +12,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v1.7";
+constexpr const char* kFirmwareVersion = "v1.8";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -240,6 +240,7 @@ Rect gFontXlButton;
 Rect gFontHugeButton;
 Rect gHomeButton;
 Rect gNextButton;
+Rect gFilterButton;
 Rect gTouchDebugButton;
 Rect gOptionButtons[kMaxOptions];
 bool gSdMounted = false;
@@ -259,6 +260,7 @@ uint8_t gMockStep = 0;
 uint8_t gBottomLeftTapCount = 0;
 uint32_t gLastBottomLeftTapMs = 0;
 bool gTouchDebugEnabled = false;
+bool gInterviewMustMasterOnly = false;
 int32_t gLastTouchDownX = -1;
 int32_t gLastTouchDownY = -1;
 int32_t gLastTouchUpX = -1;
@@ -939,6 +941,9 @@ CoachItemView coachItemAt(size_t index) {
 
 bool itemMatchesScreen(const CoachItemView& item, Screen screen) {
   if (screen == Screen::InterviewPractice) {
+    if (gInterviewMustMasterOnly && !item.mustMaster) {
+      return false;
+    }
     return item.type == CoachItemType::Qa || item.type == CoachItemType::HostileFollowup ||
            item.type == CoachItemType::MetricPrecision;
   }
@@ -995,6 +1000,21 @@ void nextCoachItem() {
   if (gScreen == Screen::MockInterview) {
     gMockStep = (gMockStep + 1) % 5;
   }
+}
+
+void previousCoachItem() {
+  if (gCoachItemCount == 0) {
+    return;
+  }
+  for (size_t offset = 1; offset <= gCoachItemCount; ++offset) {
+    const size_t index = (gCoachIndex + gCoachItemCount - offset) % gCoachItemCount;
+    if (itemMatchesScreen(coachItemAt(index), gScreen)) {
+      gCoachIndex = index;
+      break;
+    }
+  }
+  gCoachStage = 0;
+  gSelectedOption = -1;
 }
 
 float fitScale(uint16_t sourceWidth, uint16_t sourceHeight, int32_t targetWidth, int32_t targetHeight) {
@@ -1397,7 +1417,141 @@ String coachRubricFor(const CoachItemView& item) {
   return rubric;
 }
 
+size_t interviewCharsPerPage() {
+  switch (gSettings.fontSizeMode) {
+    case FontSizeMode::Medium:
+      return 820;
+    case FontSizeMode::XL:
+      return 310;
+    case FontSizeMode::Huge:
+      return 170;
+    case FontSizeMode::Large:
+    default:
+      return 520;
+  }
+}
+
+uint8_t textPageCount(const char* rawText) {
+  const String text = rawText ? String(rawText) : String("");
+  if (text.length() == 0) {
+    return 1;
+  }
+  const size_t charsPerPage = interviewCharsPerPage();
+  return static_cast<uint8_t>((text.length() + charsPerPage - 1) / charsPerPage);
+}
+
+String textPageSlice(const char* rawText, uint8_t pageIndex) {
+  const String text = rawText ? String(rawText) : String("");
+  const size_t charsPerPage = interviewCharsPerPage();
+  size_t start = static_cast<size_t>(pageIndex) * charsPerPage;
+  if (start >= text.length()) {
+    return "";
+  }
+  size_t end = start + charsPerPage;
+  if (end >= text.length()) {
+    return text.substring(start);
+  }
+  size_t breakAt = end;
+  while (breakAt > start + charsPerPage / 2 && text[breakAt] != ' ' && text[breakAt] != '\n') {
+    --breakAt;
+  }
+  if (breakAt <= start + charsPerPage / 2) {
+    breakAt = end;
+  }
+  return text.substring(start, breakAt);
+}
+
+uint8_t interviewStageCount(const CoachItemView& item) {
+  return textPageCount(item.spoken) + 3;
+}
+
+void renderInterviewPracticeScreen() {
+  applyAppRotation();
+  prepareFullRefresh();
+
+  const CoachItemView item = coachItemAt(gCoachIndex);
+  const uint8_t spokenPages = textPageCount(item.spoken);
+  const uint8_t stageCount = interviewStageCount(item);
+  if (gCoachStage >= stageCount) {
+    gCoachStage = stageCount - 1;
+  }
+
+  auto& display = M5.Display;
+  const uint16_t darkGray = display.color565(55, 55, 55);
+  const uint16_t lightGray = display.color565(170, 170, 170);
+
+  display.setTextDatum(textdatum_t::top_left);
+  display.setFont(&fonts::Font4);
+  display.setTextSize(1);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Interview Practice", 28, 26);
+  display.setFont(&fonts::Font2);
+  display.setTextSize(1);
+  display.setTextColor(darkGray, TFT_WHITE);
+  display.drawString(String(item.id) + "  " + item.section, 30, 76);
+  display.drawString(String(gInterviewMustMasterOnly ? "Must-master" : "All cards") + "  " +
+                         (gCoachDeckLoadedFromSd ? "SD" : "Embedded"),
+                     30, 102);
+  display.drawLine(28, 132, display.width() - 28, 132, lightGray);
+
+  applyCoachContentFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  const int32_t lineHeight = coachLineHeight();
+  const int32_t bodyY = 162;
+  const int32_t bodyW = display.width() - 68;
+
+  if (gCoachStage == 0) {
+    display.setTextColor(darkGray, TFT_WHITE);
+    display.drawString(String(item.theme) + (item.mustMaster ? "  *" : ""), 34, bodyY);
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    drawWrappedText(item.title, 34, bodyY + lineHeight + 12, bodyW, lineHeight, coachPromptLineCount());
+    display.setTextColor(darkGray, TFT_WHITE);
+    drawWrappedText(String("Confidence: ") + item.confidence, 34, 650, bodyW, 24, 3);
+  } else if (gCoachStage <= spokenPages) {
+    const uint8_t spokenPage = gCoachStage - 1;
+    display.setTextColor(darkGray, TFT_WHITE);
+    display.drawString(String("Spoken answer ") + (spokenPage + 1) + "/" + spokenPages, 34, bodyY);
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    drawWrappedText(textPageSlice(item.spoken, spokenPage), 34, bodyY + lineHeight + 10, bodyW, lineHeight,
+                    coachPromptLineCount() + 2);
+  } else if (gCoachStage == spokenPages + 1) {
+    display.setTextColor(darkGray, TFT_WHITE);
+    display.drawString("Anchor", 34, bodyY);
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    drawWrappedText(item.anchor, 34, bodyY + lineHeight + 10, bodyW, lineHeight, coachPromptLineCount() + 2);
+  } else {
+    display.setTextColor(darkGray, TFT_WHITE);
+    display.drawString("Watch", 34, bodyY);
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    drawWrappedText(item.watch, 34, bodyY + lineHeight + 10, bodyW, lineHeight, coachPromptLineCount() + 2);
+  }
+
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawLine(28, display.height() - 120, display.width() - 28, display.height() - 120, lightGray);
+  gHomeButton = {26, display.height() - 92, 116, 64};
+  gFilterButton = {158, display.height() - 92, 168, 64};
+  gNextButton = {display.width() - 184, display.height() - 92, 158, 64};
+  drawButton(gHomeButton, "Home");
+  drawButton(gFilterButton, gInterviewMustMasterOnly ? "Must *" : "All");
+  drawButton(gNextButton, "Next Card");
+
+  display.setTextDatum(textdatum_t::top_left);
+  display.setFont(&fonts::Font2);
+  display.setTextSize(1);
+  display.setTextColor(darkGray, TFT_WHITE);
+  display.drawString(String("Page ") + (gCoachStage + 1) + "/" + stageCount, 34, display.height() - 142);
+
+  display.display();
+  Serial.printf("Interview Practice shown: card=%s stage=%u/%u filter=%s source=%s\n", item.id, gCoachStage + 1,
+                stageCount, gInterviewMustMasterOnly ? "must" : "all", gCoachDeckSource.c_str());
+}
+
 void renderCoachScreen() {
+  if (gScreen == Screen::InterviewPractice) {
+    renderInterviewPracticeScreen();
+    return;
+  }
+
   applyAppRotation();
   prepareFullRefresh();
   drawCoachChrome(coachScreenTitle(gScreen));
@@ -1680,6 +1834,44 @@ bool clickedPoint(const m5::touch_detail_t& detail, int32_t& x, int32_t& y) {
   return true;
 }
 
+void handleInterviewPracticeTouch(int32_t tapX, int32_t tapY) {
+  if (gHomeButton.contains(tapX, tapY)) {
+    Serial.println("entering Home");
+    renderHome();
+    return;
+  }
+  if (gFilterButton.contains(tapX, tapY)) {
+    gInterviewMustMasterOnly = !gInterviewMustMasterOnly;
+    startCoachMode(Screen::InterviewPractice);
+    renderCoachScreen();
+    return;
+  }
+  if (gNextButton.contains(tapX, tapY)) {
+    nextCoachItem();
+    renderCoachScreen();
+    return;
+  }
+
+  const CoachItemView item = coachItemAt(gCoachIndex);
+  const uint8_t stageCount = interviewStageCount(item);
+  if (tapX < M5.Display.width() / 3) {
+    if (gCoachStage > 0) {
+      --gCoachStage;
+    } else {
+      previousCoachItem();
+    }
+    renderCoachScreen();
+    return;
+  }
+
+  if (gCoachStage + 1 < stageCount) {
+    ++gCoachStage;
+  } else {
+    nextCoachItem();
+  }
+  renderCoachScreen();
+}
+
 void handleTouch() {
   if (!M5.Touch.isEnabled()) {
     return;
@@ -1745,6 +1937,10 @@ void handleTouch() {
   }
 
   if (isCoachScreen(gScreen)) {
+    if (gScreen == Screen::InterviewPractice) {
+      handleInterviewPracticeTouch(tapX, tapY);
+      return;
+    }
     if (gHomeButton.contains(tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();

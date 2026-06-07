@@ -23,6 +23,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v1.5: improve touch navigation with serial touch down/up logs, center long-press Home entry, bottom-left triple-tap emergency Home entry, a full PaperCoach Home/Menu, Debug-only touch diagnostics, and persistent PaperCoach font size controls.
 - v1.6: convert the real Markdown interview prep sheet at `sample-data/papercoach/interview_prep_sheet3.md` into generated PaperCoach JSON. The converter extracts 71 cards, including 17 must-master cards, writes generated deck/drill/glossary JSON, and prepares an SD-ready deck copy under `dist/sdcard/papercoach/decks/`.
 - v1.7: embed the full 71-card PaperCoach interview deck in firmware as a flash-resident C++ fallback. Runtime first tries SD override `/papercoach/decks/interview_cards.json`; if SD is missing or parsing fails, PaperCoach still has the full embedded deck.
+- v1.8: make Interview Practice useful with real deck cards, question/spoken/anchor/watch pages, long-answer pagination, All vs Must-master filter, left/right page zones, and PaperCoach font-size support.
 
 ## Hardware
 
@@ -131,7 +132,7 @@ v1.5 Home/Menu entries:
 - Settings
 - Debug
 
-PaperCoach screens are read-only in v1.5. There is no progress writing, spaced repetition, RTC scheduling, Wi-Fi, Bluetooth, or AI/API call behavior.
+PaperCoach screens are read-only in v1.8. Interview Practice uses the real embedded or SD deck and supports page-based study; there is no progress writing, spaced repetition, RTC scheduling, Wi-Fi, Bluetooth, or AI/API call behavior.
 
 ## PaperCoach Decks
 
