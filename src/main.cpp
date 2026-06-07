@@ -7,7 +7,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v0.3";
+constexpr const char* kFirmwareVersion = "v0.4";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kProfilePhotoPath = "/paperbadge/profile_photo.png";
 constexpr const char* kQrPath = "/paperbadge/qr.png";
@@ -104,6 +104,21 @@ void drawAssetBox(int32_t x, int32_t y, int32_t size, const char* label, bool ex
   display.setTextDatum(textdatum_t::top_left);
 }
 
+bool drawPngAsset(const char* path, int32_t x, int32_t y, int32_t size, const char* label, bool exists) {
+  if (!exists) {
+    drawAssetBox(x, y, size, label, false);
+    Serial.printf("%s draw skipped: file missing.\n", label);
+    return false;
+  }
+
+  bool drawn = M5.Display.drawPngFile(SD, path, x, y, size, size);
+  Serial.printf("%s draw %s: %s\n", label, drawn ? "OK" : "FAIL", path);
+  if (!drawn) {
+    drawAssetBox(x, y, size, label, true);
+  }
+  return drawn;
+}
+
 void renderBadge(const BadgeText& badge, bool sdOk, const AssetStatus& assets) {
   auto& display = M5.Display;
 
@@ -118,23 +133,23 @@ void renderBadge(const BadgeText& badge, bool sdOk, const AssetStatus& assets) {
   display.setTextWrap(false, false);
 
   display.setFont(&fonts::Font2);
-  drawAssetBox(40, 70, 220, "PHOTO", assets.profilePhoto);
+  drawPngAsset(kProfilePhotoPath, (display.width() - 220) / 2, 50, 220, "PHOTO", assets.profilePhoto);
 
   display.setTextDatum(textdatum_t::top_left);
   display.setTextSize(2);
-  display.drawString("PaperBadge+", 300, 90);
-  display.drawString(badge.name, 300, 150);
+  display.drawString("PaperBadge+", 40, 300);
+  display.drawString(badge.name, 40, 360);
 
   display.setTextSize(2);
-  display.drawString(badge.title, 40, 330);
-  display.drawString(badge.subtitle, 40, 390);
-  display.drawString(badge.location, 40, 450);
-  display.drawString(badge.footer, 40, 510);
+  display.drawString(badge.title, 40, 420);
+  display.drawString(badge.subtitle, 40, 480);
+  display.drawString(badge.location, 40, 540);
+  display.drawString(badge.footer, 40, 600);
 
-  drawAssetBox((display.width() - 320) / 2, 570, 320, "QR", assets.qr);
+  drawPngAsset(kQrPath, (display.width() - 320) / 2, 650, 320, "QR", assets.qr);
 
   display.setTextSize(2);
-  display.drawString(sdOk ? "SD OK" : "SD FAIL", 40, display.height() - 100);
+  display.drawString(sdOk ? "SD OK" : "SD FAIL", 40, display.height() - 50);
   display.display();
 }
 }  // namespace

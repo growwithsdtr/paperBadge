@@ -9,6 +9,7 @@ The firmware is intentionally small and built in compile-checked milestones. It 
 - v0.1: initialize the e-paper display, draw fallback badge text, mount microSD, check `/paperbadge/badge.json`, show `SD OK` or `SD FAIL`, and beep once on boot if the buzzer is available.
 - v0.2: parse English badge text from `/paperbadge/badge.json` using ArduinoJson. If SD, JSON, or fields are unavailable, the firmware renders hardcoded English fallback text.
 - v0.3: prepare image assets on the Mac and let firmware check whether `/paperbadge/profile_photo.png` and `/paperbadge/qr.png` exist. Firmware draws placeholder boxes only; it does not decode images yet.
+- v0.4: draw `/paperbadge/profile_photo.png` and `/paperbadge/qr.png` from SD using M5GFX PNG decoding. If an image is missing or fails to decode, the firmware logs it and draws a placeholder.
 
 ## Hardware
 
@@ -54,7 +55,7 @@ PAPERSD/
     qr.png
 ```
 
-For v0.3 only `badge.json` is read. Photos and QR codes are checked for existence and represented with placeholder boxes.
+For v0.4 `badge.json` is read and prepared PNG images are drawn from SD. Photos and QR codes must be prepared by the script before boot for best results.
 
 Install the image conversion dependency once:
 
