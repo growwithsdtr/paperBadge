@@ -18,6 +18,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v1.0: production Badge mode with persistent Settings stored in ESP32 Preferences/NVS. Badge boots first, uses strap or handheld orientation according to Settings, supports auto/English/Japanese language mode, and exposes normal-orientation Home, Settings, Debug, and a PaperCoach placeholder.
 - v1.1: add the PaperCoach launcher shell with normal-orientation placeholder screens for Interview Practice, Blitz Quiz, Weak Answer Detector, Glossary, and Mock Interview. Badge remains the default boot mode.
 - v1.2: add a read-only PaperCoach sample deck engine. It loads `/papercoach/decks/sample_interview.json` from SD when present, otherwise uses an embedded senior AI/Product Manager interview deck with QA, MCQ, weak-answer, glossary, hostile-followup, and metric-precision items.
+- v1.3: regenerate English and Japanese full-screen badge fallbacks from one shared layout template. Both languages use the same profile, text, QR, margin, and divider positions; Japanese text is high contrast, the profile photo uses a soft circular treatment, and the public badge still shows no debug labels.
 
 ## Hardware
 
@@ -88,7 +89,7 @@ Build embedded fallback assets from the repo sample data:
 /Users/danieljimenez/AIDevelopment/.venv/bin/python tools/build_embedded_assets.py
 ```
 
-The script inspects `sample-data/paperbadge`, chooses the most likely English full badge, Japanese full badge if present, profile photo, QR code, and `badge.json`, normalizes generated copies under `generated-assets/embedded`, and writes `src/embedded_assets.h`. It never deletes or overwrites the original sample files. Pillow is required so the script can generate `badge_ja.png` with macOS Japanese fonts when a Japanese full-badge image is not present.
+The script inspects `sample-data/paperbadge`, chooses the most likely full badge for reporting, detects the profile photo, QR code, and `badge.json`, normalizes generated copies under `generated-assets/embedded`, and writes `src/embedded_assets.h`. It never deletes or overwrites the original sample files. In v1.3 both `badge_en.png` and `badge_ja.png` are rendered from one shared Pillow template so English and Japanese keep identical element positions and contrast hierarchy.
 
 Current selected repo assets:
 

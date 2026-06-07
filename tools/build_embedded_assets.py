@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 try:
-    from PIL import Image, ImageDraw, ImageFont, ImageOps
+    from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 except ImportError as exc:  # pragma: no cover - user-facing setup guard
     raise SystemExit(
         "Pillow is required for bilingual badge generation. Install it in your active Python environment:\n"
@@ -66,8 +66,10 @@ QR_VARIANTS = {
 EN_FONT_CANDIDATES = [
     "/Library/Fonts/Inter.ttf",
     "/Library/Fonts/Inter-Regular.ttf",
+    "/System/Library/Fonts/SFNS.ttf",
     "/System/Library/Fonts/HelveticaNeue.ttc",
     "/System/Library/Fonts/Helvetica.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
     "/Library/Fonts/Arial Unicode.ttf",
 ]
 JA_FONT_CANDIDATES = [
@@ -77,6 +79,25 @@ JA_FONT_CANDIDATES = [
     "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
     "/System/Library/Fonts/ヒラギノ角ゴシック W5.ttc",
     "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/Library/Fonts/Arial Unicode.ttf",
+]
+
+EN_BOLD_FONT_CANDIDATES = [
+    "/Library/Fonts/Inter-Bold.ttf",
+    "/System/Library/Fonts/SFNS.ttf",
+    "/System/Library/Fonts/HelveticaNeue.ttc",
+    "/System/Library/Fonts/Helvetica.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/Library/Fonts/Arial Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/Library/Fonts/Arial Unicode.ttf",
+]
+JA_BOLD_FONT_CANDIDATES = [
+    "/Library/Fonts/NotoSansJP-Bold.otf",
+    "/Library/Fonts/NotoSansJP-Bold.ttf",
+    "/Library/Fonts/IBMPlexSansJP-Bold.ttf",
+    "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
+    "/System/Library/Fonts/ヒラギノ角ゴシック W5.ttc",
     "/Library/Fonts/Arial Unicode.ttf",
 ]
 
@@ -248,69 +269,88 @@ def load_badge_json(path: Path | None) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def generate_english_badge(source: ImageInfo, output: Path) -> GeneratedAsset:
-    output.parent.mkdir(parents=True, exist_ok=True)
+def badge_text(badge_json: dict, language: str) -> dict[str, str]:
+    defaults = {
+        "english": {
+            "name": "Daniel Jimenez",
+            "title": "Product Manager (AI)",
+            "subtitle": "0→1 AI, SaaS & FinTech",
+            "location": "Tokyo, Japan",
+            "footer": "Scan for LinkedIn",
+        },
+        "japanese": {
+            "name": "ダニエル・ヒメネズ",
+            "title": "AIプロダクトマネージャー",
+            "subtitle": "0→1 AI・SaaS・FinTech",
+            "location": "東京拠点",
+            "footer": "LinkedInをスキャン",
+        },
+    }
+    configured = badge_json.get(language, {}) if isinstance(badge_json.get(language, {}), dict) else {}
+    return {key: str(configured.get(key) or value) for key, value in defaults[language].items()}
+
+
+def circle_profile(source: ImageInfo, size: int) -> Image.Image:
     with Image.open(source.path) as image:
-        badge = ImageOps.fit(image.convert("RGB"), SCREEN_SIZE, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
-        badge.save(output, format="PNG", optimize=True)
-    info = inspect_image(output)
-    assert info is not None
-    return GeneratedAsset("badge_en", source.path.name, output, info.width, info.height, info.size)
+        crop = ImageOps.fit(image.convert("RGB"), (size, size), method=Image.Resampling.LANCZOS, centering=(0.5, 0.42))
+    crop = ImageOps.grayscale(crop).convert("RGBA")
+    mask = Image.new("L", (size, size), 0)
+    mask_draw = ImageDraw.Draw(mask)
+    mask_draw.ellipse((2, 2, size - 3, size - 3), fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(1.5))
+    crop.putalpha(mask)
+    return crop
 
 
-def generate_japanese_badge(
-    source: ImageInfo | None, profile: ImageInfo, qr: ImageInfo, badge_json: dict, output: Path
+def prepared_qr(source: ImageInfo, size: int) -> Image.Image:
+    with Image.open(source.path) as image:
+        qr = ImageOps.contain(image.convert("L"), (size, size), Image.Resampling.NEAREST)
+    qr = qr.point(lambda value: 255 if value > 180 else 0, mode="1").convert("RGB")
+    canvas = Image.new("RGB", (size, size), (255, 255, 255))
+    canvas.paste(qr, ((size - qr.width) // 2, (size - qr.height) // 2))
+    return canvas
+
+
+def generate_shared_badge(
+    language: str, profile: ImageInfo, qr: ImageInfo, badge_json: dict, output: Path
 ) -> GeneratedAsset:
     output.parent.mkdir(parents=True, exist_ok=True)
-
-    if source:
-        with Image.open(source.path) as image:
-            badge = ImageOps.fit(
-                image.convert("RGB"), SCREEN_SIZE, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5)
-            )
-            badge.save(output, format="PNG", optimize=True)
-        info = inspect_image(output)
-        assert info is not None
-        return GeneratedAsset("badge_ja", source.path.name, output, info.width, info.height, info.size)
-
-    japanese = badge_json.get("japanese", {})
-    name = japanese.get("name") or "ダニエル・ヒメネズ"
-    title = japanese.get("title") or "AIプロダクトマネージャー"
-    subtitle = japanese.get("subtitle") or "0→1 AI・SaaS・FinTech"
-    location = japanese.get("location") or "東京拠点"
-    footer = japanese.get("footer") or "LinkedInをスキャン"
-
+    text = badge_text(badge_json, language)
+    is_japanese = language == "japanese"
+    regular_candidates = JA_FONT_CANDIDATES if is_japanese else EN_FONT_CANDIDATES
+    bold_candidates = JA_BOLD_FONT_CANDIDATES if is_japanese else EN_BOLD_FONT_CANDIDATES
     canvas = Image.new("RGBA", SCREEN_SIZE, (255, 255, 255, 255))
     draw = ImageDraw.Draw(canvas)
 
-    with Image.open(profile.path) as profile_image:
-        paste_contained(canvas, profile_image, (122, 42, 418, 344))
+    profile_image = circle_profile(profile, 274)
+    canvas.alpha_composite(profile_image, ((SCREEN_SIZE[0] - profile_image.width) // 2, 44))
 
-    line_color = (135, 135, 135)
-    draw.line((74, 382, SCREEN_SIZE[0] - 74, 382), fill=line_color, width=2)
+    line_color = (140, 140, 140)
+    dark_gray = (45, 45, 45)
+    draw.line((66, 356, SCREEN_SIZE[0] - 66, 356), fill=line_color, width=2)
 
-    name_font = fit_font(draw, name, JA_FONT_CANDIDATES, 42, 30, 468)
-    title_font = fit_font(draw, title, JA_FONT_CANDIDATES, 30, 24, 468)
-    subtitle_font = fit_font(draw, subtitle, JA_FONT_CANDIDATES, 28, 22, 468)
-    location_font = fit_font(draw, location, JA_FONT_CANDIDATES, 25, 21, 468)
-    footer_font = fit_font(draw, footer, JA_FONT_CANDIDATES, 25, 20, 468)
+    name_font = fit_font(draw, text["name"], bold_candidates, 46 if is_japanese else 50, 30, 468)
+    title_font = fit_font(draw, text["title"], bold_candidates, 31, 23, 468)
+    subtitle_font = fit_font(draw, text["subtitle"], regular_candidates, 27, 21, 468)
+    location_font = fit_font(draw, text["location"], regular_candidates, 25, 20, 468)
+    footer_font = fit_font(draw, text["footer"], regular_candidates, 24, 19, 468)
 
-    draw_centered(draw, 436, name, name_font)
-    draw_centered(draw, 493, title, title_font)
-    draw_centered(draw, 538, subtitle, subtitle_font)
-    draw_centered(draw, 578, location, location_font)
+    draw_centered(draw, 414, text["name"], name_font, fill=(0, 0, 0))
+    draw_centered(draw, 474, text["title"], title_font, fill=(0, 0, 0))
+    draw_centered(draw, 522, text["subtitle"], subtitle_font, fill=dark_gray)
+    draw_centered(draw, 563, text["location"], location_font, fill=dark_gray)
 
-    draw.line((74, 612, SCREEN_SIZE[0] - 74, 612), fill=line_color, width=2)
-    with Image.open(qr.path) as qr_image:
-        qr_ready = ImageOps.fit(qr_image.convert("RGB"), (300, 300), method=Image.Resampling.NEAREST)
-        canvas.paste(qr_ready, ((SCREEN_SIZE[0] - 300) // 2, 632))
+    draw.line((66, 604, SCREEN_SIZE[0] - 66, 604), fill=line_color, width=2)
+    qr_ready = prepared_qr(qr, 300)
+    canvas.paste(qr_ready, ((SCREEN_SIZE[0] - qr_ready.width) // 2, 624))
 
-    draw_centered(draw, 944, footer, footer_font, fill=(50, 50, 50))
+    draw_centered(draw, 946, text["footer"], footer_font, fill=dark_gray)
 
     canvas.convert("RGB").save(output, format="PNG", optimize=True)
     info = inspect_image(output)
     assert info is not None
-    return GeneratedAsset("badge_ja", "generated from badge.json", output, info.width, info.height, info.size)
+    asset_name = "badge_ja" if is_japanese else "badge_en"
+    return GeneratedAsset(asset_name, f"{language} shared template from badge.json", output, info.width, info.height, info.size)
 
 
 def normalize_profile(source: ImageInfo, output: Path) -> GeneratedAsset:
@@ -433,14 +473,20 @@ def main() -> None:
 
     excluded = {selected_ja.path} if selected_ja else set()
     selected_en = choose_asset(images, score_full_badge, excluded)
-    if selected_en is None:
-        raise SystemExit("Could not identify an English/full badge image.")
 
-    selected_profile = choose_asset(images, score_profile, {selected_en.path, *(set() if selected_ja is None else {selected_ja.path})})
+    selected_profile = choose_asset(
+        images,
+        score_profile,
+        {*(set() if selected_en is None else {selected_en.path}), *(set() if selected_ja is None else {selected_ja.path})},
+    )
     selected_qr = choose_asset(
         images,
         score_qr,
-        {selected_en.path, *(set() if selected_ja is None else {selected_ja.path}), *(set() if selected_profile is None else {selected_profile.path})},
+        {
+            *(set() if selected_en is None else {selected_en.path}),
+            *(set() if selected_ja is None else {selected_ja.path}),
+            *(set() if selected_profile is None else {selected_profile.path}),
+        },
     )
     if selected_profile is None:
         raise SystemExit("Could not identify a profile photo.")
@@ -457,8 +503,8 @@ def main() -> None:
 
     badge_json = load_badge_json(badge_json_path)
 
-    badge_en = generate_english_badge(selected_en, GENERATED_DIR / "badge_en.png")
-    badge_ja = generate_japanese_badge(selected_ja, selected_profile, selected_qr, badge_json, GENERATED_DIR / "badge_ja.png")
+    badge_en = generate_shared_badge("english", selected_profile, selected_qr, badge_json, GENERATED_DIR / "badge_en.png")
+    badge_ja = generate_shared_badge("japanese", selected_profile, selected_qr, badge_json, GENERATED_DIR / "badge_ja.png")
     profile = normalize_profile(selected_profile, GENERATED_DIR / "profile.png")
     qr = normalize_qr(selected_qr, GENERATED_DIR / "qr.png")
     write_header(badge_en, badge_ja, profile, qr)
