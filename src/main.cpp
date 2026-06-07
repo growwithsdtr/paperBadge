@@ -11,7 +11,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v1.0";
+constexpr const char* kFirmwareVersion = "v1.1";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kPrefsNamespace = "paperbadge";
 constexpr uint32_t kDefaultLanguageIntervalSeconds = 15;
@@ -72,7 +72,11 @@ enum class Screen {
   Debug,
   QrZoom,
   PhotoZoom,
-  PaperCoach,
+  InterviewPractice,
+  BlitzQuiz,
+  WeakAnswerDetector,
+  Glossary,
+  MockInterview,
 };
 
 enum class BadgeLanguage {
@@ -135,7 +139,11 @@ BadgeLanguage gBadgeLanguage = BadgeLanguage::English;
 Rect gPhotoRect;
 Rect gQrRect;
 Rect gBadgeButton;
-Rect gPaperCoachButton;
+Rect gInterviewButton;
+Rect gBlitzButton;
+Rect gWeakAnswerButton;
+Rect gGlossaryButton;
+Rect gMockInterviewButton;
 Rect gSettingsButton;
 Rect gDebugButton;
 Rect gOrientationButton;
@@ -557,12 +565,33 @@ void renderHome() {
   display.drawString("Home", 34, 92);
 
   const int32_t width = display.width();
-  gBadgeButton = {36, 150, width - 72, 78};
-  gPaperCoachButton = {36, 248, width - 72, 78};
-  gSettingsButton = {36, 346, width - 72, 78};
-  gDebugButton = {36, 444, width - 72, 78};
+  const int32_t buttonX = 34;
+  const int32_t buttonW = width - 68;
+  const int32_t buttonH = 66;
+  const int32_t gap = 15;
+  int32_t y = 132;
+  gBadgeButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gInterviewButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gBlitzButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gWeakAnswerButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gGlossaryButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gMockInterviewButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gSettingsButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gDebugButton = {buttonX, y, buttonW, buttonH};
+
   drawButton(gBadgeButton, "Badge");
-  drawButton(gPaperCoachButton, "PaperCoach");
+  drawButton(gInterviewButton, "Interview Practice");
+  drawButton(gBlitzButton, "Blitz Quiz");
+  drawButton(gWeakAnswerButton, "Weak Answer Detector");
+  drawButton(gGlossaryButton, "Glossary");
+  drawButton(gMockInterviewButton, "Mock Interview");
   drawButton(gSettingsButton, "Settings");
   drawButton(gDebugButton, "Debug");
 
@@ -605,8 +634,8 @@ void renderSettings() {
   Serial.println("Settings screen shown.");
 }
 
-void renderPaperCoach() {
-  gScreen = Screen::PaperCoach;
+void renderCoachPlaceholder(Screen screen, const char* title, const char* body) {
+  gScreen = screen;
   applyAppRotation();
   prepareFullRefresh();
 
@@ -614,16 +643,16 @@ void renderPaperCoach() {
   display.setTextDatum(textdatum_t::top_left);
   display.setFont(&fonts::Font4);
   display.setTextSize(1);
-  display.drawString("PaperCoach", 32, 34);
+  display.drawString(title, 32, 34);
   display.setFont(&fonts::Font2);
   display.setTextSize(2);
-  display.drawString("App shell starts in v1.1", 36, 126);
-  display.drawString("Tap Home to return.", 36, 174);
+  display.drawString(body, 36, 132);
+  display.drawString("Content engine starts in v1.2.", 36, 184);
 
   gHomeButton = {36, display.height() - 104, 178, 70};
   drawButton(gHomeButton, "Home");
   display.display();
-  Serial.println("PaperCoach placeholder shown.");
+  Serial.printf("%s placeholder shown.\n", title);
 }
 
 void renderDebug() {
@@ -765,7 +794,8 @@ void handleTouch() {
     return;
   }
 
-  if (gScreen == Screen::PaperCoach) {
+  if (gScreen == Screen::InterviewPractice || gScreen == Screen::BlitzQuiz ||
+      gScreen == Screen::WeakAnswerDetector || gScreen == Screen::Glossary || gScreen == Screen::MockInterview) {
     if (gHomeButton.contains(tapX, tapY)) {
       renderHome();
     }
@@ -801,8 +831,16 @@ void handleTouch() {
   if (gScreen == Screen::Home) {
     if (gBadgeButton.contains(tapX, tapY)) {
       renderBadge();
-    } else if (gPaperCoachButton.contains(tapX, tapY)) {
-      renderPaperCoach();
+    } else if (gInterviewButton.contains(tapX, tapY)) {
+      renderCoachPlaceholder(Screen::InterviewPractice, "Interview Practice", "Prompt and answer practice.");
+    } else if (gBlitzButton.contains(tapX, tapY)) {
+      renderCoachPlaceholder(Screen::BlitzQuiz, "Blitz Quiz", "Fast multiple-choice drills.");
+    } else if (gWeakAnswerButton.contains(tapX, tapY)) {
+      renderCoachPlaceholder(Screen::WeakAnswerDetector, "Weak Answer Detector", "Spot vague PM answers.");
+    } else if (gGlossaryButton.contains(tapX, tapY)) {
+      renderCoachPlaceholder(Screen::Glossary, "Glossary", "Review key interview terms.");
+    } else if (gMockInterviewButton.contains(tapX, tapY)) {
+      renderCoachPlaceholder(Screen::MockInterview, "Mock Interview", "Run a short prompt set.");
     } else if (gSettingsButton.contains(tapX, tapY)) {
       renderSettings();
     } else if (gDebugButton.contains(tapX, tapY)) {
