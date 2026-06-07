@@ -1,0 +1,6 @@
+.pio/
+.vscode/
+dist/
+__pycache__/
+*.py[cod]
+get-platformio.py

@@ -1,0 +1,20 @@
+{
+  "interval_seconds": 15,
+  "orientation": 0,
+  "strap_orientation": 2,
+  "font_size": "large",
+  "english": {
+    "name": "Daniel Jimenez",
+    "title": "Product Manager (AI)",
+    "subtitle": "0→1 AI, SaaS & FinTech",
+    "location": "Tokyo, Japan",
+    "footer": "Scan for LinkedIn"
+  },
+  "japanese": {
+    "name": "ダニエル・ヒメネズ",
+    "title": "AIプロダクトマネージャー",
+    "subtitle": "0→1 AI・SaaS・FinTech",
+    "location": "東京拠点",
+    "footer": "LinkedInをスキャン"
+  }
+}
