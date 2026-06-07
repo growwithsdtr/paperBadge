@@ -7,16 +7,18 @@
 #include <cstring>
 
 #include "embedded_assets.h"
+#include "embedded_papercoach_deck.h"
 
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v1.6";
+constexpr const char* kFirmwareVersion = "v1.7";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
-constexpr const char* kCoachDeckPath = "/papercoach/decks/sample_interview.json";
+constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
+constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
 constexpr const char* kPrefsNamespace = "paperbadge";
 constexpr uint32_t kDefaultLanguageIntervalSeconds = 15;
-constexpr size_t kMaxCoachItems = 24;
+constexpr size_t kMaxCoachItems = 96;
 constexpr uint8_t kMaxOptions = 4;
 
 constexpr const char* kBadgeEnCandidates[] = {
@@ -157,6 +159,17 @@ struct Settings {
 
 struct CoachItem {
   CoachItemType type = CoachItemType::Qa;
+  String id;
+  String sectionId;
+  String section;
+  String number;
+  String title;
+  bool mustMaster = false;
+  String theme;
+  String spoken;
+  String anchor;
+  String confidence;
+  String watch;
   String prompt;
   String answer;
   String rubric;
@@ -166,6 +179,32 @@ struct CoachItem {
   String definition;
   String explanation;
   String options[kMaxOptions];
+  uint8_t optionCount = 0;
+  uint8_t correctIndex = 0;
+};
+
+struct CoachItemView {
+  CoachItemType type = CoachItemType::Qa;
+  const char* id = "";
+  const char* sectionId = "";
+  const char* section = "";
+  const char* number = "";
+  const char* title = "";
+  bool mustMaster = false;
+  const char* theme = "";
+  const char* spoken = "";
+  const char* anchor = "";
+  const char* confidence = "";
+  const char* watch = "";
+  const char* prompt = "";
+  const char* answer = "";
+  const char* rubric = "";
+  const char* weakAnswer = "";
+  const char* category = "";
+  const char* term = "";
+  const char* definition = "";
+  const char* explanation = "";
+  const char* options[kMaxOptions] = {"", "", "", ""};
   uint8_t optionCount = 0;
   uint8_t correctIndex = 0;
 };
@@ -206,6 +245,8 @@ Rect gOptionButtons[kMaxOptions];
 bool gSdMounted = false;
 bool gBadgeJsonLoaded = false;
 bool gCoachDeckLoadedFromSd = false;
+size_t gCoachMustMasterCount = 0;
+String gCoachDeckSource = "embedded";
 uint8_t gNormalPortraitRotation = 0;
 uint32_t gLastLanguageSwitchMs = 0;
 String gLastBadgeSource = "embedded";
@@ -714,6 +755,7 @@ void clearCoachDeck() {
     gCoachItems[index] = CoachItem{};
   }
   gCoachItemCount = 0;
+  gCoachMustMasterCount = 0;
   gCoachIndex = 0;
   gCoachStage = 0;
   gSelectedOption = -1;
@@ -730,36 +772,29 @@ bool addCoachItem(const CoachItem& item) {
 
 void loadEmbeddedCoachDeck() {
   clearCoachDeck();
-  for (size_t index = 0; index < countOf(kEmbeddedCoachItems); ++index) {
-    const auto& source = kEmbeddedCoachItems[index];
-    CoachItem item;
-    item.type = source.type;
-    item.prompt = source.prompt;
-    item.answer = source.answer;
-    item.rubric = source.rubric;
-    item.weakAnswer = source.weakAnswer;
-    item.category = source.category;
-    item.term = source.term;
-    item.definition = source.definition;
-    item.explanation = source.explanation;
-    item.optionCount = source.optionCount;
-    item.correctIndex = source.correctIndex;
-    for (uint8_t option = 0; option < kMaxOptions; ++option) {
-      item.options[option] = source.options[option];
-    }
-    addCoachItem(item);
-  }
+  gCoachItemCount = embedded_papercoach::kCardCount;
+  gCoachMustMasterCount = embedded_papercoach::kMustMasterCount;
   gCoachDeckLoadedFromSd = false;
-  Serial.printf("PaperCoach deck source: embedded fallback (%u items).\n", static_cast<unsigned>(gCoachItemCount));
+  gCoachDeckSource = "embedded";
+  Serial.println("PaperCoach deck source: embedded");
+  Serial.printf("PaperCoach card count: %u\n", static_cast<unsigned>(gCoachItemCount));
+  Serial.printf("PaperCoach must-master count: %u\n", static_cast<unsigned>(gCoachMustMasterCount));
 }
 
 bool loadCoachDeckFromSd() {
-  if (!gSdMounted || !SD.exists(kCoachDeckPath)) {
+  const char* path = nullptr;
+  if (gSdMounted && SD.exists(kCoachDeckPath)) {
+    path = kCoachDeckPath;
+  } else if (gSdMounted && SD.exists(kLegacyCoachDeckPath)) {
+    path = kLegacyCoachDeckPath;
+  }
+
+  if (!path) {
     Serial.printf("PaperCoach SD deck missing: %s\n", kCoachDeckPath);
     return false;
   }
 
-  File file = SD.open(kCoachDeckPath, FILE_READ);
+  File file = SD.open(path, FILE_READ);
   if (!file) {
     Serial.println("PaperCoach SD deck open failed.");
     return false;
@@ -773,7 +808,8 @@ bool loadCoachDeckFromSd() {
     return false;
   }
 
-  JsonArray items = doc["items"].as<JsonArray>();
+  const bool generatedSchema = !doc["cards"].isNull();
+  JsonArray items = generatedSchema ? doc["cards"].as<JsonArray>() : doc["items"].as<JsonArray>();
   if (items.isNull() || items.size() == 0) {
     Serial.println("PaperCoach SD deck empty.");
     return false;
@@ -783,9 +819,29 @@ bool loadCoachDeckFromSd() {
   for (JsonObject object : items) {
     CoachItem item;
     item.type = parseCoachType(object["type"] | "qa");
+    item.id = object["id"] | "";
+    item.sectionId = object["section_id"] | "";
+    item.section = object["section"] | "";
+    item.number = object["number"] | "";
+    item.title = object["title"] | "";
+    item.mustMaster = object["must_master"] | false;
+    item.theme = object["theme"] | "";
+    item.spoken = object["spoken"] | "";
+    item.anchor = object["anchor"] | "";
+    item.confidence = object["confidence"] | "";
+    item.watch = object["watch"] | "";
     item.prompt = object["prompt"] | "";
+    if (item.prompt.length() == 0) {
+      item.prompt = item.title;
+    }
     item.answer = object["answer"] | "";
+    if (item.answer.length() == 0) {
+      item.answer = item.spoken;
+    }
     item.rubric = object["rubric"] | "";
+    if (item.rubric.length() == 0) {
+      item.rubric = item.anchor;
+    }
     item.weakAnswer = object["weak_answer"] | "";
     item.category = object["category"] | "";
     item.term = object["term"] | "";
@@ -803,6 +859,9 @@ bool loadCoachDeckFromSd() {
         item.options[item.optionCount++] = option.as<const char*>();
       }
     }
+    if (item.mustMaster) {
+      ++gCoachMustMasterCount;
+    }
     addCoachItem(item);
   }
 
@@ -812,19 +871,73 @@ bool loadCoachDeckFromSd() {
   }
 
   gCoachDeckLoadedFromSd = true;
-  Serial.printf("PaperCoach deck source: SD (%u items): %s\n", static_cast<unsigned>(gCoachItemCount), kCoachDeckPath);
+  gCoachDeckSource = "SD";
+  Serial.printf("PaperCoach deck source: SD (%s)\n", path);
+  Serial.printf("PaperCoach card count: %u\n", static_cast<unsigned>(gCoachItemCount));
+  Serial.printf("PaperCoach must-master count: %u\n", static_cast<unsigned>(gCoachMustMasterCount));
   return true;
 }
 
 void loadCoachDeck() {
-  loadEmbeddedCoachDeck();
-  if (loadCoachDeckFromSd()) {
-    return;
+  if (!loadCoachDeckFromSd()) {
+    loadEmbeddedCoachDeck();
   }
-  gCoachDeckLoadedFromSd = false;
 }
 
-bool itemMatchesScreen(const CoachItem& item, Screen screen) {
+CoachItemView coachItemAt(size_t index) {
+  CoachItemView view;
+  if (gCoachDeckLoadedFromSd && index < gCoachItemCount) {
+    const CoachItem& item = gCoachItems[index];
+    view.type = item.type;
+    view.id = item.id.c_str();
+    view.sectionId = item.sectionId.c_str();
+    view.section = item.section.c_str();
+    view.number = item.number.c_str();
+    view.title = item.title.c_str();
+    view.mustMaster = item.mustMaster;
+    view.theme = item.theme.c_str();
+    view.spoken = item.spoken.c_str();
+    view.anchor = item.anchor.c_str();
+    view.confidence = item.confidence.c_str();
+    view.watch = item.watch.c_str();
+    view.prompt = item.prompt.c_str();
+    view.answer = item.answer.c_str();
+    view.rubric = item.rubric.c_str();
+    view.weakAnswer = item.weakAnswer.c_str();
+    view.category = item.category.c_str();
+    view.term = item.term.c_str();
+    view.definition = item.definition.c_str();
+    view.explanation = item.explanation.c_str();
+    view.optionCount = item.optionCount;
+    view.correctIndex = item.correctIndex;
+    for (uint8_t option = 0; option < kMaxOptions; ++option) {
+      view.options[option] = item.options[option].c_str();
+    }
+    return view;
+  }
+
+  if (index < embedded_papercoach::kCardCount) {
+    const auto& card = embedded_papercoach::kCards[index];
+    view.type = CoachItemType::Qa;
+    view.id = card.id;
+    view.sectionId = card.sectionId;
+    view.section = card.section;
+    view.number = card.number;
+    view.title = card.title;
+    view.mustMaster = card.mustMaster;
+    view.theme = card.theme;
+    view.spoken = card.spoken;
+    view.anchor = card.anchor;
+    view.confidence = card.confidence;
+    view.watch = card.watch;
+    view.prompt = card.title;
+    view.answer = card.spoken;
+    view.rubric = card.anchor;
+  }
+  return view;
+}
+
+bool itemMatchesScreen(const CoachItemView& item, Screen screen) {
   if (screen == Screen::InterviewPractice) {
     return item.type == CoachItemType::Qa || item.type == CoachItemType::HostileFollowup ||
            item.type == CoachItemType::MetricPrecision;
@@ -857,7 +970,7 @@ size_t findCoachItem(Screen screen, size_t startIndex) {
   }
   for (size_t offset = 0; offset < gCoachItemCount; ++offset) {
     const size_t index = (startIndex + offset) % gCoachItemCount;
-    if (itemMatchesScreen(gCoachItems[index], screen)) {
+    if (itemMatchesScreen(coachItemAt(index), screen)) {
       return index;
     }
   }
@@ -1250,31 +1363,38 @@ void drawCoachChrome(const char* title) {
   drawButton(gNextButton, "Next");
 }
 
-String coachPromptFor(const CoachItem& item) {
+String coachPromptFor(const CoachItemView& item) {
   if (item.type == CoachItemType::Glossary) {
     return item.term;
   }
   if (item.type == CoachItemType::WeakAnswer) {
-    return item.prompt + "\nWeak answer: " + item.weakAnswer;
+    return String(item.prompt) + "\nWeak answer: " + item.weakAnswer;
   }
   return item.prompt;
 }
 
-String coachAnswerFor(const CoachItem& item) {
+String coachAnswerFor(const CoachItemView& item) {
   if (item.type == CoachItemType::Glossary) {
     return item.definition;
   }
   if (item.type == CoachItemType::WeakAnswer) {
-    return item.category + ": " + item.explanation;
+    return String(item.category) + ": " + item.explanation;
   }
   return item.answer;
 }
 
-String coachRubricFor(const CoachItem& item) {
-  if (item.explanation.length() > 0 && item.type != CoachItemType::WeakAnswer) {
+String coachRubricFor(const CoachItemView& item) {
+  if (strlen(item.explanation) > 0 && item.type != CoachItemType::WeakAnswer) {
     return item.explanation;
   }
-  return item.rubric;
+  String rubric = item.rubric;
+  if (strlen(item.watch) > 0) {
+    if (rubric.length() > 0) {
+      rubric += "\nWatch: ";
+    }
+    rubric += item.watch;
+  }
+  return rubric;
 }
 
 void renderCoachScreen() {
@@ -1296,7 +1416,7 @@ void renderCoachScreen() {
     return;
   }
 
-  const CoachItem& item = gCoachItems[gCoachIndex];
+  const CoachItemView item = coachItemAt(gCoachIndex);
   if (gScreen == Screen::MockInterview) {
     display.drawString(String("Prompt ") + (gMockStep + 1) + "/5", 34, 118);
   }
@@ -1473,7 +1593,7 @@ void renderDebug(const char* refreshReason = "mode switch") {
   y += 26;
   display.drawString(String("QR: ") + (gQrSd.found ? gQrSd.path : "embedded"), 26, y);
   y += 26;
-  display.drawString(String("coach deck: ") + (gCoachDeckLoadedFromSd ? "SD" : "embedded"), 26, y);
+  display.drawString(String("coach deck: ") + gCoachDeckSource + " " + static_cast<unsigned>(gCoachItemCount), 26, y);
   y += 26;
   display.drawString(String("badge language: ") + languageName(gBadgeLanguage), 26, y);
   y += 26;
@@ -1632,7 +1752,7 @@ void handleTouch() {
       nextCoachItem();
       renderCoachScreen();
     } else if (gScreen == Screen::BlitzQuiz && gSelectedOption < 0) {
-      const CoachItem& item = gCoachItems[gCoachIndex];
+      const CoachItemView item = coachItemAt(gCoachIndex);
       for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
         if (gOptionButtons[option].contains(tapX, tapY)) {
           gSelectedOption = option;
