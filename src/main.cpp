@@ -10,11 +10,28 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v0.8";
+constexpr const char* kFirmwareVersion = "v0.9";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
-constexpr uint32_t kDefaultIntervalSeconds = 15;
+constexpr uint32_t kDefaultLanguageIntervalSeconds = 15;
 
-constexpr const char* kProfilePhotoCandidates[] = {
+constexpr const char* kBadgeEnCandidates[] = {
+    "/paperbadge/badge_en.png",
+    "/paperbadge/completeBadge.png",
+    "/paperbadge/complete_badge.png",
+    "/paperbadge/badge.png",
+    "/paperbadge/badge_full.png",
+    "/paperbadge/full_badge.png",
+};
+
+constexpr const char* kBadgeJaCandidates[] = {
+    "/paperbadge/badge_ja.png",
+    "/paperbadge/badge_jp.png",
+    "/paperbadge/badge_japanese.png",
+    "/paperbadge/completeBadge_ja.png",
+    "/paperbadge/complete_badge_ja.png",
+};
+
+constexpr const char* kProfileCandidates[] = {
     "/paperbadge/profile_photo.png",
     "/paperbadge/profilePhoto.png",
     "/paperbadge/photo.png",
@@ -35,34 +52,10 @@ constexpr const char* kQrCandidates[] = {
     "/paperbadge/linkedinQR.png",
 };
 
-constexpr const char* kFullBadgeCandidates[] = {
-    "/paperbadge/badge_full.png",
-    "/paperbadge/badge.png",
-    "/paperbadge/full_badge.png",
-    "/paperbadge/badge_en.png",
-    "/paperbadge/complete_badge.png",
-    "/paperbadge/completeBadge.png",
-};
-
 template <size_t N>
 constexpr size_t countOf(const char* const (&)[N]) {
   return N;
 }
-
-struct BadgeText {
-  String name = "Daniel Jimenez";
-  String title = "Product Manager (AI)";
-  String subtitle = "0->1 AI, SaaS & FinTech";
-  String location = "Tokyo, Japan";
-  String footer = "Scan for LinkedIn";
-};
-
-struct BadgeConfig {
-  uint32_t intervalSeconds = kDefaultIntervalSeconds;
-  bool upsideDown = false;
-  bool englishFromJson = false;
-  BadgeText english;
-};
 
 enum class ImageType {
   Unknown,
@@ -70,13 +63,17 @@ enum class ImageType {
   Jpg,
 };
 
-struct ImageAsset {
-  bool found = false;
-  bool drawn = false;
-  ImageType type = ImageType::Unknown;
-  String path;
-  uint16_t width = 0;
-  uint16_t height = 0;
+enum class Screen {
+  Badge,
+  Home,
+  Debug,
+  QrZoom,
+  PhotoZoom,
+};
+
+enum class BadgeLanguage {
+  English,
+  Japanese,
 };
 
 struct Rect {
@@ -94,30 +91,34 @@ struct Rect {
   }
 };
 
-enum class RenderMode {
-  EmbeddedFallback,
-  SdDynamic,
+struct ImageAsset {
+  bool found = false;
+  ImageType type = ImageType::Unknown;
+  String path;
+  uint16_t width = 0;
+  uint16_t height = 0;
 };
 
-enum class ViewMode {
-  Badge,
-  QrZoom,
-  PhotoZoom,
-  Debug,
+struct BadgeConfig {
+  uint32_t intervalSeconds = kDefaultLanguageIntervalSeconds;
 };
 
-BadgeConfig gBadge;
-ImageAsset gProfilePhoto;
-ImageAsset gQr;
-ImageAsset gSdFullBadge;
+BadgeConfig gBadgeConfig;
+ImageAsset gBadgeEnSd;
+ImageAsset gBadgeJaSd;
+ImageAsset gProfileSd;
+ImageAsset gQrSd;
+Screen gScreen = Screen::Badge;
+BadgeLanguage gBadgeLanguage = BadgeLanguage::English;
 Rect gPhotoRect;
 Rect gQrRect;
-RenderMode gRenderMode = RenderMode::EmbeddedFallback;
-ViewMode gViewMode = ViewMode::Badge;
+Rect gBadgeButton;
+Rect gDebugButton;
 bool gSdMounted = false;
-bool gBadgeJsonExists = false;
-bool gJsonLoaded = false;
-uint8_t gPortraitRotation = 0;
+bool gBadgeJsonLoaded = false;
+uint8_t gNormalPortraitRotation = 0;
+uint32_t gLastLanguageSwitchMs = 0;
+String gLastBadgeSource = "embedded";
 
 void waitForSerial() {
   const uint32_t deadline = millis() + 2000;
@@ -130,11 +131,24 @@ void bootBeep() {
   if (!M5.Speaker.isEnabled()) {
     return;
   }
-
   M5.Speaker.setVolume(64);
   M5.Speaker.tone(2000, 80);
   delay(100);
   M5.Speaker.stop();
+}
+
+void captureNormalPortraitRotation() {
+  auto& display = M5.Display;
+  const uint8_t currentRotation = display.getRotation() & 3;
+  gNormalPortraitRotation = display.width() > display.height() ? ((currentRotation + 1) & 3) : currentRotation;
+}
+
+void applyBadgeRotation() {
+  M5.Display.setRotation((gNormalPortraitRotation + 2) & 3);
+}
+
+void applyAppRotation() {
+  M5.Display.setRotation(gNormalPortraitRotation);
 }
 
 bool mountSdCard() {
@@ -144,107 +158,13 @@ bool mountSdCard() {
   const int8_t cs = M5.getPin(m5::sd_spi_cs);
 
   Serial.printf("SD SPI pins: SCLK=%d MOSI=%d MISO=%d CS=%d\n", sclk, mosi, miso, cs);
-
   if (sclk < 0 || mosi < 0 || miso < 0 || cs < 0) {
-    Serial.println("SD mounted no: PaperS3 SD pins are unavailable.");
+    Serial.println("SD mounted no: PaperS3 SD pins unavailable.");
     return false;
   }
 
   SPI.begin(sclk, miso, mosi, cs);
   return SD.begin(cs, SPI, kSdSpiHz);
-}
-
-void capturePortraitRotation() {
-  auto& display = M5.Display;
-  const uint8_t currentRotation = display.getRotation() & 3;
-  gPortraitRotation = display.width() > display.height() ? ((currentRotation + 1) & 3) : currentRotation;
-}
-
-void applyPortraitRotation() {
-  uint8_t targetRotation = gPortraitRotation;
-  if (gBadge.upsideDown) {
-    targetRotation = (targetRotation + 2) & 3;
-  }
-  M5.Display.setRotation(targetRotation);
-}
-
-String displaySafeText(const String& input) {
-  String output;
-  output.reserve(input.length());
-
-  for (size_t index = 0; index < input.length(); ++index) {
-    const uint8_t ch = static_cast<uint8_t>(input[index]);
-    if (ch < 0x80) {
-      output += static_cast<char>(ch);
-      continue;
-    }
-
-    if (index + 2 < input.length() && ch == 0xE2 && static_cast<uint8_t>(input[index + 1]) == 0x86 &&
-        static_cast<uint8_t>(input[index + 2]) == 0x92) {
-      output += "->";
-      index += 2;
-      continue;
-    }
-
-    output += " ";
-    while (index + 1 < input.length() && (static_cast<uint8_t>(input[index + 1]) & 0xC0) == 0x80) {
-      ++index;
-    }
-  }
-
-  while (output.indexOf("  ") >= 0) {
-    output.replace("  ", " ");
-  }
-  output.trim();
-  return output;
-}
-
-String readJsonString(JsonObject object, const char* key, const String& fallback) {
-  const char* value = object[key] | nullptr;
-  return value && value[0] ? String(value) : fallback;
-}
-
-bool readBadgeText(JsonObject object, BadgeText& badge) {
-  if (object.isNull()) {
-    return false;
-  }
-
-  badge.name = readJsonString(object, "name", badge.name);
-  badge.title = readJsonString(object, "title", badge.title);
-  badge.subtitle = readJsonString(object, "subtitle", badge.subtitle);
-  badge.location = readJsonString(object, "location", badge.location);
-  badge.footer = readJsonString(object, "footer", badge.footer);
-  return true;
-}
-
-bool loadBadgeConfigFromJson(BadgeConfig& config) {
-  File file = SD.open(kBadgeJsonPath, FILE_READ);
-  if (!file) {
-    Serial.println("badge.json loaded no: open failed.");
-    return false;
-  }
-
-  JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, file);
-  file.close();
-
-  if (error) {
-    Serial.printf("badge.json loaded no: JSON parse failed: %s\n", error.c_str());
-    return false;
-  }
-
-  const uint32_t intervalSeconds = doc["interval_seconds"] | config.intervalSeconds;
-  config.intervalSeconds = intervalSeconds > 0 ? intervalSeconds : kDefaultIntervalSeconds;
-
-  const uint8_t orientation = doc["orientation"] | 0;
-  const uint8_t strapOrientation = doc["strap_orientation"] | 0;
-  config.upsideDown = orientation == 2 || strapOrientation == 2;
-  config.englishFromJson = readBadgeText(doc["english"], config.english);
-
-  Serial.printf("badge.json loaded %s: %s\n", config.englishFromJson ? "yes" : "no", kBadgeJsonPath);
-  Serial.printf("interval_seconds: %u\n", config.intervalSeconds);
-  Serial.printf("upside-down rotation: %s\n", config.upsideDown ? "yes" : "no");
-  return config.englishFromJson;
 }
 
 uint16_t readBe16(const uint8_t* data) {
@@ -289,12 +209,7 @@ bool readJpgDimensions(File& file, uint16_t& width, uint16_t& height) {
     while (marker == 0xFF) {
       marker = file.read();
     }
-
-    if (marker < 0) {
-      return false;
-    }
-
-    if (marker == 0xD9 || marker == 0xDA) {
+    if (marker < 0 || marker == 0xD9 || marker == 0xDA) {
       return false;
     }
 
@@ -339,15 +254,8 @@ ImageType imageTypeFromPath(const char* path) {
   return ImageType::Unknown;
 }
 
-const char* imageTypeName(ImageType type) {
-  switch (type) {
-    case ImageType::Png:
-      return "png";
-    case ImageType::Jpg:
-      return "jpg";
-    default:
-      return "unknown";
-  }
+const char* languageName(BadgeLanguage language) {
+  return language == BadgeLanguage::Japanese ? "Japanese" : "English";
 }
 
 bool inspectSdImage(const char* path, ImageAsset& asset) {
@@ -367,10 +275,10 @@ bool inspectSdImage(const char* path, ImageAsset& asset) {
   return dimensionsOk || asset.type != ImageType::Unknown;
 }
 
-bool findImageAsset(const char* label, const char* const* candidates, size_t candidateCount, ImageAsset& asset) {
+bool findSdImage(const char* label, const char* const* candidates, size_t candidateCount, ImageAsset& asset) {
   asset = ImageAsset{};
   if (!gSdMounted) {
-    Serial.printf("%s image loaded no: SD not mounted.\n", label);
+    Serial.printf("%s SD image loaded no: SD not mounted.\n", label);
     return false;
   }
 
@@ -383,13 +291,38 @@ bool findImageAsset(const char* label, const char* const* candidates, size_t can
     asset.found = true;
     asset.path = path;
     inspectSdImage(path, asset);
-    Serial.printf("%s image loaded yes: %s (%s %ux%u)\n", label, asset.path.c_str(), imageTypeName(asset.type),
-                  asset.width, asset.height);
+    Serial.printf("%s SD image loaded yes: %s (%ux%u)\n", label, asset.path.c_str(), asset.width, asset.height);
     return true;
   }
 
-  Serial.printf("%s image loaded no: no accepted path found.\n", label);
+  Serial.printf("%s SD image loaded no: no accepted path found.\n", label);
   return false;
+}
+
+bool loadBadgeJson() {
+  if (!gSdMounted || !SD.exists(kBadgeJsonPath)) {
+    Serial.printf("badge.json loaded no: %s missing.\n", kBadgeJsonPath);
+    return false;
+  }
+
+  File file = SD.open(kBadgeJsonPath, FILE_READ);
+  if (!file) {
+    Serial.println("badge.json loaded no: open failed.");
+    return false;
+  }
+
+  JsonDocument doc;
+  const DeserializationError error = deserializeJson(doc, file);
+  file.close();
+  if (error) {
+    Serial.printf("badge.json loaded no: %s\n", error.c_str());
+    return false;
+  }
+
+  const uint32_t intervalSeconds = doc["interval_seconds"] | kDefaultLanguageIntervalSeconds;
+  gBadgeConfig.intervalSeconds = intervalSeconds > 0 ? intervalSeconds : kDefaultLanguageIntervalSeconds;
+  Serial.printf("badge.json loaded yes: interval_seconds=%u\n", gBadgeConfig.intervalSeconds);
+  return true;
 }
 
 float fitScale(uint16_t sourceWidth, uint16_t sourceHeight, int32_t targetWidth, int32_t targetHeight) {
@@ -402,10 +335,9 @@ float fitScale(uint16_t sourceWidth, uint16_t sourceHeight, int32_t targetWidth,
   return scaleX < scaleY ? scaleX : scaleY;
 }
 
-bool drawSdImageFit(ImageAsset& asset, const Rect& rect, const char* label) {
+bool drawSdImageFit(const ImageAsset& asset, const Rect& rect, const char* label) {
   if (!asset.found || asset.type == ImageType::Unknown) {
-    Serial.printf("%s draw FAIL: image unavailable.\n", label);
-    asset.drawn = false;
+    Serial.printf("%s draw FAIL: SD image unavailable.\n", label);
     return false;
   }
 
@@ -424,7 +356,6 @@ bool drawSdImageFit(ImageAsset& asset, const Rect& rect, const char* label) {
     drawn = M5.Display.drawJpgFile(SD, asset.path.c_str(), x, y, drawW, drawH, 0, 0, scale, scale);
   }
 
-  asset.drawn = drawn;
   Serial.printf("%s draw %s: %s\n", label, drawn ? "OK" : "FAIL", asset.path.c_str());
   return drawn;
 }
@@ -432,7 +363,7 @@ bool drawSdImageFit(ImageAsset& asset, const Rect& rect, const char* label) {
 bool drawEmbeddedPngFit(const uint8_t* data, size_t dataSize, uint16_t sourceWidth, uint16_t sourceHeight,
                         const Rect& rect, const char* label) {
   if (data == nullptr || dataSize == 0 || sourceWidth == 0 || sourceHeight == 0) {
-    Serial.printf("%s draw FAIL: embedded asset unavailable.\n", label);
+    Serial.printf("%s draw FAIL: embedded image unavailable.\n", label);
     return false;
   }
 
@@ -442,229 +373,200 @@ bool drawEmbeddedPngFit(const uint8_t* data, size_t dataSize, uint16_t sourceWid
   const int32_t x = rect.x + (rect.w - drawW) / 2;
   const int32_t y = rect.y + (rect.h - drawH) / 2;
   const bool drawn = M5.Display.drawPng(data, static_cast<uint32_t>(dataSize), x, y, drawW, drawH, 0, 0, scale, scale);
-  Serial.printf("%s draw %s: embedded PNG (%u bytes)\n", label, drawn ? "OK" : "FAIL",
-                static_cast<unsigned>(dataSize));
+  Serial.printf("%s draw %s: embedded (%u bytes)\n", label, drawn ? "OK" : "FAIL", static_cast<unsigned>(dataSize));
   return drawn;
 }
 
-void setFontById(uint8_t fontId) {
-  switch (fontId) {
-    case 4:
-      M5.Display.setFont(&fonts::Font4);
-      break;
-    case 2:
-    default:
-      M5.Display.setFont(&fonts::Font2);
-      break;
-  }
+void prepareFullRefresh() {
+  auto& display = M5.Display;
+  display.setEpdMode(m5gfx::epd_fastest);
+  display.fillScreen(TFT_WHITE);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.setTextWrap(false, false);
 }
 
-void drawCenteredFitted(const String& rawText, int32_t centerY, uint8_t fontId, uint8_t maxSize, uint8_t minSize,
-                        int32_t maxWidth) {
+bool drawBadgeImage(BadgeLanguage language) {
   auto& display = M5.Display;
-  const String text = displaySafeText(rawText);
-  setFontById(fontId);
-  display.setTextDatum(textdatum_t::middle_center);
+  const Rect screen = {0, 0, display.width(), display.height()};
+  bool drawn = false;
 
-  uint8_t chosenSize = minSize;
-  for (int size = maxSize; size >= minSize; --size) {
-    display.setTextSize(size);
-    if (display.textWidth(text) <= maxWidth) {
-      chosenSize = static_cast<uint8_t>(size);
-      break;
+  if (language == BadgeLanguage::Japanese) {
+    drawn = drawSdImageFit(gBadgeJaSd, screen, "badge JA SD");
+    if (drawn) {
+      gLastBadgeSource = "SD badge_ja";
+      return true;
     }
+    drawn = drawEmbeddedPngFit(embedded_assets::kBadgeJaPng, embedded_assets::kBadgeJaPngSize,
+                               embedded_assets::kBadgeJaWidth, embedded_assets::kBadgeJaHeight, screen,
+                               "badge JA embedded");
+    gLastBadgeSource = "embedded badge_ja";
+    return drawn;
   }
 
-  display.setTextSize(chosenSize);
-  display.drawString(text, display.width() / 2, centerY);
+  drawn = drawSdImageFit(gBadgeEnSd, screen, "badge EN SD");
+  if (drawn) {
+    gLastBadgeSource = "SD badge_en";
+    return true;
+  }
+  drawn = drawEmbeddedPngFit(embedded_assets::kBadgeEnPng, embedded_assets::kBadgeEnPngSize,
+                             embedded_assets::kBadgeEnWidth, embedded_assets::kBadgeEnHeight, screen,
+                             "badge EN embedded");
+  gLastBadgeSource = "embedded badge_en";
+  return drawn;
 }
 
 void drawMinimalFallbackText() {
   auto& display = M5.Display;
-  display.fillScreen(TFT_WHITE);
-  display.setTextColor(TFT_BLACK, TFT_WHITE);
-  drawCenteredFitted(gBadge.english.name, display.height() / 2 - 50, 4, 2, 1, display.width() - 80);
-  drawCenteredFitted(gBadge.english.title, display.height() / 2 + 20, 2, 2, 1, display.width() - 80);
-  drawCenteredFitted(gBadge.english.footer, display.height() / 2 + 85, 2, 2, 1, display.width() - 80);
+  display.setFont(&fonts::Font4);
+  display.setTextSize(2);
+  display.setTextDatum(textdatum_t::middle_center);
+  display.drawString("Daniel Jimenez", display.width() / 2, display.height() / 2 - 40);
+  display.setFont(&fonts::Font2);
+  display.setTextSize(2);
+  display.drawString("Product Manager (AI)", display.width() / 2, display.height() / 2 + 30);
 }
 
-bool renderSdDynamicBadge() {
-  gRenderMode = RenderMode::SdDynamic;
-  gViewMode = ViewMode::Badge;
-  applyPortraitRotation();
-
-  auto& display = M5.Display;
-  const int32_t width = display.width();
-  const int32_t height = display.height();
-
-  display.setEpdMode(m5gfx::epd_fastest);
-  display.fillScreen(TFT_WHITE);
-  display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.setTextWrap(false, false);
-
-  gPhotoRect = {(width - 300) / 2, 36, 300, 330};
-  gQrRect = {(width - 310) / 2, height - 365, 310, 310};
-
-  const bool photoOk = drawSdImageFit(gProfilePhoto, gPhotoRect, "profile image");
-  if (!photoOk) {
-    return false;
-  }
-
-  display.drawLine(70, 388, width - 70, 388, TFT_BLACK);
-  drawCenteredFitted(gBadge.english.name, 442, 4, 2, 1, width - 80);
-  drawCenteredFitted(gBadge.english.title, 505, 2, 2, 1, width - 80);
-  drawCenteredFitted(gBadge.english.subtitle, 558, 2, 2, 1, width - 80);
-  drawCenteredFitted(gBadge.english.location, 595, 2, 2, 1, width - 80);
-  display.drawLine(70, 625, width - 70, 625, TFT_BLACK);
-
-  const bool qrOk = drawSdImageFit(gQr, gQrRect, "QR image");
-  if (!qrOk) {
-    return false;
-  }
-
-  drawCenteredFitted(gBadge.english.footer, height - 32, 2, 2, 1, width - 80);
-  display.display();
-  return true;
+void setBadgeTouchZones() {
+  gPhotoRect = {94, 32, 352, 350};
+  gQrRect = {104, 600, 332, 330};
 }
 
-void setFallbackTouchZones() {
-  const int32_t width = M5.Display.width();
-  const int32_t height = M5.Display.height();
-  gPhotoRect = {(width - 430) / 2, 32, 430, 360};
-  gQrRect = {(width - 360) / 2, height - 390, 360, 330};
-}
+void renderBadge(bool forceFullRefresh = true) {
+  (void)forceFullRefresh;
+  gScreen = Screen::Badge;
+  applyBadgeRotation();
+  prepareFullRefresh();
 
-void renderEmbeddedFallbackBadge(const char* reason) {
-  gRenderMode = RenderMode::EmbeddedFallback;
-  gViewMode = ViewMode::Badge;
-  applyPortraitRotation();
-
-  auto& display = M5.Display;
-  display.setEpdMode(m5gfx::epd_fastest);
-  display.fillScreen(TFT_WHITE);
-  display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.setTextWrap(false, false);
-
-  const Rect screen = {0, 0, display.width(), display.height()};
-  const bool drawn = drawEmbeddedPngFit(embedded_assets::kFullBadgePng, embedded_assets::kFullBadgePngSize,
-                                        embedded_assets::kFullBadgeWidth, embedded_assets::kFullBadgeHeight, screen,
-                                        "embedded fallback badge");
-  if (!drawn) {
+  if (!drawBadgeImage(gBadgeLanguage)) {
+    Serial.println("badge draw failed: using minimal text fallback.");
     drawMinimalFallbackText();
+    gLastBadgeSource = "minimal text fallback";
   }
-  setFallbackTouchZones();
-  display.display();
 
-  Serial.printf("using embedded fallback badge: %s\n", reason);
+  setBadgeTouchZones();
+  M5.Display.display();
+  gLastLanguageSwitchMs = millis();
+  Serial.printf("Badge mode: language=%s source=%s orientation=strap-180\n", languageName(gBadgeLanguage),
+                gLastBadgeSource.c_str());
 }
 
-void renderBadge() {
-  const bool canTryDynamic = gSdMounted && gJsonLoaded && gProfilePhoto.found && gQr.found;
+void drawButton(const Rect& rect, const char* label) {
+  auto& display = M5.Display;
+  display.drawRoundRect(rect.x, rect.y, rect.w, rect.h, 8, TFT_BLACK);
+  display.setTextDatum(textdatum_t::middle_center);
+  display.setFont(&fonts::Font4);
+  display.setTextSize(1);
+  display.drawString(label, rect.x + rect.w / 2, rect.y + rect.h / 2);
+}
 
-  if (canTryDynamic) {
-    Serial.println("using SD dynamic badge: attempting render.");
-    if (renderSdDynamicBadge()) {
-      Serial.println("using SD dynamic badge: render OK.");
-      return;
-    }
-    Serial.println("using SD dynamic badge: render failed; switching to embedded fallback badge.");
-  } else {
-    Serial.println("using SD dynamic badge: not available.");
-  }
+void renderHome() {
+  gScreen = Screen::Home;
+  applyAppRotation();
+  prepareFullRefresh();
 
-  renderEmbeddedFallbackBadge(canTryDynamic ? "SD component draw failed" : "SD/json/assets incomplete");
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  display.setFont(&fonts::Font4);
+  display.setTextSize(1);
+  display.drawString("PaperBadge", 32, 34);
+  display.setFont(&fonts::Font2);
+  display.setTextSize(2);
+  display.drawString("Badge menu", 34, 92);
+
+  const int32_t width = display.width();
+  gBadgeButton = {36, 170, width - 72, 96};
+  gDebugButton = {36, 296, width - 72, 96};
+  drawButton(gBadgeButton, "Badge");
+  drawButton(gDebugButton, "Debug");
+
+  display.display();
+  Serial.println("Home/Menu mode: normal orientation.");
+}
+
+void renderDebug() {
+  gScreen = Screen::Debug;
+  applyAppRotation();
+  prepareFullRefresh();
+
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  display.setFont(&fonts::Font2);
+  display.setTextSize(1);
+
+  int32_t y = 28;
+  display.drawString("PaperBadge Debug", 26, y);
+  y += 34;
+  display.drawString(String("firmware: ") + kFirmwareVersion, 26, y);
+  y += 26;
+  display.drawString(String("SD mounted: ") + (gSdMounted ? "yes" : "no"), 26, y);
+  y += 26;
+  display.drawString(String("badge.json: ") + (gBadgeJsonLoaded ? "loaded" : "missing/fail"), 26, y);
+  y += 26;
+  display.drawString(String("EN SD: ") + (gBadgeEnSd.found ? gBadgeEnSd.path : "missing"), 26, y);
+  y += 26;
+  display.drawString(String("JA SD: ") + (gBadgeJaSd.found ? gBadgeJaSd.path : "missing"), 26, y);
+  y += 26;
+  display.drawString(String("profile: ") + (gProfileSd.found ? gProfileSd.path : "embedded"), 26, y);
+  y += 26;
+  display.drawString(String("QR: ") + (gQrSd.found ? gQrSd.path : "embedded"), 26, y);
+  y += 26;
+  display.drawString(String("badge language: ") + languageName(gBadgeLanguage), 26, y);
+  y += 26;
+  display.drawString("orientation: strap 180", 26, y);
+  y += 26;
+  display.drawString(String("source: ") + gLastBadgeSource, 26, y);
+  y += 26;
+  display.drawString(String("embedded bytes: ") + static_cast<unsigned>(embedded_assets::kEmbeddedPngTotalSize), 26, y);
+  y += 46;
+  display.drawString("Tap to return home", 26, y);
+
+  display.display();
+  Serial.println("Debug screen shown.");
 }
 
 void renderQrZoom() {
-  applyPortraitRotation();
-  gViewMode = ViewMode::QrZoom;
+  gScreen = Screen::QrZoom;
+  applyBadgeRotation();
+  prepareFullRefresh();
 
   auto& display = M5.Display;
   const int32_t margin = 46;
   const Rect rect = {margin, (display.height() - (display.width() - margin * 2)) / 2, display.width() - margin * 2,
                      display.width() - margin * 2};
 
-  display.setEpdMode(m5gfx::epd_fastest);
-  display.fillScreen(TFT_WHITE);
-
-  bool drawn = false;
-  if (gRenderMode == RenderMode::SdDynamic && gQr.found) {
-    drawn = drawSdImageFit(gQr, rect, "QR zoom");
-  }
+  bool drawn = drawSdImageFit(gQrSd, rect, "QR zoom SD");
   if (!drawn) {
     drawn = drawEmbeddedPngFit(embedded_assets::kQrPng, embedded_assets::kQrPngSize, embedded_assets::kQrWidth,
-                               embedded_assets::kQrHeight, rect, "embedded QR zoom");
+                               embedded_assets::kQrHeight, rect, "QR zoom embedded");
   }
   if (!drawn) {
     drawMinimalFallbackText();
   }
 
   display.display();
+  Serial.println("QR zoom shown.");
 }
 
 void renderPhotoZoom() {
-  applyPortraitRotation();
-  gViewMode = ViewMode::PhotoZoom;
+  gScreen = Screen::PhotoZoom;
+  applyBadgeRotation();
+  prepareFullRefresh();
 
   auto& display = M5.Display;
-  const Rect rect = {24, 24, display.width() - 48, display.height() - 48};
+  const Rect rect = {26, 26, display.width() - 52, display.height() - 52};
 
-  display.setEpdMode(m5gfx::epd_fastest);
-  display.fillScreen(TFT_WHITE);
-
-  bool drawn = false;
-  if (gRenderMode == RenderMode::SdDynamic && gProfilePhoto.found) {
-    drawn = drawSdImageFit(gProfilePhoto, rect, "photo zoom");
-  }
+  bool drawn = drawSdImageFit(gProfileSd, rect, "photo zoom SD");
   if (!drawn) {
     drawn = drawEmbeddedPngFit(embedded_assets::kProfilePng, embedded_assets::kProfilePngSize,
                                embedded_assets::kProfileWidth, embedded_assets::kProfileHeight, rect,
-                               "embedded photo zoom");
+                               "photo zoom embedded");
   }
   if (!drawn) {
     drawMinimalFallbackText();
   }
 
   display.display();
-}
-
-void renderDebugScreen() {
-  applyPortraitRotation();
-  gViewMode = ViewMode::Debug;
-
-  auto& display = M5.Display;
-  display.setEpdMode(m5gfx::epd_fastest);
-  display.fillScreen(TFT_WHITE);
-  display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.setFont(&fonts::Font2);
-  display.setTextSize(1);
-  display.setTextDatum(textdatum_t::top_left);
-
-  int32_t y = 24;
-  display.drawString("PaperBadge debug", 24, y);
-  y += 34;
-  display.drawString(String("firmware: ") + kFirmwareVersion, 24, y);
-  y += 28;
-  display.drawString(String("mode: ") + (gRenderMode == RenderMode::SdDynamic ? "SD dynamic" : "embedded fallback"), 24,
-                     y);
-  y += 28;
-  display.drawString(String("SD mounted: ") + (gSdMounted ? "yes" : "no"), 24, y);
-  y += 28;
-  display.drawString(String("badge.json: ") + (gJsonLoaded ? "loaded" : (gBadgeJsonExists ? "parse fail" : "missing")),
-                     24, y);
-  y += 28;
-  display.drawString(String("profile: ") + (gProfilePhoto.found ? gProfilePhoto.path : "missing"), 24, y);
-  y += 28;
-  display.drawString(String("QR: ") + (gQr.found ? gQr.path : "missing"), 24, y);
-  y += 28;
-  display.drawString(String("SD full badge: ") + (gSdFullBadge.found ? gSdFullBadge.path : "missing"), 24, y);
-  y += 28;
-  display.drawString(String("embedded bytes: ") + static_cast<unsigned>(embedded_assets::kEmbeddedPngTotalSize), 24, y);
-  y += 40;
-  display.drawString("Tap to return", 24, y);
-
-  display.display();
-  Serial.println("debug screen shown.");
+  Serial.println("Photo zoom shown.");
 }
 
 bool clickedPoint(const m5::touch_detail_t& detail, int32_t& x, int32_t& y) {
@@ -675,6 +577,66 @@ bool clickedPoint(const m5::touch_detail_t& detail, int32_t& x, int32_t& y) {
   x = constrain(detail.x, 0, M5.Display.width());
   y = constrain(detail.y, 0, M5.Display.height());
   return true;
+}
+
+void handleTouch() {
+  if (!M5.Touch.isEnabled()) {
+    return;
+  }
+
+  const auto detail = M5.Touch.getDetail();
+  if (gScreen == Screen::Badge && detail.wasHold()) {
+    renderHome();
+    return;
+  }
+
+  int32_t tapX = 0;
+  int32_t tapY = 0;
+  if (!clickedPoint(detail, tapX, tapY)) {
+    return;
+  }
+
+  if (gScreen == Screen::Badge) {
+    if (gQrRect.contains(tapX, tapY)) {
+      renderQrZoom();
+    } else if (gPhotoRect.contains(tapX, tapY)) {
+      renderPhotoZoom();
+    }
+    return;
+  }
+
+  if (gScreen == Screen::QrZoom || gScreen == Screen::PhotoZoom) {
+    renderBadge();
+    return;
+  }
+
+  if (gScreen == Screen::Debug) {
+    renderHome();
+    return;
+  }
+
+  if (gScreen == Screen::Home) {
+    if (gBadgeButton.contains(tapX, tapY)) {
+      renderBadge();
+    } else if (gDebugButton.contains(tapX, tapY)) {
+      renderDebug();
+    }
+  }
+}
+
+void maybeSwitchBadgeLanguage() {
+  if (gScreen != Screen::Badge) {
+    return;
+  }
+
+  const uint32_t intervalMs = gBadgeConfig.intervalSeconds * 1000UL;
+  if (intervalMs == 0 || millis() - gLastLanguageSwitchMs < intervalMs) {
+    return;
+  }
+
+  gBadgeLanguage = gBadgeLanguage == BadgeLanguage::English ? BadgeLanguage::Japanese : BadgeLanguage::English;
+  Serial.printf("Badge language timer: switching to %s\n", languageName(gBadgeLanguage));
+  renderBadge(false);
 }
 }  // namespace
 
@@ -689,70 +651,45 @@ void setup() {
 
   M5.begin(cfg);
   waitForSerial();
-  capturePortraitRotation();
+  captureNormalPortraitRotation();
 
   Serial.println();
   Serial.printf("PaperBadge+ %s boot\n", kFirmwareVersion);
   Serial.printf("M5 board id: %d\n", static_cast<int>(M5.getBoard()));
-  Serial.printf("Display at boot: %dx%d rotation=%u\n", M5.Display.width(), M5.Display.height(),
-                M5.Display.getRotation() & 3);
+  Serial.printf("Display at boot: %dx%d rotation=%u normalPortrait=%u\n", M5.Display.width(), M5.Display.height(),
+                M5.Display.getRotation() & 3, gNormalPortraitRotation);
   Serial.printf("Flash size: %u bytes\n", ESP.getFlashChipSize());
   Serial.printf("PSRAM found: %s\n", psramFound() ? "yes" : "no");
   Serial.printf("PSRAM size: %u bytes\n", ESP.getPsramSize());
-  Serial.printf("full badge fallback embedded yes: %s %ux%u, %u bytes\n", embedded_assets::kFullBadgeSource,
-                embedded_assets::kFullBadgeWidth, embedded_assets::kFullBadgeHeight,
-                static_cast<unsigned>(embedded_assets::kFullBadgePngSize));
-  Serial.printf("embedded QR fallback %s: %s %ux%u, %u bytes\n", embedded_assets::kQrPngSize ? "yes" : "no",
-                embedded_assets::kQrSource, embedded_assets::kQrWidth, embedded_assets::kQrHeight,
-                static_cast<unsigned>(embedded_assets::kQrPngSize));
-  Serial.printf("embedded photo fallback %s: %s %ux%u, %u bytes\n",
-                embedded_assets::kProfilePngSize ? "yes" : "no", embedded_assets::kProfileSource,
+  Serial.printf("embedded EN yes: %s %ux%u %u bytes\n", embedded_assets::kBadgeEnGenerated,
+                embedded_assets::kBadgeEnWidth, embedded_assets::kBadgeEnHeight,
+                static_cast<unsigned>(embedded_assets::kBadgeEnPngSize));
+  Serial.printf("embedded JA yes: %s %ux%u %u bytes\n", embedded_assets::kBadgeJaGenerated,
+                embedded_assets::kBadgeJaWidth, embedded_assets::kBadgeJaHeight,
+                static_cast<unsigned>(embedded_assets::kBadgeJaPngSize));
+  Serial.printf("embedded profile yes: %s %ux%u %u bytes\n", embedded_assets::kProfileGenerated,
                 embedded_assets::kProfileWidth, embedded_assets::kProfileHeight,
                 static_cast<unsigned>(embedded_assets::kProfilePngSize));
+  Serial.printf("embedded QR yes: %s %ux%u %u bytes\n", embedded_assets::kQrGenerated, embedded_assets::kQrWidth,
+                embedded_assets::kQrHeight, static_cast<unsigned>(embedded_assets::kQrPngSize));
 
   bootBeep();
 
   gSdMounted = mountSdCard();
   Serial.printf("SD mounted %s.\n", gSdMounted ? "yes" : "no");
-
-  gBadgeJsonExists = gSdMounted && SD.exists(kBadgeJsonPath);
-  Serial.printf("badge.json found %s: %s\n", gBadgeJsonExists ? "yes" : "no", kBadgeJsonPath);
-  gJsonLoaded = gBadgeJsonExists && loadBadgeConfigFromJson(gBadge);
-
-  findImageAsset("profile", kProfilePhotoCandidates, countOf(kProfilePhotoCandidates), gProfilePhoto);
-  findImageAsset("QR", kQrCandidates, countOf(kQrCandidates), gQr);
-  findImageAsset("SD full badge", kFullBadgeCandidates, countOf(kFullBadgeCandidates), gSdFullBadge);
+  gBadgeJsonLoaded = loadBadgeJson();
+  findSdImage("badge EN", kBadgeEnCandidates, countOf(kBadgeEnCandidates), gBadgeEnSd);
+  findSdImage("badge JA", kBadgeJaCandidates, countOf(kBadgeJaCandidates), gBadgeJaSd);
+  findSdImage("profile", kProfileCandidates, countOf(kProfileCandidates), gProfileSd);
+  findSdImage("QR", kQrCandidates, countOf(kQrCandidates), gQrSd);
+  Serial.println("Badge mode defaults to strap 180 orientation.");
 
   renderBadge();
 }
 
 void loop() {
   M5.update();
-
-  if (M5.Touch.isEnabled()) {
-    const auto detail = M5.Touch.getDetail();
-
-    if (detail.wasHold()) {
-      renderDebugScreen();
-      delay(100);
-      return;
-    }
-
-    int32_t tapX = 0;
-    int32_t tapY = 0;
-    if (clickedPoint(detail, tapX, tapY)) {
-      if (gViewMode == ViewMode::Debug || gViewMode == ViewMode::QrZoom || gViewMode == ViewMode::PhotoZoom) {
-        Serial.println("View: badge");
-        renderBadge();
-      } else if (gQrRect.contains(tapX, tapY)) {
-        Serial.println("View: QR zoom");
-        renderQrZoom();
-      } else if (gPhotoRect.contains(tapX, tapY)) {
-        Serial.println("View: photo zoom");
-        renderPhotoZoom();
-      }
-    }
-  }
-
+  handleTouch();
+  maybeSwitchBadgeLanguage();
   delay(100);
 }

@@ -14,6 +14,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v0.6: add portrait and landscape badge layouts. JSON `orientation` can start in portrait or landscape, `strap_orientation: 2` applies upside-down rotation, center tap switches language, and top-right tap toggles layout. IMU auto-rotate is intentionally not used.
 - v0.7: tap the QR or photo area for a full-screen zoom view. Tap a zoom view to return to the badge. QR zoom keeps a white margin for scanner readability.
 - v0.8: generate embedded fallback assets from `sample-data/paperbadge`, render a polished public badge without debug labels, prefer SD dynamic assets when JSON/photo/QR are available, and fall back to an embedded full-badge PNG when SD or component assets are missing.
+- v0.9: generate exact-size bilingual full badge images, embed both English and Japanese fallbacks, boot Badge mode in 180 degree strap orientation, alternate EN/JA every 15 seconds, and use long press to enter a normal-orientation Home/Debug mode.
 
 ## Hardware
 
@@ -62,33 +63,42 @@ PAPERSD/
 For v0.8 the firmware first tries these exact paths:
 
 - `/paperbadge/badge.json`
+- `/paperbadge/badge_en.png`
+- `/paperbadge/badge_ja.png`
 - `/paperbadge/profile_photo.png`
 - `/paperbadge/qr.png`
 
 It also accepts simple fallback variants for SD dynamic mode:
 
+- English badge: `/paperbadge/completeBadge.png`, `/paperbadge/complete_badge.png`, `/paperbadge/badge.png`, `/paperbadge/badge_full.png`, `/paperbadge/full_badge.png`.
+- Japanese badge: `/paperbadge/badge_jp.png`, `/paperbadge/badge_japanese.png`, `/paperbadge/completeBadge_ja.png`, `/paperbadge/complete_badge_ja.png`.
 - Profile photo: `/paperbadge/profilePhoto.png`, `/paperbadge/photo.png`, `/paperbadge/portrait.png`, `/paperbadge/profile.png`, plus `.jpg` / `.jpeg` variants for the profile names.
 - QR: `/paperbadge/qr.JPG`, `/paperbadge/qr.jpg`, `/paperbadge/qr.jpeg`, `/paperbadge/linkedin_qr.png`, `/paperbadge/linkedinQR.png`.
-- Full badge on SD, for inspection/logging: `/paperbadge/badge_full.png`, `/paperbadge/badge.png`, `/paperbadge/full_badge.png`, `/paperbadge/badge_en.png`, `/paperbadge/complete_badge.png`, `/paperbadge/completeBadge.png`.
 
-If SD dynamic mode cannot load `badge.json`, a profile image, and a QR image, the public screen falls back to the embedded full-badge PNG generated into firmware.
+If SD badge images are missing or fail to decode, the public screen falls back to the embedded English/Japanese badge PNGs generated into firmware.
 
 ## Embedded Fallback Assets
 
 Build embedded fallback assets from the repo sample data:
 
 ```bash
-python3 tools/build_embedded_assets.py
+/Users/danieljimenez/AIDevelopment/.venv/bin/python tools/build_embedded_assets.py
 ```
 
-The script inspects `sample-data/paperbadge`, chooses the most likely full badge, profile photo, QR code, and `badge.json`, normalizes generated copies under `generated-assets/embedded`, and writes `src/embedded_assets.h`. It never deletes or overwrites the original sample files. On macOS it uses the built-in `sips` command, so Pillow is not required for this script.
+The script inspects `sample-data/paperbadge`, chooses the most likely English full badge, Japanese full badge if present, profile photo, QR code, and `badge.json`, normalizes generated copies under `generated-assets/embedded`, and writes `src/embedded_assets.h`. It never deletes or overwrites the original sample files. Pillow is required so the script can generate `badge_ja.png` with macOS Japanese fonts when a Japanese full-badge image is not present.
 
 Current selected repo assets:
 
 - Full badge: `sample-data/paperbadge/completeBadge.png`
+- Generated English badge: `generated-assets/embedded/badge_en.png` at `540x960`
+- Generated Japanese badge: `generated-assets/embedded/badge_ja.png` at `540x960`
 - Profile photo: `sample-data/paperbadge/profilePhoto.png`
 - QR: `sample-data/paperbadge/qr.png`
 - JSON: `sample-data/paperbadge/badge.json`
+
+## Orientation
+
+Badge mode defaults to 180 degree strap orientation so the badge appears upright when the PaperS3 is hanging from the neck strap holder. Home/Menu, Debug, Settings, and PaperCoach modes use normal handheld orientation. Physical buttons are not used for app controls.
 
 ## SD Asset Preparation
 
@@ -108,7 +118,7 @@ The script converts `profilePhoto.png`, `profilePhoto.jpg`, or `profilePhoto.jpe
 
 ## Japanese Text
 
-v0.8 keeps the public badge in English only. Earlier Japanese text experiments compile with built-in M5GFX fonts, but the visual quality is not ready for the public badge screen. The next step is either an embedded Japanese full-badge image or a dedicated Japanese font asset.
+v0.9 uses a pre-rendered Japanese badge image generated on the Mac and embedded in firmware. The PaperS3 does not render Japanese text dynamically in Badge mode.
 
 ## Download Mode
 
