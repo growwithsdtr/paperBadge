@@ -1,6 +1,8 @@
 .pio/
 .vscode/
+.DS_Store
 dist/
 __pycache__/
 *.py[cod]
 get-platformio.py
+generated-assets/

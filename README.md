@@ -1,8 +1,8 @@
 # PaperBadge
 
-First working firmware milestone for M5Stack PaperS3 / M5PaperS3 v1.2.
+Firmware for a custom PaperBadgePlus e-ink badge on M5Stack PaperS3 / M5PaperS3 v1.2.
 
-The firmware is intentionally small and built in compile-checked milestones. It does not use Wi-Fi, Bluetooth, cloud calls, custom Japanese fonts, or image decoding yet.
+The firmware is intentionally simple and compile-checked in milestones. It does not use Wi-Fi, Bluetooth, cloud calls, or ESP-IDF.
 
 ## Version Status
 
@@ -13,6 +13,7 @@ The firmware is intentionally small and built in compile-checked milestones. It 
 - v0.5: switch English/Japanese every `interval_seconds` seconds and switch immediately on a center tap. Japanese uses M5GFX `efontJA_16` when JSON Japanese text is present; otherwise it uses romanized fallback text.
 - v0.6: add portrait and landscape badge layouts. JSON `orientation` can start in portrait or landscape, `strap_orientation: 2` applies upside-down rotation, center tap switches language, and top-right tap toggles layout. IMU auto-rotate is intentionally not used.
 - v0.7: tap the QR or photo area for a full-screen zoom view. Tap a zoom view to return to the badge. QR zoom keeps a white margin for scanner readability.
+- v0.8: generate embedded fallback assets from `sample-data/paperbadge`, render a polished public badge without debug labels, prefer SD dynamic assets when JSON/photo/QR are available, and fall back to an embedded full-badge PNG when SD or component assets are missing.
 
 ## Hardware
 
@@ -44,7 +45,7 @@ The default upload speed is `1500000`. If upload is unstable through a cable or 
 pio device monitor --port /dev/tty.usbmodem1101
 ```
 
-The serial monitor prints board/display/flash/PSRAM details, whether the SD card mounted, whether `/paperbadge/badge.json`, `/paperbadge/profile_photo.png`, and `/paperbadge/qr.png` were found, JSON parse status, and whether rendered text came from JSON or fallback.
+The serial monitor prints board/display/flash/PSRAM details, whether the SD card mounted, whether `/paperbadge/badge.json`, profile, and QR assets were found, JSON parse status, embedded fallback sizes, and whether the public screen used SD dynamic mode or embedded fallback mode.
 
 ## SD Card
 
@@ -58,7 +59,38 @@ PAPERSD/
     qr.png
 ```
 
-For v0.4 `badge.json` is read and prepared PNG images are drawn from SD. Photos and QR codes must be prepared by the script before boot for best results.
+For v0.8 the firmware first tries these exact paths:
+
+- `/paperbadge/badge.json`
+- `/paperbadge/profile_photo.png`
+- `/paperbadge/qr.png`
+
+It also accepts simple fallback variants for SD dynamic mode:
+
+- Profile photo: `/paperbadge/profilePhoto.png`, `/paperbadge/photo.png`, `/paperbadge/portrait.png`, `/paperbadge/profile.png`, plus `.jpg` / `.jpeg` variants for the profile names.
+- QR: `/paperbadge/qr.JPG`, `/paperbadge/qr.jpg`, `/paperbadge/qr.jpeg`, `/paperbadge/linkedin_qr.png`, `/paperbadge/linkedinQR.png`.
+- Full badge on SD, for inspection/logging: `/paperbadge/badge_full.png`, `/paperbadge/badge.png`, `/paperbadge/full_badge.png`, `/paperbadge/badge_en.png`, `/paperbadge/complete_badge.png`, `/paperbadge/completeBadge.png`.
+
+If SD dynamic mode cannot load `badge.json`, a profile image, and a QR image, the public screen falls back to the embedded full-badge PNG generated into firmware.
+
+## Embedded Fallback Assets
+
+Build embedded fallback assets from the repo sample data:
+
+```bash
+python3 tools/build_embedded_assets.py
+```
+
+The script inspects `sample-data/paperbadge`, chooses the most likely full badge, profile photo, QR code, and `badge.json`, normalizes generated copies under `generated-assets/embedded`, and writes `src/embedded_assets.h`. It never deletes or overwrites the original sample files. On macOS it uses the built-in `sips` command, so Pillow is not required for this script.
+
+Current selected repo assets:
+
+- Full badge: `sample-data/paperbadge/completeBadge.png`
+- Profile photo: `sample-data/paperbadge/profilePhoto.png`
+- QR: `sample-data/paperbadge/qr.png`
+- JSON: `sample-data/paperbadge/badge.json`
+
+## SD Asset Preparation
 
 Install the image conversion dependency once:
 
@@ -76,7 +108,7 @@ The script converts `profilePhoto.png`, `profilePhoto.jpg`, or `profilePhoto.jpe
 
 ## Japanese Text
 
-v0.5 attempts Japanese rendering with the built-in M5GFX `efontJA_16` font. This compiles, but the visual quality still needs to be checked on the real e-paper display. If glyph coverage or sizing is not good enough, the next step is to add a dedicated Japanese font asset and load it from firmware.
+v0.8 keeps the public badge in English only. Earlier Japanese text experiments compile with built-in M5GFX fonts, but the visual quality is not ready for the public badge screen. The next step is either an embedded Japanese full-badge image or a dedicated Japanese font asset.
 
 ## Download Mode
 
