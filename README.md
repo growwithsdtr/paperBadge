@@ -15,6 +15,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v0.7: tap the QR or photo area for a full-screen zoom view. Tap a zoom view to return to the badge. QR zoom keeps a white margin for scanner readability.
 - v0.8: generate embedded fallback assets from `sample-data/paperbadge`, render a polished public badge without debug labels, prefer SD dynamic assets when JSON/photo/QR are available, and fall back to an embedded full-badge PNG when SD or component assets are missing.
 - v0.9: generate exact-size bilingual full badge images, embed both English and Japanese fallbacks, boot Badge mode in 180 degree strap orientation, alternate EN/JA every 15 seconds, and use long press to enter a normal-orientation Home/Debug mode.
+- v1.0: production Badge mode with persistent Settings stored in ESP32 Preferences/NVS. Badge boots first, uses strap or handheld orientation according to Settings, supports auto/English/Japanese language mode, and exposes normal-orientation Home, Settings, Debug, and a PaperCoach placeholder.
 
 ## Hardware
 
@@ -99,6 +100,24 @@ Current selected repo assets:
 ## Orientation
 
 Badge mode defaults to 180 degree strap orientation so the badge appears upright when the PaperS3 is hanging from the neck strap holder. Home/Menu, Debug, Settings, and PaperCoach modes use normal handheld orientation. Physical buttons are not used for app controls.
+
+Long-press the center of the Badge screen to enter Home/Menu. Settings lets you persist:
+
+- Badge orientation: `strap` or `handheld`
+- Badge language: `auto`, `English`, or `Japanese`
+
+Settings are stored in ESP32 Preferences/NVS and survive SD card removal.
+
+## Home/Menu
+
+v1.0 Home/Menu entries:
+
+- Badge
+- PaperCoach
+- Settings
+- Debug
+
+PaperCoach is a placeholder in v1.0. The app shell starts in v1.1.
 
 ## SD Asset Preparation
 

@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 #include <SD.h>
 #include <SPI.h>
 #include <M5Unified.h>
@@ -10,8 +11,9 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v0.9";
+constexpr const char* kFirmwareVersion = "v1.0";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
+constexpr const char* kPrefsNamespace = "paperbadge";
 constexpr uint32_t kDefaultLanguageIntervalSeconds = 15;
 
 constexpr const char* kBadgeEnCandidates[] = {
@@ -66,14 +68,27 @@ enum class ImageType {
 enum class Screen {
   Badge,
   Home,
+  Settings,
   Debug,
   QrZoom,
   PhotoZoom,
+  PaperCoach,
 };
 
 enum class BadgeLanguage {
   English,
   Japanese,
+};
+
+enum class OrientationMode : uint8_t {
+  Strap = 0,
+  Handheld = 1,
+};
+
+enum class LanguageMode : uint8_t {
+  Auto = 0,
+  English = 1,
+  Japanese = 2,
 };
 
 struct Rect {
@@ -103,7 +118,14 @@ struct BadgeConfig {
   uint32_t intervalSeconds = kDefaultLanguageIntervalSeconds;
 };
 
+struct Settings {
+  OrientationMode orientationMode = OrientationMode::Strap;
+  LanguageMode languageMode = LanguageMode::Auto;
+};
+
 BadgeConfig gBadgeConfig;
+Settings gSettings;
+Preferences gPrefs;
 ImageAsset gBadgeEnSd;
 ImageAsset gBadgeJaSd;
 ImageAsset gProfileSd;
@@ -113,7 +135,14 @@ BadgeLanguage gBadgeLanguage = BadgeLanguage::English;
 Rect gPhotoRect;
 Rect gQrRect;
 Rect gBadgeButton;
+Rect gPaperCoachButton;
+Rect gSettingsButton;
 Rect gDebugButton;
+Rect gOrientationButton;
+Rect gLanguageAutoButton;
+Rect gLanguageEnglishButton;
+Rect gLanguageJapaneseButton;
+Rect gHomeButton;
 bool gSdMounted = false;
 bool gBadgeJsonLoaded = false;
 uint8_t gNormalPortraitRotation = 0;
@@ -144,7 +173,9 @@ void captureNormalPortraitRotation() {
 }
 
 void applyBadgeRotation() {
-  M5.Display.setRotation((gNormalPortraitRotation + 2) & 3);
+  const uint8_t rotation =
+      gSettings.orientationMode == OrientationMode::Strap ? ((gNormalPortraitRotation + 2) & 3) : gNormalPortraitRotation;
+  M5.Display.setRotation(rotation);
 }
 
 void applyAppRotation() {
@@ -256,6 +287,57 @@ ImageType imageTypeFromPath(const char* path) {
 
 const char* languageName(BadgeLanguage language) {
   return language == BadgeLanguage::Japanese ? "Japanese" : "English";
+}
+
+const char* orientationModeName() {
+  return gSettings.orientationMode == OrientationMode::Strap ? "strap" : "handheld";
+}
+
+const char* languageModeName() {
+  switch (gSettings.languageMode) {
+    case LanguageMode::English:
+      return "English";
+    case LanguageMode::Japanese:
+      return "Japanese";
+    case LanguageMode::Auto:
+    default:
+      return "auto";
+  }
+}
+
+void loadSettings() {
+  gPrefs.begin(kPrefsNamespace, true);
+  const uint8_t orientation = gPrefs.getUChar("orient", static_cast<uint8_t>(OrientationMode::Strap));
+  const uint8_t language = gPrefs.getUChar("lang", static_cast<uint8_t>(LanguageMode::Auto));
+  gPrefs.end();
+
+  gSettings.orientationMode = orientation == static_cast<uint8_t>(OrientationMode::Handheld) ? OrientationMode::Handheld
+                                                                                             : OrientationMode::Strap;
+  if (language == static_cast<uint8_t>(LanguageMode::English)) {
+    gSettings.languageMode = LanguageMode::English;
+  } else if (language == static_cast<uint8_t>(LanguageMode::Japanese)) {
+    gSettings.languageMode = LanguageMode::Japanese;
+  } else {
+    gSettings.languageMode = LanguageMode::Auto;
+  }
+
+  Serial.printf("Settings loaded: orientation=%s language=%s\n", orientationModeName(), languageModeName());
+}
+
+void saveSettings() {
+  gPrefs.begin(kPrefsNamespace, false);
+  gPrefs.putUChar("orient", static_cast<uint8_t>(gSettings.orientationMode));
+  gPrefs.putUChar("lang", static_cast<uint8_t>(gSettings.languageMode));
+  gPrefs.end();
+  Serial.printf("Settings saved: orientation=%s language=%s\n", orientationModeName(), languageModeName());
+}
+
+void enforceLanguageMode() {
+  if (gSettings.languageMode == LanguageMode::English) {
+    gBadgeLanguage = BadgeLanguage::English;
+  } else if (gSettings.languageMode == LanguageMode::Japanese) {
+    gBadgeLanguage = BadgeLanguage::Japanese;
+  }
 }
 
 bool inspectSdImage(const char* path, ImageAsset& asset) {
@@ -434,6 +516,7 @@ void setBadgeTouchZones() {
 void renderBadge(bool forceFullRefresh = true) {
   (void)forceFullRefresh;
   gScreen = Screen::Badge;
+  enforceLanguageMode();
   applyBadgeRotation();
   prepareFullRefresh();
 
@@ -446,8 +529,8 @@ void renderBadge(bool forceFullRefresh = true) {
   setBadgeTouchZones();
   M5.Display.display();
   gLastLanguageSwitchMs = millis();
-  Serial.printf("Badge mode: language=%s source=%s orientation=strap-180\n", languageName(gBadgeLanguage),
-                gLastBadgeSource.c_str());
+  Serial.printf("Badge mode: language=%s source=%s orientation=%s\n", languageName(gBadgeLanguage),
+                gLastBadgeSource.c_str(), orientationModeName());
 }
 
 void drawButton(const Rect& rect, const char* label) {
@@ -471,16 +554,76 @@ void renderHome() {
   display.drawString("PaperBadge", 32, 34);
   display.setFont(&fonts::Font2);
   display.setTextSize(2);
-  display.drawString("Badge menu", 34, 92);
+  display.drawString("Home", 34, 92);
 
   const int32_t width = display.width();
-  gBadgeButton = {36, 170, width - 72, 96};
-  gDebugButton = {36, 296, width - 72, 96};
+  gBadgeButton = {36, 150, width - 72, 78};
+  gPaperCoachButton = {36, 248, width - 72, 78};
+  gSettingsButton = {36, 346, width - 72, 78};
+  gDebugButton = {36, 444, width - 72, 78};
   drawButton(gBadgeButton, "Badge");
+  drawButton(gPaperCoachButton, "PaperCoach");
+  drawButton(gSettingsButton, "Settings");
   drawButton(gDebugButton, "Debug");
 
   display.display();
   Serial.println("Home/Menu mode: normal orientation.");
+}
+
+void renderSettings() {
+  gScreen = Screen::Settings;
+  applyAppRotation();
+  prepareFullRefresh();
+
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  display.setFont(&fonts::Font4);
+  display.setTextSize(1);
+  display.drawString("Settings", 32, 34);
+  display.setFont(&fonts::Font2);
+  display.setTextSize(2);
+  display.drawString("Badge orientation", 36, 112);
+
+  const int32_t width = display.width();
+  gOrientationButton = {36, 158, width - 72, 78};
+  gLanguageAutoButton = {36, 326, width - 72, 70};
+  gLanguageEnglishButton = {36, 414, width - 72, 70};
+  gLanguageJapaneseButton = {36, 502, width - 72, 70};
+  gHomeButton = {36, display.height() - 104, 178, 70};
+
+  drawButton(gOrientationButton, gSettings.orientationMode == OrientationMode::Strap ? "Strap 180" : "Handheld 0");
+  display.setTextDatum(textdatum_t::top_left);
+  display.setFont(&fonts::Font2);
+  display.setTextSize(2);
+  display.drawString("Language mode", 36, 278);
+  drawButton(gLanguageAutoButton, gSettings.languageMode == LanguageMode::Auto ? "Auto *" : "Auto");
+  drawButton(gLanguageEnglishButton, gSettings.languageMode == LanguageMode::English ? "English *" : "English");
+  drawButton(gLanguageJapaneseButton, gSettings.languageMode == LanguageMode::Japanese ? "Japanese *" : "Japanese");
+  drawButton(gHomeButton, "Home");
+
+  display.display();
+  Serial.println("Settings screen shown.");
+}
+
+void renderPaperCoach() {
+  gScreen = Screen::PaperCoach;
+  applyAppRotation();
+  prepareFullRefresh();
+
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  display.setFont(&fonts::Font4);
+  display.setTextSize(1);
+  display.drawString("PaperCoach", 32, 34);
+  display.setFont(&fonts::Font2);
+  display.setTextSize(2);
+  display.drawString("App shell starts in v1.1", 36, 126);
+  display.drawString("Tap Home to return.", 36, 174);
+
+  gHomeButton = {36, display.height() - 104, 178, 70};
+  drawButton(gHomeButton, "Home");
+  display.display();
+  Serial.println("PaperCoach placeholder shown.");
 }
 
 void renderDebug() {
@@ -512,9 +655,14 @@ void renderDebug() {
   y += 26;
   display.drawString(String("badge language: ") + languageName(gBadgeLanguage), 26, y);
   y += 26;
-  display.drawString("orientation: strap 180", 26, y);
+  display.drawString(String("language mode: ") + languageModeName(), 26, y);
+  y += 26;
+  display.drawString(String("orientation: ") + orientationModeName(), 26, y);
   y += 26;
   display.drawString(String("source: ") + gLastBadgeSource, 26, y);
+  y += 26;
+  const int16_t batteryMv = M5.Power.getBatteryVoltage();
+  display.drawString(batteryMv > 0 ? String("battery: ") + batteryMv + " mV" : "battery: unknown", 26, y);
   y += 26;
   display.drawString(String("embedded bytes: ") + static_cast<unsigned>(embedded_assets::kEmbeddedPngTotalSize), 26, y);
   y += 46;
@@ -585,7 +733,9 @@ void handleTouch() {
   }
 
   const auto detail = M5.Touch.getDetail();
-  if (gScreen == Screen::Badge && detail.wasHold()) {
+  if (gScreen == Screen::Badge && detail.wasHold() && detail.x > M5.Display.width() / 4 &&
+      detail.x < (M5.Display.width() * 3) / 4 && detail.y > M5.Display.height() / 4 &&
+      detail.y < (M5.Display.height() * 3) / 4) {
     renderHome();
     return;
   }
@@ -615,9 +765,46 @@ void handleTouch() {
     return;
   }
 
+  if (gScreen == Screen::PaperCoach) {
+    if (gHomeButton.contains(tapX, tapY)) {
+      renderHome();
+    }
+    return;
+  }
+
+  if (gScreen == Screen::Settings) {
+    if (gOrientationButton.contains(tapX, tapY)) {
+      gSettings.orientationMode =
+          gSettings.orientationMode == OrientationMode::Strap ? OrientationMode::Handheld : OrientationMode::Strap;
+      saveSettings();
+      renderSettings();
+    } else if (gLanguageAutoButton.contains(tapX, tapY)) {
+      gSettings.languageMode = LanguageMode::Auto;
+      saveSettings();
+      renderSettings();
+    } else if (gLanguageEnglishButton.contains(tapX, tapY)) {
+      gSettings.languageMode = LanguageMode::English;
+      gBadgeLanguage = BadgeLanguage::English;
+      saveSettings();
+      renderSettings();
+    } else if (gLanguageJapaneseButton.contains(tapX, tapY)) {
+      gSettings.languageMode = LanguageMode::Japanese;
+      gBadgeLanguage = BadgeLanguage::Japanese;
+      saveSettings();
+      renderSettings();
+    } else if (gHomeButton.contains(tapX, tapY)) {
+      renderHome();
+    }
+    return;
+  }
+
   if (gScreen == Screen::Home) {
     if (gBadgeButton.contains(tapX, tapY)) {
       renderBadge();
+    } else if (gPaperCoachButton.contains(tapX, tapY)) {
+      renderPaperCoach();
+    } else if (gSettingsButton.contains(tapX, tapY)) {
+      renderSettings();
     } else if (gDebugButton.contains(tapX, tapY)) {
       renderDebug();
     }
@@ -626,6 +813,10 @@ void handleTouch() {
 
 void maybeSwitchBadgeLanguage() {
   if (gScreen != Screen::Badge) {
+    return;
+  }
+
+  if (gSettings.languageMode != LanguageMode::Auto) {
     return;
   }
 
@@ -652,6 +843,7 @@ void setup() {
   M5.begin(cfg);
   waitForSerial();
   captureNormalPortraitRotation();
+  loadSettings();
 
   Serial.println();
   Serial.printf("PaperBadge+ %s boot\n", kFirmwareVersion);
@@ -682,7 +874,7 @@ void setup() {
   findSdImage("badge JA", kBadgeJaCandidates, countOf(kBadgeJaCandidates), gBadgeJaSd);
   findSdImage("profile", kProfileCandidates, countOf(kProfileCandidates), gProfileSd);
   findSdImage("QR", kQrCandidates, countOf(kQrCandidates), gQrSd);
-  Serial.println("Badge mode defaults to strap 180 orientation.");
+  Serial.println("Badge mode defaults to strap 180 orientation unless Settings override is handheld.");
 
   renderBadge();
 }
