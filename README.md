@@ -10,6 +10,7 @@ The firmware is intentionally small and built in compile-checked milestones. It 
 - v0.2: parse English badge text from `/paperbadge/badge.json` using ArduinoJson. If SD, JSON, or fields are unavailable, the firmware renders hardcoded English fallback text.
 - v0.3: prepare image assets on the Mac and let firmware check whether `/paperbadge/profile_photo.png` and `/paperbadge/qr.png` exist. Firmware draws placeholder boxes only; it does not decode images yet.
 - v0.4: draw `/paperbadge/profile_photo.png` and `/paperbadge/qr.png` from SD using M5GFX PNG decoding. If an image is missing or fails to decode, the firmware logs it and draws a placeholder.
+- v0.5: switch English/Japanese every `interval_seconds` seconds and switch immediately on a center tap. Japanese uses M5GFX `efontJA_16` when JSON Japanese text is present; otherwise it uses romanized fallback text.
 
 ## Hardware
 
@@ -70,6 +71,10 @@ python3 tools/prepare_assets.py /Volumes/PAPERSD/paperbadge
 ```
 
 The script converts `profilePhoto.png`, `profilePhoto.jpg`, or `profilePhoto.jpeg` to `profile_photo.png` as a 220x220 grayscale PNG. It converts `qr.JPG`, `qr.jpg`, `qr.jpeg`, or `qr.png` to `qr.png` as a 320x320 high-contrast black/white PNG. Original files are not deleted.
+
+## Japanese Text
+
+v0.5 attempts Japanese rendering with the built-in M5GFX `efontJA_16` font. This compiles, but the visual quality still needs to be checked on the real e-paper display. If glyph coverage or sizing is not good enough, the next step is to add a dedicated Japanese font asset and load it from firmware.
 
 ## Download Mode
 

@@ -7,12 +7,19 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v0.4";
+constexpr const char* kFirmwareVersion = "v0.5";
+constexpr uint32_t kDefaultIntervalSeconds = 15;
+constexpr bool kTryJapaneseGlyphs = true;
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kProfilePhotoPath = "/paperbadge/profile_photo.png";
 constexpr const char* kQrPath = "/paperbadge/qr.png";
 
 struct BadgeText {
+  BadgeText() = default;
+  BadgeText(const char* nameValue, const char* titleValue, const char* subtitleValue, const char* locationValue,
+            const char* footerValue)
+      : name(nameValue), title(titleValue), subtitle(subtitleValue), location(locationValue), footer(footerValue) {}
+
   String name = "Daniel Jimenez";
   String title = "Product Manager (AI)";
   String subtitle = "0->1 AI, SaaS & FinTech";
@@ -20,10 +27,31 @@ struct BadgeText {
   String footer = "Scan for LinkedIn";
 };
 
+struct BadgeConfig {
+  uint32_t intervalSeconds = kDefaultIntervalSeconds;
+  BadgeText english;
+  BadgeText japanese;
+  BadgeText japaneseRomanized = {
+      "Daniel Jimenez",
+      "AI Product Manager",
+      "Zero-to-one AI, SaaS, FinTech",
+      "Tokyo base",
+      "Scan for LinkedIn",
+  };
+  bool englishFromJson = false;
+  bool japaneseFromJson = false;
+};
+
 struct AssetStatus {
   bool profilePhoto = false;
   bool qr = false;
 };
+
+BadgeConfig gBadge;
+AssetStatus gAssets;
+bool gSdOk = false;
+bool gShowJapanese = false;
+uint32_t gLastLanguageSwitchMs = 0;
 
 void waitForSerial() {
   const uint32_t deadline = millis() + 2000;
@@ -60,7 +88,25 @@ bool mountSdCard() {
   return SD.begin(cs, SPI, kSdSpiHz);
 }
 
-bool loadBadgeTextFromJson(BadgeText& badge) {
+String readJsonString(JsonObject object, const char* key, const String& fallback) {
+  const char* value = object[key] | nullptr;
+  return value && value[0] ? String(value) : fallback;
+}
+
+bool readBadgeText(JsonObject object, BadgeText& badge) {
+  if (object.isNull()) {
+    return false;
+  }
+
+  badge.name = readJsonString(object, "name", badge.name);
+  badge.title = readJsonString(object, "title", badge.title);
+  badge.subtitle = readJsonString(object, "subtitle", badge.subtitle);
+  badge.location = readJsonString(object, "location", badge.location);
+  badge.footer = readJsonString(object, "footer", badge.footer);
+  return true;
+}
+
+bool loadBadgeConfigFromJson(BadgeConfig& config) {
   File file = SD.open(kBadgeJsonPath, FILE_READ);
   if (!file) {
     Serial.println("JSON parse FAIL: could not open badge.json.");
@@ -76,19 +122,20 @@ bool loadBadgeTextFromJson(BadgeText& badge) {
     return false;
   }
 
-  JsonObject english = doc["english"];
-  if (english.isNull()) {
+  uint32_t intervalSeconds = doc["interval_seconds"] | config.intervalSeconds;
+  config.intervalSeconds = intervalSeconds > 0 ? intervalSeconds : kDefaultIntervalSeconds;
+
+  config.englishFromJson = readBadgeText(doc["english"], config.english);
+  if (!config.englishFromJson) {
     Serial.println("JSON parse FAIL: missing english object.");
     return false;
   }
 
-  badge.name = english["name"] | badge.name;
-  badge.title = english["title"] | badge.title;
-  badge.subtitle = english["subtitle"] | badge.subtitle;
-  badge.location = english["location"] | badge.location;
-  badge.footer = english["footer"] | badge.footer;
+  config.japaneseFromJson = readBadgeText(doc["japanese"], config.japanese);
 
   Serial.println("JSON parse OK.");
+  Serial.printf("Language interval: %u seconds\n", config.intervalSeconds);
+  Serial.printf("Japanese text source: %s\n", config.japaneseFromJson ? "JSON" : "romanized fallback");
   return true;
 }
 
@@ -119,7 +166,20 @@ bool drawPngAsset(const char* path, int32_t x, int32_t y, int32_t size, const ch
   return drawn;
 }
 
-void renderBadge(const BadgeText& badge, bool sdOk, const AssetStatus& assets) {
+const BadgeText& currentBadgeText() {
+  if (!gShowJapanese) {
+    return gBadge.english;
+  }
+
+  if (kTryJapaneseGlyphs && gBadge.japaneseFromJson) {
+    return gBadge.japanese;
+  }
+
+  return gBadge.japaneseRomanized;
+}
+
+void renderBadge() {
+  const BadgeText& badge = currentBadgeText();
   auto& display = M5.Display;
 
   if (display.width() > display.height()) {
@@ -133,24 +193,64 @@ void renderBadge(const BadgeText& badge, bool sdOk, const AssetStatus& assets) {
   display.setTextWrap(false, false);
 
   display.setFont(&fonts::Font2);
-  drawPngAsset(kProfilePhotoPath, (display.width() - 220) / 2, 50, 220, "PHOTO", assets.profilePhoto);
+  drawPngAsset(kProfilePhotoPath, (display.width() - 220) / 2, 50, 220, "PHOTO", gAssets.profilePhoto);
 
   display.setTextDatum(textdatum_t::top_left);
+  display.setFont(&fonts::Font2);
   display.setTextSize(2);
   display.drawString("PaperBadge+", 40, 300);
+
+  if (gShowJapanese && kTryJapaneseGlyphs && gBadge.japaneseFromJson) {
+    display.setFont(&fonts::efontJA_16);
+    display.setTextSize(1);
+  } else {
+    display.setFont(&fonts::Font2);
+    display.setTextSize(2);
+  }
+
   display.drawString(badge.name, 40, 360);
 
-  display.setTextSize(2);
   display.drawString(badge.title, 40, 420);
   display.drawString(badge.subtitle, 40, 480);
   display.drawString(badge.location, 40, 540);
   display.drawString(badge.footer, 40, 600);
 
-  drawPngAsset(kQrPath, (display.width() - 320) / 2, 650, 320, "QR", assets.qr);
+  display.setFont(&fonts::Font2);
+
+  drawPngAsset(kQrPath, (display.width() - 320) / 2, 650, 320, "QR", gAssets.qr);
 
   display.setTextSize(2);
-  display.drawString(sdOk ? "SD OK" : "SD FAIL", 40, display.height() - 50);
+  display.drawString(gSdOk ? "SD OK" : "SD FAIL", 40, display.height() - 50);
+  display.drawString(gShowJapanese ? "JP" : "EN", display.width() - 80, display.height() - 50);
   display.display();
+}
+
+void switchLanguage(bool showJapanese, const char* reason) {
+  gShowJapanese = showJapanese;
+  gLastLanguageSwitchMs = millis();
+  Serial.printf("Language: %s (%s)\n", gShowJapanese ? "Japanese" : "English", reason);
+  renderBadge();
+}
+
+void toggleLanguage(const char* reason) {
+  switchLanguage(!gShowJapanese, reason);
+}
+
+bool centerTapWasClicked() {
+  if (!M5.Touch.isEnabled()) {
+    return false;
+  }
+
+  auto detail = M5.Touch.getDetail();
+  if (!detail.wasClicked()) {
+    return false;
+  }
+
+  const int32_t width = M5.Display.width();
+  const int32_t height = M5.Display.height();
+  const bool inCenterX = detail.x >= width / 4 && detail.x <= (width * 3) / 4;
+  const bool inCenterY = detail.y >= height / 4 && detail.y <= (height * 3) / 4;
+  return inCenterX && inCenterY;
 }
 }  // namespace
 
@@ -182,20 +282,29 @@ void setup() {
   const bool badgeJsonExists = sdMounted && SD.exists(kBadgeJsonPath);
   Serial.printf("badge.json %s: %s\n", badgeJsonExists ? "found" : "missing", kBadgeJsonPath);
 
-  AssetStatus assets;
-  assets.profilePhoto = sdMounted && SD.exists(kProfilePhotoPath);
-  assets.qr = sdMounted && SD.exists(kQrPath);
-  Serial.printf("profile_photo.png %s: %s\n", assets.profilePhoto ? "found" : "missing", kProfilePhotoPath);
-  Serial.printf("qr.png %s: %s\n", assets.qr ? "found" : "missing", kQrPath);
+  gAssets.profilePhoto = sdMounted && SD.exists(kProfilePhotoPath);
+  gAssets.qr = sdMounted && SD.exists(kQrPath);
+  Serial.printf("profile_photo.png %s: %s\n", gAssets.profilePhoto ? "found" : "missing", kProfilePhotoPath);
+  Serial.printf("qr.png %s: %s\n", gAssets.qr ? "found" : "missing", kQrPath);
 
-  BadgeText badge;
-  const bool jsonOk = badgeJsonExists && loadBadgeTextFromJson(badge);
+  const bool jsonOk = badgeJsonExists && loadBadgeConfigFromJson(gBadge);
   Serial.printf("Text source: %s\n", jsonOk ? "JSON" : "fallback");
 
-  renderBadge(badge, sdMounted && badgeJsonExists, assets);
+  gSdOk = sdMounted && badgeJsonExists;
+  gLastLanguageSwitchMs = millis();
+  renderBadge();
 }
 
 void loop() {
   M5.update();
+  if (centerTapWasClicked()) {
+    toggleLanguage("center tap");
+  }
+
+  const uint32_t intervalMs = gBadge.intervalSeconds * 1000UL;
+  if (intervalMs > 0 && millis() - gLastLanguageSwitchMs >= intervalMs) {
+    toggleLanguage("timer");
+  }
+
   delay(100);
 }
