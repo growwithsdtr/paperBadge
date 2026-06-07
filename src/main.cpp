@@ -11,7 +11,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v1.3";
+constexpr const char* kFirmwareVersion = "v1.4";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/sample_interview.json";
 constexpr const char* kPrefsNamespace = "paperbadge";
@@ -878,12 +878,25 @@ bool drawEmbeddedPngFit(const uint8_t* data, size_t dataSize, uint16_t sourceWid
   return drawn;
 }
 
-void prepareFullRefresh() {
+void prepareFullRefresh(const char* reason = nullptr, bool highQuality = false) {
   auto& display = M5.Display;
-  display.setEpdMode(m5gfx::epd_fastest);
+  if (reason && reason[0] != '\0') {
+    Serial.printf("Full refresh: %s\n", reason);
+  }
+  display.setEpdMode(highQuality ? m5gfx::epd_quality : m5gfx::epd_fastest);
   display.fillScreen(TFT_WHITE);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.setTextWrap(false, false);
+}
+
+void cleanWhiteRefresh(const char* reason) {
+  auto& display = M5.Display;
+  Serial.printf("Full refresh: %s\n", reason);
+  display.setEpdMode(m5gfx::epd_quality);
+  display.fillScreen(TFT_WHITE);
+  display.display();
+  delay(250);
+  display.setEpdMode(m5gfx::epd_fastest);
 }
 
 bool drawBadgeImage(BadgeLanguage language) {
@@ -932,12 +945,11 @@ void setBadgeTouchZones() {
   gQrRect = {104, 600, 332, 330};
 }
 
-void renderBadge(bool forceFullRefresh = true) {
-  (void)forceFullRefresh;
+void renderBadge(bool highQualityRefresh = false, const char* refreshReason = nullptr) {
   gScreen = Screen::Badge;
   enforceLanguageMode();
   applyBadgeRotation();
-  prepareFullRefresh();
+  prepareFullRefresh(refreshReason, highQualityRefresh);
 
   if (!drawBadgeImage(gBadgeLanguage)) {
     Serial.println("badge draw failed: using minimal text fallback.");
@@ -1136,10 +1148,10 @@ void renderCoachScreen() {
                 static_cast<unsigned>(gCoachIndex), gCoachStage, gCoachDeckLoadedFromSd ? "SD" : "embedded");
 }
 
-void renderHome() {
+void renderHome(const char* refreshReason = "mode switch") {
   gScreen = Screen::Home;
   applyAppRotation();
-  prepareFullRefresh();
+  prepareFullRefresh(refreshReason, true);
 
   auto& display = M5.Display;
   display.setTextDatum(textdatum_t::top_left);
@@ -1185,10 +1197,10 @@ void renderHome() {
   Serial.println("Home/Menu mode: normal orientation.");
 }
 
-void renderSettings() {
+void renderSettings(const char* refreshReason = "mode switch") {
   gScreen = Screen::Settings;
   applyAppRotation();
-  prepareFullRefresh();
+  prepareFullRefresh(refreshReason, true);
 
   auto& display = M5.Display;
   display.setTextDatum(textdatum_t::top_left);
@@ -1220,10 +1232,10 @@ void renderSettings() {
   Serial.println("Settings screen shown.");
 }
 
-void renderDebug() {
+void renderDebug(const char* refreshReason = "mode switch") {
   gScreen = Screen::Debug;
   applyAppRotation();
-  prepareFullRefresh();
+  prepareFullRefresh(refreshReason, true);
 
   auto& display = M5.Display;
   display.setTextDatum(textdatum_t::top_left);
@@ -1271,7 +1283,7 @@ void renderDebug() {
 void renderQrZoom() {
   gScreen = Screen::QrZoom;
   applyBadgeRotation();
-  prepareFullRefresh();
+  prepareFullRefresh("zoom enter", true);
 
   auto& display = M5.Display;
   const int32_t margin = 46;
@@ -1294,7 +1306,7 @@ void renderQrZoom() {
 void renderPhotoZoom() {
   gScreen = Screen::PhotoZoom;
   applyBadgeRotation();
-  prepareFullRefresh();
+  prepareFullRefresh("zoom enter", true);
 
   auto& display = M5.Display;
   const Rect rect = {26, 26, display.width() - 52, display.height() - 52};
@@ -1352,7 +1364,8 @@ void handleTouch() {
   }
 
   if (gScreen == Screen::QrZoom || gScreen == Screen::PhotoZoom) {
-    renderBadge();
+    cleanWhiteRefresh("zoom exit");
+    renderBadge(false);
     return;
   }
 
@@ -1391,7 +1404,7 @@ void handleTouch() {
       gSettings.orientationMode =
           gSettings.orientationMode == OrientationMode::Strap ? OrientationMode::Handheld : OrientationMode::Strap;
       saveSettings();
-      renderSettings();
+      renderSettings("orientation switch");
     } else if (gLanguageAutoButton.contains(tapX, tapY)) {
       gSettings.languageMode = LanguageMode::Auto;
       saveSettings();
@@ -1414,7 +1427,7 @@ void handleTouch() {
 
   if (gScreen == Screen::Home) {
     if (gBadgeButton.contains(tapX, tapY)) {
-      renderBadge();
+      renderBadge(true, "mode switch");
     } else if (gInterviewButton.contains(tapX, tapY)) {
       startCoachMode(Screen::InterviewPractice);
       renderCoachScreen();

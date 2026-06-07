@@ -19,6 +19,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v1.1: add the PaperCoach launcher shell with normal-orientation placeholder screens for Interview Practice, Blitz Quiz, Weak Answer Detector, Glossary, and Mock Interview. Badge remains the default boot mode.
 - v1.2: add a read-only PaperCoach sample deck engine. It loads `/papercoach/decks/sample_interview.json` from SD when present, otherwise uses an embedded senior AI/Product Manager interview deck with QA, MCQ, weak-answer, glossary, hostile-followup, and metric-precision items.
 - v1.3: regenerate English and Japanese full-screen badge fallbacks from one shared layout template. Both languages use the same profile, text, QR, margin, and divider positions; Japanese text is high contrast, the profile photo uses a soft circular treatment, and the public badge still shows no debug labels.
+- v1.4: reduce e-ink ghosting on QR/photo zoom transitions by using M5GFX `epd_quality` full refreshes for zoom entry, mode/orientation changes, and a conservative white refresh before returning from zoom to Badge mode.
 
 ## Hardware
 
