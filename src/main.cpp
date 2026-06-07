@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <SD.h>
 #include <SPI.h>
 #include <M5Unified.h>
@@ -7,6 +8,14 @@ namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
+
+struct BadgeText {
+  String name = "Daniel Jimenez";
+  String title = "Product Manager (AI)";
+  String subtitle = "0->1 AI, SaaS & FinTech";
+  String location = "Tokyo, Japan";
+  String footer = "Scan for LinkedIn";
+};
 
 void waitForSerial() {
   const uint32_t deadline = millis() + 2000;
@@ -43,7 +52,39 @@ bool mountSdCard() {
   return SD.begin(cs, SPI, kSdSpiHz);
 }
 
-void renderBadge(bool sdOk) {
+bool loadBadgeTextFromJson(BadgeText& badge) {
+  File file = SD.open(kBadgeJsonPath, FILE_READ);
+  if (!file) {
+    Serial.println("JSON parse FAIL: could not open badge.json.");
+    return false;
+  }
+
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, file);
+  file.close();
+
+  if (error) {
+    Serial.printf("JSON parse FAIL: %s\n", error.c_str());
+    return false;
+  }
+
+  JsonObject english = doc["english"];
+  if (english.isNull()) {
+    Serial.println("JSON parse FAIL: missing english object.");
+    return false;
+  }
+
+  badge.name = english["name"] | badge.name;
+  badge.title = english["title"] | badge.title;
+  badge.subtitle = english["subtitle"] | badge.subtitle;
+  badge.location = english["location"] | badge.location;
+  badge.footer = english["footer"] | badge.footer;
+
+  Serial.println("JSON parse OK.");
+  return true;
+}
+
+void renderBadge(const BadgeText& badge, bool sdOk) {
   auto& display = M5.Display;
 
   if (display.width() > display.height()) {
@@ -59,8 +100,13 @@ void renderBadge(bool sdOk) {
   display.setFont(&fonts::Font2);
   display.setTextSize(3);
   display.drawString("PaperBadge+", 40, 80);
-  display.drawString("Daniel Jimenez", 40, 150);
-  display.drawString("Product Manager (AI)", 40, 220);
+  display.drawString(badge.name, 40, 150);
+
+  display.setTextSize(2);
+  display.drawString(badge.title, 40, 230);
+  display.drawString(badge.subtitle, 40, 290);
+  display.drawString(badge.location, 40, 350);
+  display.drawString(badge.footer, 40, 430);
 
   display.setTextSize(2);
   display.drawString(sdOk ? "SD OK" : "SD FAIL", 40, display.height() - 100);
@@ -91,12 +137,16 @@ void setup() {
   bootBeep();
 
   const bool sdMounted = mountSdCard();
-  Serial.println(sdMounted ? "SD mounted successfully." : "SD mount failed.");
+  Serial.println(sdMounted ? "SD mount OK." : "SD mount FAIL.");
 
   const bool badgeJsonExists = sdMounted && SD.exists(kBadgeJsonPath);
-  Serial.printf("%s %s\n", badgeJsonExists ? "Found" : "Missing", kBadgeJsonPath);
+  Serial.printf("badge.json %s: %s\n", badgeJsonExists ? "found" : "missing", kBadgeJsonPath);
 
-  renderBadge(sdMounted && badgeJsonExists);
+  BadgeText badge;
+  const bool jsonOk = badgeJsonExists && loadBadgeTextFromJson(badge);
+  Serial.printf("Text source: %s\n", jsonOk ? "JSON" : "fallback");
+
+  renderBadge(badge, sdMounted && badgeJsonExists);
 }
 
 void loop() {

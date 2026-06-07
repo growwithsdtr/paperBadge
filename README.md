@@ -2,7 +2,12 @@
 
 First working firmware milestone for M5Stack PaperS3 / M5PaperS3 v1.2.
 
-v0.1 keeps the firmware intentionally small: initialize the e-paper display, draw the badge text, mount the microSD card, check for `/paperbadge/badge.json`, and beep once on boot if the buzzer is available. It does not use Wi-Fi, Bluetooth, photos, QR codes, cloud calls, Japanese rendering, or custom fonts yet.
+The firmware is intentionally small and built in compile-checked milestones. It does not use Wi-Fi, Bluetooth, cloud calls, custom Japanese fonts, or image decoding yet.
+
+## Version Status
+
+- v0.1: initialize the e-paper display, draw fallback badge text, mount microSD, check `/paperbadge/badge.json`, show `SD OK` or `SD FAIL`, and beep once on boot if the buzzer is available.
+- v0.2: parse English badge text from `/paperbadge/badge.json` using ArduinoJson. If SD, JSON, or fields are unavailable, the firmware renders hardcoded English fallback text.
 
 ## Hardware
 
@@ -34,7 +39,7 @@ The default upload speed is `1500000`. If upload is unstable through a cable or 
 pio device monitor --port /dev/tty.usbmodem1101
 ```
 
-The serial monitor prints whether the SD card mounted and whether `/paperbadge/badge.json` was found.
+The serial monitor prints board/display/flash/PSRAM details, whether the SD card mounted, whether `/paperbadge/badge.json` was found, JSON parse status, and whether rendered text came from JSON or fallback.
 
 ## SD Card
 
@@ -48,7 +53,7 @@ PAPERSD/
     qr.png
 ```
 
-For v0.1 only `badge.json` is checked. Photos and QR codes are intentionally not loaded yet.
+For v0.2 only `badge.json` is read. Photos and QR codes are intentionally not loaded yet.
 
 Prepare the sample SD folder locally:
 
