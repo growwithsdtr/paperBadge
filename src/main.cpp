@@ -11,10 +11,13 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v1.1";
+constexpr const char* kFirmwareVersion = "v1.2";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
+constexpr const char* kCoachDeckPath = "/papercoach/decks/sample_interview.json";
 constexpr const char* kPrefsNamespace = "paperbadge";
 constexpr uint32_t kDefaultLanguageIntervalSeconds = 15;
+constexpr size_t kMaxCoachItems = 24;
+constexpr uint8_t kMaxOptions = 4;
 
 constexpr const char* kBadgeEnCandidates[] = {
     "/paperbadge/badge_en.png",
@@ -54,8 +57,8 @@ constexpr const char* kQrCandidates[] = {
     "/paperbadge/linkedinQR.png",
 };
 
-template <size_t N>
-constexpr size_t countOf(const char* const (&)[N]) {
+template <typename T, size_t N>
+constexpr size_t countOf(const T (&)[N]) {
   return N;
 }
 
@@ -95,6 +98,21 @@ enum class LanguageMode : uint8_t {
   Japanese = 2,
 };
 
+enum class CoachItemType : uint8_t {
+  Qa,
+  Mcq,
+  WeakAnswer,
+  Glossary,
+  HostileFollowup,
+  MetricPrecision,
+};
+
+enum class CoachStage : uint8_t {
+  Prompt,
+  Answer,
+  Rubric,
+};
+
 struct Rect {
   Rect() = default;
   Rect(int32_t xValue, int32_t yValue, int32_t wValue, int32_t hValue)
@@ -127,6 +145,21 @@ struct Settings {
   LanguageMode languageMode = LanguageMode::Auto;
 };
 
+struct CoachItem {
+  CoachItemType type = CoachItemType::Qa;
+  String prompt;
+  String answer;
+  String rubric;
+  String weakAnswer;
+  String category;
+  String term;
+  String definition;
+  String explanation;
+  String options[kMaxOptions];
+  uint8_t optionCount = 0;
+  uint8_t correctIndex = 0;
+};
+
 BadgeConfig gBadgeConfig;
 Settings gSettings;
 Preferences gPrefs;
@@ -151,11 +184,182 @@ Rect gLanguageAutoButton;
 Rect gLanguageEnglishButton;
 Rect gLanguageJapaneseButton;
 Rect gHomeButton;
+Rect gNextButton;
+Rect gOptionButtons[kMaxOptions];
 bool gSdMounted = false;
 bool gBadgeJsonLoaded = false;
+bool gCoachDeckLoadedFromSd = false;
 uint8_t gNormalPortraitRotation = 0;
 uint32_t gLastLanguageSwitchMs = 0;
 String gLastBadgeSource = "embedded";
+CoachItem gCoachItems[kMaxCoachItems];
+size_t gCoachItemCount = 0;
+size_t gCoachIndex = 0;
+uint8_t gCoachStage = 0;
+int8_t gSelectedOption = -1;
+uint8_t gMockStep = 0;
+
+struct EmbeddedCoachItem {
+  CoachItemType type;
+  const char* prompt;
+  const char* answer;
+  const char* rubric;
+  const char* weakAnswer;
+  const char* category;
+  const char* term;
+  const char* definition;
+  const char* explanation;
+  const char* options[kMaxOptions];
+  uint8_t optionCount;
+  uint8_t correctIndex;
+};
+
+constexpr EmbeddedCoachItem kEmbeddedCoachItems[] = {
+    {CoachItemType::Qa,
+     "Tell me about a time you shipped an AI feature from zero to one.",
+     "Frame the customer pain, the riskiest assumption, the smallest useful launch, and the measured behavior change.",
+     "Watch-outs: vague AI excitement, no adoption metric, no safety or rollback plan.",
+     "",
+     "",
+     "",
+     "",
+     "",
+     {"", "", "", ""},
+     0,
+     0},
+    {CoachItemType::Qa,
+     "How would you decide whether to build, buy, or partner for an LLM capability?",
+     "Compare differentiation, latency, data control, vendor risk, unit economics, and iteration speed.",
+     "Strong answers make a reversible first step and name the future trigger to revisit the decision.",
+     "",
+     "",
+     "",
+     "",
+     "",
+     {"", "", "", ""},
+     0,
+     0},
+    {CoachItemType::Mcq,
+     "Which metric best proves an AI summarization feature is creating value?",
+     "Correct: repeat usage tied to saved workflow time.",
+     "",
+     "",
+     "",
+     "",
+     "",
+     "Accuracy alone is not enough; value shows up when users repeatedly choose the feature and finish faster.",
+     {"Model benchmark score", "Repeat usage plus time saved", "Prompt token count", "Number of generated summaries"},
+     4,
+     1},
+    {CoachItemType::Mcq,
+     "A launch has high trial but low retention. What is the best first PM move?",
+     "Correct: inspect the activation path and compare retained vs. churned users.",
+     "",
+     "",
+     "",
+     "",
+     "",
+     "Retention failure usually means the promise, first value moment, or workflow fit is broken.",
+     {"Increase ads", "Add more model choices", "Analyze activation and retained cohorts", "Rewrite the roadmap"},
+     4,
+     2},
+    {CoachItemType::WeakAnswer,
+     "Interviewer: How did you handle model hallucinations?",
+     "",
+     "",
+     "We improved the prompts and told users the AI might be wrong.",
+     "missing operational control",
+     "",
+     "",
+     "A stronger answer names evaluation data, confidence thresholds, UX guardrails, escalation, and monitoring.",
+     {"", "", "", ""},
+     0,
+     0},
+    {CoachItemType::WeakAnswer,
+     "Interviewer: Why did your pilot fail?",
+     "",
+     "",
+     "The customer was not ready and sales picked the wrong account.",
+     "low ownership",
+     "",
+     "",
+     "Own the learning: qualification criteria, onboarding gaps, buyer/user mismatch, and what changed next.",
+     {"", "", "", ""},
+     0,
+     0},
+    {CoachItemType::Glossary,
+     "",
+     "",
+     "",
+     "",
+     "",
+     "Guardrail metric",
+     "A metric that must stay within bounds while optimizing the primary goal, such as latency, trust, or cost.",
+     "",
+     {"", "", "", ""},
+     0,
+     0},
+    {CoachItemType::Glossary,
+     "",
+     "",
+     "",
+     "",
+     "",
+     "Activation",
+     "The first meaningful moment when a user experiences the product's core value.",
+     "",
+     {"", "", "", ""},
+     0,
+     0},
+    {CoachItemType::HostileFollowup,
+     "Your AI feature sounds like a wrapper. Why should we hire you?",
+     "Acknowledge the risk, then show where the product differentiated: workflow fit, data loop, distribution, trust, or cost.",
+     "Do not get defensive. Convert the challenge into a crisp strategy answer.",
+     "",
+     "",
+     "",
+     "",
+     "",
+     {"", "", "", ""},
+     0,
+     0},
+    {CoachItemType::HostileFollowup,
+     "Why did it take your team so long to learn the customer did not care?",
+     "Explain the early signal you missed, the decision rule you added, and how cycle time improved afterward.",
+     "Strong answers show humility plus a concrete operating-system change.",
+     "",
+     "",
+     "",
+     "",
+     "",
+     {"", "", "", ""},
+     0,
+     0},
+    {CoachItemType::MetricPrecision,
+     "Define a success metric for an AI interview coach.",
+     "Primary: weekly completed practice sessions leading to improved rubric score. Guardrails: answer quality, latency, and churn.",
+     "Name numerator, denominator, cohort, timeframe, and one countermetric.",
+     "",
+     "",
+     "",
+     "",
+     "",
+     {"", "", "", ""},
+     0,
+     0},
+    {CoachItemType::MetricPrecision,
+     "How would you measure PMF for an AI workflow tool in B2B SaaS?",
+     "Use retained active teams, workflow completion, expansion intent, and qualitative pull from buyers and users.",
+     "Avoid one-off demo excitement. Tie usage to a recurring business workflow.",
+     "",
+     "",
+     "",
+     "",
+     "",
+     {"", "", "", ""},
+     0,
+     0},
+};
 
 void waitForSerial() {
   const uint32_t deadline = millis() + 2000;
@@ -415,6 +619,213 @@ bool loadBadgeJson() {
   return true;
 }
 
+const char* coachTypeName(CoachItemType type) {
+  switch (type) {
+    case CoachItemType::Mcq:
+      return "mcq";
+    case CoachItemType::WeakAnswer:
+      return "weak_answer";
+    case CoachItemType::Glossary:
+      return "glossary";
+    case CoachItemType::HostileFollowup:
+      return "hostile_followup";
+    case CoachItemType::MetricPrecision:
+      return "metric_precision";
+    case CoachItemType::Qa:
+    default:
+      return "qa";
+  }
+}
+
+CoachItemType parseCoachType(const char* rawType) {
+  const String type = rawType ? String(rawType) : String("qa");
+  if (type == "mcq") {
+    return CoachItemType::Mcq;
+  }
+  if (type == "weak_answer") {
+    return CoachItemType::WeakAnswer;
+  }
+  if (type == "glossary") {
+    return CoachItemType::Glossary;
+  }
+  if (type == "hostile_followup") {
+    return CoachItemType::HostileFollowup;
+  }
+  if (type == "metric_precision") {
+    return CoachItemType::MetricPrecision;
+  }
+  return CoachItemType::Qa;
+}
+
+void clearCoachDeck() {
+  for (size_t index = 0; index < kMaxCoachItems; ++index) {
+    gCoachItems[index] = CoachItem{};
+  }
+  gCoachItemCount = 0;
+  gCoachIndex = 0;
+  gCoachStage = 0;
+  gSelectedOption = -1;
+  gMockStep = 0;
+}
+
+bool addCoachItem(const CoachItem& item) {
+  if (gCoachItemCount >= kMaxCoachItems) {
+    return false;
+  }
+  gCoachItems[gCoachItemCount++] = item;
+  return true;
+}
+
+void loadEmbeddedCoachDeck() {
+  clearCoachDeck();
+  for (size_t index = 0; index < countOf(kEmbeddedCoachItems); ++index) {
+    const auto& source = kEmbeddedCoachItems[index];
+    CoachItem item;
+    item.type = source.type;
+    item.prompt = source.prompt;
+    item.answer = source.answer;
+    item.rubric = source.rubric;
+    item.weakAnswer = source.weakAnswer;
+    item.category = source.category;
+    item.term = source.term;
+    item.definition = source.definition;
+    item.explanation = source.explanation;
+    item.optionCount = source.optionCount;
+    item.correctIndex = source.correctIndex;
+    for (uint8_t option = 0; option < kMaxOptions; ++option) {
+      item.options[option] = source.options[option];
+    }
+    addCoachItem(item);
+  }
+  gCoachDeckLoadedFromSd = false;
+  Serial.printf("PaperCoach deck source: embedded fallback (%u items).\n", static_cast<unsigned>(gCoachItemCount));
+}
+
+bool loadCoachDeckFromSd() {
+  if (!gSdMounted || !SD.exists(kCoachDeckPath)) {
+    Serial.printf("PaperCoach SD deck missing: %s\n", kCoachDeckPath);
+    return false;
+  }
+
+  File file = SD.open(kCoachDeckPath, FILE_READ);
+  if (!file) {
+    Serial.println("PaperCoach SD deck open failed.");
+    return false;
+  }
+
+  JsonDocument doc;
+  const DeserializationError error = deserializeJson(doc, file);
+  file.close();
+  if (error) {
+    Serial.printf("PaperCoach SD deck parse failed: %s\n", error.c_str());
+    return false;
+  }
+
+  JsonArray items = doc["items"].as<JsonArray>();
+  if (items.isNull() || items.size() == 0) {
+    Serial.println("PaperCoach SD deck empty.");
+    return false;
+  }
+
+  clearCoachDeck();
+  for (JsonObject object : items) {
+    CoachItem item;
+    item.type = parseCoachType(object["type"] | "qa");
+    item.prompt = object["prompt"] | "";
+    item.answer = object["answer"] | "";
+    item.rubric = object["rubric"] | "";
+    item.weakAnswer = object["weak_answer"] | "";
+    item.category = object["category"] | "";
+    item.term = object["term"] | "";
+    item.definition = object["definition"] | "";
+    item.explanation = object["explanation"] | "";
+    item.correctIndex = object["correct_index"] | 0;
+
+    JsonArray options = object["options"].as<JsonArray>();
+    item.optionCount = 0;
+    if (!options.isNull()) {
+      for (JsonVariant option : options) {
+        if (item.optionCount >= kMaxOptions) {
+          break;
+        }
+        item.options[item.optionCount++] = option.as<const char*>();
+      }
+    }
+    addCoachItem(item);
+  }
+
+  if (gCoachItemCount == 0) {
+    Serial.println("PaperCoach SD deck had no usable items.");
+    return false;
+  }
+
+  gCoachDeckLoadedFromSd = true;
+  Serial.printf("PaperCoach deck source: SD (%u items): %s\n", static_cast<unsigned>(gCoachItemCount), kCoachDeckPath);
+  return true;
+}
+
+void loadCoachDeck() {
+  loadEmbeddedCoachDeck();
+  if (loadCoachDeckFromSd()) {
+    return;
+  }
+  gCoachDeckLoadedFromSd = false;
+}
+
+bool itemMatchesScreen(const CoachItem& item, Screen screen) {
+  if (screen == Screen::InterviewPractice) {
+    return item.type == CoachItemType::Qa || item.type == CoachItemType::HostileFollowup ||
+           item.type == CoachItemType::MetricPrecision;
+  }
+  if (screen == Screen::BlitzQuiz) {
+    return item.type == CoachItemType::Mcq && item.optionCount > 0;
+  }
+  if (screen == Screen::WeakAnswerDetector) {
+    return item.type == CoachItemType::WeakAnswer;
+  }
+  if (screen == Screen::Glossary) {
+    return item.type == CoachItemType::Glossary;
+  }
+  if (screen == Screen::MockInterview) {
+    return item.type == CoachItemType::Qa || item.type == CoachItemType::HostileFollowup ||
+           item.type == CoachItemType::MetricPrecision;
+  }
+  return false;
+}
+
+size_t findCoachItem(Screen screen, size_t startIndex) {
+  if (gCoachItemCount == 0) {
+    return 0;
+  }
+  for (size_t offset = 0; offset < gCoachItemCount; ++offset) {
+    const size_t index = (startIndex + offset) % gCoachItemCount;
+    if (itemMatchesScreen(gCoachItems[index], screen)) {
+      return index;
+    }
+  }
+  return 0;
+}
+
+void startCoachMode(Screen screen) {
+  gScreen = screen;
+  gCoachIndex = findCoachItem(screen, 0);
+  gCoachStage = 0;
+  gSelectedOption = -1;
+  gMockStep = 0;
+}
+
+void nextCoachItem() {
+  if (gCoachItemCount == 0) {
+    return;
+  }
+  gCoachIndex = findCoachItem(gScreen, (gCoachIndex + 1) % gCoachItemCount);
+  gCoachStage = 0;
+  gSelectedOption = -1;
+  if (gScreen == Screen::MockInterview) {
+    gMockStep = (gMockStep + 1) % 5;
+  }
+}
+
 float fitScale(uint16_t sourceWidth, uint16_t sourceHeight, int32_t targetWidth, int32_t targetHeight) {
   if (sourceWidth == 0 || sourceHeight == 0 || targetWidth <= 0 || targetHeight <= 0) {
     return 1.0f;
@@ -550,6 +961,181 @@ void drawButton(const Rect& rect, const char* label) {
   display.drawString(label, rect.x + rect.w / 2, rect.y + rect.h / 2);
 }
 
+void drawButton(const Rect& rect, const String& label) {
+  drawButton(rect, label.c_str());
+}
+
+bool isCoachScreen(Screen screen) {
+  return screen == Screen::InterviewPractice || screen == Screen::BlitzQuiz || screen == Screen::WeakAnswerDetector ||
+         screen == Screen::Glossary || screen == Screen::MockInterview;
+}
+
+const char* coachScreenTitle(Screen screen) {
+  switch (screen) {
+    case Screen::BlitzQuiz:
+      return "Blitz Quiz";
+    case Screen::WeakAnswerDetector:
+      return "Weak Answer Detector";
+    case Screen::Glossary:
+      return "Glossary";
+    case Screen::MockInterview:
+      return "Mock Interview";
+    case Screen::InterviewPractice:
+    default:
+      return "Interview Practice";
+  }
+}
+
+void drawWrappedText(const String& text, int32_t x, int32_t y, int32_t width, int32_t lineHeight, uint8_t maxLines) {
+  auto& display = M5.Display;
+  String line;
+  String word;
+  uint8_t lines = 0;
+
+  for (size_t index = 0; index <= text.length(); ++index) {
+    const char ch = index < text.length() ? text[index] : ' ';
+    if (ch != ' ' && ch != '\n') {
+      word += ch;
+      continue;
+    }
+
+    if (word.length() > 0) {
+      const String candidate = line.length() == 0 ? word : line + " " + word;
+      if (line.length() > 0 && display.textWidth(candidate) > width) {
+        display.drawString(line, x, y + lines * lineHeight);
+        ++lines;
+        if (lines >= maxLines) {
+          return;
+        }
+        line = word;
+      } else {
+        line = candidate;
+      }
+      word = "";
+    }
+
+    if (ch == '\n' && line.length() > 0) {
+      display.drawString(line, x, y + lines * lineHeight);
+      ++lines;
+      if (lines >= maxLines) {
+        return;
+      }
+      line = "";
+    }
+  }
+
+  if (line.length() > 0 && lines < maxLines) {
+    display.drawString(line, x, y + lines * lineHeight);
+  }
+}
+
+void drawCoachChrome(const char* title) {
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  display.setFont(&fonts::Font4);
+  display.setTextSize(1);
+  display.drawString(title, 28, 28);
+  display.setFont(&fonts::Font2);
+  display.setTextSize(1);
+  display.drawString(gCoachDeckLoadedFromSd ? "SD deck" : "Embedded deck", 30, 82);
+
+  gHomeButton = {28, display.height() - 92, 164, 64};
+  gNextButton = {display.width() - 192, display.height() - 92, 164, 64};
+  drawButton(gHomeButton, "Home");
+  drawButton(gNextButton, "Next");
+}
+
+String coachPromptFor(const CoachItem& item) {
+  if (item.type == CoachItemType::Glossary) {
+    return item.term;
+  }
+  if (item.type == CoachItemType::WeakAnswer) {
+    return item.prompt + "\nWeak answer: " + item.weakAnswer;
+  }
+  return item.prompt;
+}
+
+String coachAnswerFor(const CoachItem& item) {
+  if (item.type == CoachItemType::Glossary) {
+    return item.definition;
+  }
+  if (item.type == CoachItemType::WeakAnswer) {
+    return item.category + ": " + item.explanation;
+  }
+  return item.answer;
+}
+
+String coachRubricFor(const CoachItem& item) {
+  if (item.explanation.length() > 0 && item.type != CoachItemType::WeakAnswer) {
+    return item.explanation;
+  }
+  return item.rubric;
+}
+
+void renderCoachScreen() {
+  applyAppRotation();
+  prepareFullRefresh();
+  drawCoachChrome(coachScreenTitle(gScreen));
+
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  display.setFont(&fonts::Font2);
+  display.setTextSize(2);
+
+  if (gCoachItemCount == 0) {
+    drawWrappedText("No PaperCoach deck available.", 34, 140, display.width() - 68, 34, 8);
+    display.display();
+    return;
+  }
+
+  const CoachItem& item = gCoachItems[gCoachIndex];
+  if (gScreen == Screen::MockInterview) {
+    display.drawString(String("Prompt ") + (gMockStep + 1) + "/5", 34, 118);
+  }
+
+  if (gScreen == Screen::BlitzQuiz) {
+    drawWrappedText(item.prompt, 34, 124, display.width() - 68, 34, 5);
+    int32_t y = 320;
+    for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
+      gOptionButtons[option] = {34, y, display.width() - 68, 68};
+      String label = String(static_cast<char>('A' + option)) + ". " + item.options[option];
+      if (gSelectedOption >= 0) {
+        if (option == item.correctIndex) {
+          label = String("* ") + label;
+        } else if (option == static_cast<uint8_t>(gSelectedOption)) {
+          label = String("x ") + label;
+        }
+      }
+      drawButton(gOptionButtons[option], label);
+      y += 82;
+    }
+    if (gSelectedOption >= 0) {
+      display.setTextDatum(textdatum_t::top_left);
+      display.setFont(&fonts::Font2);
+      display.setTextSize(2);
+      drawWrappedText(item.explanation, 34, 682, display.width() - 68, 32, 4);
+    }
+    display.display();
+    return;
+  }
+
+  drawWrappedText(coachPromptFor(item), 34, 132, display.width() - 68, 34, 8);
+
+  if (gCoachStage >= 1) {
+    display.drawLine(34, 430, display.width() - 34, 430, TFT_BLACK);
+    drawWrappedText(coachAnswerFor(item), 34, 456, display.width() - 68, 32, 7);
+  }
+
+  if (gCoachStage >= 2) {
+    display.drawLine(34, 674, display.width() - 34, 674, TFT_BLACK);
+    drawWrappedText(coachRubricFor(item), 34, 700, display.width() - 68, 30, 4);
+  }
+
+  display.display();
+  Serial.printf("%s shown: type=%s index=%u stage=%u source=%s\n", coachScreenTitle(gScreen), coachTypeName(item.type),
+                static_cast<unsigned>(gCoachIndex), gCoachStage, gCoachDeckLoadedFromSd ? "SD" : "embedded");
+}
+
 void renderHome() {
   gScreen = Screen::Home;
   applyAppRotation();
@@ -634,27 +1220,6 @@ void renderSettings() {
   Serial.println("Settings screen shown.");
 }
 
-void renderCoachPlaceholder(Screen screen, const char* title, const char* body) {
-  gScreen = screen;
-  applyAppRotation();
-  prepareFullRefresh();
-
-  auto& display = M5.Display;
-  display.setTextDatum(textdatum_t::top_left);
-  display.setFont(&fonts::Font4);
-  display.setTextSize(1);
-  display.drawString(title, 32, 34);
-  display.setFont(&fonts::Font2);
-  display.setTextSize(2);
-  display.drawString(body, 36, 132);
-  display.drawString("Content engine starts in v1.2.", 36, 184);
-
-  gHomeButton = {36, display.height() - 104, 178, 70};
-  drawButton(gHomeButton, "Home");
-  display.display();
-  Serial.printf("%s placeholder shown.\n", title);
-}
-
 void renderDebug() {
   gScreen = Screen::Debug;
   applyAppRotation();
@@ -681,6 +1246,8 @@ void renderDebug() {
   display.drawString(String("profile: ") + (gProfileSd.found ? gProfileSd.path : "embedded"), 26, y);
   y += 26;
   display.drawString(String("QR: ") + (gQrSd.found ? gQrSd.path : "embedded"), 26, y);
+  y += 26;
+  display.drawString(String("coach deck: ") + (gCoachDeckLoadedFromSd ? "SD" : "embedded"), 26, y);
   y += 26;
   display.drawString(String("badge language: ") + languageName(gBadgeLanguage), 26, y);
   y += 26;
@@ -794,10 +1361,27 @@ void handleTouch() {
     return;
   }
 
-  if (gScreen == Screen::InterviewPractice || gScreen == Screen::BlitzQuiz ||
-      gScreen == Screen::WeakAnswerDetector || gScreen == Screen::Glossary || gScreen == Screen::MockInterview) {
+  if (isCoachScreen(gScreen)) {
     if (gHomeButton.contains(tapX, tapY)) {
       renderHome();
+    } else if (gNextButton.contains(tapX, tapY)) {
+      nextCoachItem();
+      renderCoachScreen();
+    } else if (gScreen == Screen::BlitzQuiz && gSelectedOption < 0) {
+      const CoachItem& item = gCoachItems[gCoachIndex];
+      for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
+        if (gOptionButtons[option].contains(tapX, tapY)) {
+          gSelectedOption = option;
+          gCoachStage = 1;
+          renderCoachScreen();
+          break;
+        }
+      }
+    } else {
+      if (gCoachStage < 2) {
+        ++gCoachStage;
+      }
+      renderCoachScreen();
     }
     return;
   }
@@ -832,15 +1416,20 @@ void handleTouch() {
     if (gBadgeButton.contains(tapX, tapY)) {
       renderBadge();
     } else if (gInterviewButton.contains(tapX, tapY)) {
-      renderCoachPlaceholder(Screen::InterviewPractice, "Interview Practice", "Prompt and answer practice.");
+      startCoachMode(Screen::InterviewPractice);
+      renderCoachScreen();
     } else if (gBlitzButton.contains(tapX, tapY)) {
-      renderCoachPlaceholder(Screen::BlitzQuiz, "Blitz Quiz", "Fast multiple-choice drills.");
+      startCoachMode(Screen::BlitzQuiz);
+      renderCoachScreen();
     } else if (gWeakAnswerButton.contains(tapX, tapY)) {
-      renderCoachPlaceholder(Screen::WeakAnswerDetector, "Weak Answer Detector", "Spot vague PM answers.");
+      startCoachMode(Screen::WeakAnswerDetector);
+      renderCoachScreen();
     } else if (gGlossaryButton.contains(tapX, tapY)) {
-      renderCoachPlaceholder(Screen::Glossary, "Glossary", "Review key interview terms.");
+      startCoachMode(Screen::Glossary);
+      renderCoachScreen();
     } else if (gMockInterviewButton.contains(tapX, tapY)) {
-      renderCoachPlaceholder(Screen::MockInterview, "Mock Interview", "Run a short prompt set.");
+      startCoachMode(Screen::MockInterview);
+      renderCoachScreen();
     } else if (gSettingsButton.contains(tapX, tapY)) {
       renderSettings();
     } else if (gDebugButton.contains(tapX, tapY)) {
@@ -912,6 +1501,7 @@ void setup() {
   findSdImage("badge JA", kBadgeJaCandidates, countOf(kBadgeJaCandidates), gBadgeJaSd);
   findSdImage("profile", kProfileCandidates, countOf(kProfileCandidates), gProfileSd);
   findSdImage("QR", kQrCandidates, countOf(kQrCandidates), gQrSd);
+  loadCoachDeck();
   Serial.println("Badge mode defaults to strap 180 orientation unless Settings override is handheld.");
 
   renderBadge();

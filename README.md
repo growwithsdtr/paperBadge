@@ -17,6 +17,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v0.9: generate exact-size bilingual full badge images, embed both English and Japanese fallbacks, boot Badge mode in 180 degree strap orientation, alternate EN/JA every 15 seconds, and use long press to enter a normal-orientation Home/Debug mode.
 - v1.0: production Badge mode with persistent Settings stored in ESP32 Preferences/NVS. Badge boots first, uses strap or handheld orientation according to Settings, supports auto/English/Japanese language mode, and exposes normal-orientation Home, Settings, Debug, and a PaperCoach placeholder.
 - v1.1: add the PaperCoach launcher shell with normal-orientation placeholder screens for Interview Practice, Blitz Quiz, Weak Answer Detector, Glossary, and Mock Interview. Badge remains the default boot mode.
+- v1.2: add a read-only PaperCoach sample deck engine. It loads `/papercoach/decks/sample_interview.json` from SD when present, otherwise uses an embedded senior AI/Product Manager interview deck with QA, MCQ, weak-answer, glossary, hostile-followup, and metric-precision items.
 
 ## Hardware
 
@@ -122,7 +123,31 @@ v1.1 Home/Menu entries:
 - Settings
 - Debug
 
-PaperCoach screens are placeholder shells in v1.1. The read-only sample deck engine starts in v1.2.
+PaperCoach screens are read-only in v1.2. There is no progress writing, spaced repetition, RTC scheduling, Wi-Fi, Bluetooth, or AI/API call behavior.
+
+## PaperCoach Decks
+
+Expected SD deck path:
+
+```text
+PAPERSD/
+  papercoach/
+    decks/
+      sample_interview.json
+```
+
+The repo includes a matching sample file at `sample-data/papercoach/decks/sample_interview.json`.
+
+Supported item types:
+
+- `qa`
+- `mcq`
+- `weak_answer`
+- `glossary`
+- `hostile_followup`
+- `metric_precision`
+
+PaperCoach modes use normal handheld orientation. Screens are page-based with large touch targets: bottom-left Home returns to Home/Menu, bottom-right Next advances to the next item, and tapping the page reveals the next read-only answer/rubric stage. MCQ screens reveal the explanation after an option tap.
 
 ## SD Asset Preparation
 

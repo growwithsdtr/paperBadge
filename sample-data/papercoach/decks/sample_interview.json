@@ -1,0 +1,91 @@
+{
+  "title": "Senior AI PM Interview Sample",
+  "items": [
+    {
+      "type": "qa",
+      "prompt": "Tell me about a time you shipped an AI feature from zero to one.",
+      "answer": "Frame the customer pain, the riskiest assumption, the smallest useful launch, and the measured behavior change.",
+      "rubric": "Watch-outs: vague AI excitement, no adoption metric, no safety or rollback plan."
+    },
+    {
+      "type": "qa",
+      "prompt": "How would you decide whether to build, buy, or partner for an LLM capability?",
+      "answer": "Compare differentiation, latency, data control, vendor risk, unit economics, and iteration speed.",
+      "rubric": "Strong answers make a reversible first step and name the future trigger to revisit the decision."
+    },
+    {
+      "type": "mcq",
+      "prompt": "Which metric best proves an AI summarization feature is creating value?",
+      "options": [
+        "Model benchmark score",
+        "Repeat usage plus time saved",
+        "Prompt token count",
+        "Number of generated summaries"
+      ],
+      "correct_index": 1,
+      "answer": "Correct: repeat usage tied to saved workflow time.",
+      "explanation": "Accuracy alone is not enough; value shows up when users repeatedly choose the feature and finish faster."
+    },
+    {
+      "type": "mcq",
+      "prompt": "A launch has high trial but low retention. What is the best first PM move?",
+      "options": [
+        "Increase ads",
+        "Add more model choices",
+        "Analyze activation and retained cohorts",
+        "Rewrite the roadmap"
+      ],
+      "correct_index": 2,
+      "answer": "Correct: inspect the activation path and compare retained vs. churned users.",
+      "explanation": "Retention failure usually means the promise, first value moment, or workflow fit is broken."
+    },
+    {
+      "type": "weak_answer",
+      "prompt": "Interviewer: How did you handle model hallucinations?",
+      "weak_answer": "We improved the prompts and told users the AI might be wrong.",
+      "category": "missing operational control",
+      "explanation": "A stronger answer names evaluation data, confidence thresholds, UX guardrails, escalation, and monitoring."
+    },
+    {
+      "type": "weak_answer",
+      "prompt": "Interviewer: Why did your pilot fail?",
+      "weak_answer": "The customer was not ready and sales picked the wrong account.",
+      "category": "low ownership",
+      "explanation": "Own the learning: qualification criteria, onboarding gaps, buyer/user mismatch, and what changed next."
+    },
+    {
+      "type": "glossary",
+      "term": "Guardrail metric",
+      "definition": "A metric that must stay within bounds while optimizing the primary goal, such as latency, trust, or cost."
+    },
+    {
+      "type": "glossary",
+      "term": "Activation",
+      "definition": "The first meaningful moment when a user experiences the product's core value."
+    },
+    {
+      "type": "hostile_followup",
+      "prompt": "Your AI feature sounds like a wrapper. Why should we hire you?",
+      "answer": "Acknowledge the risk, then show where the product differentiated: workflow fit, data loop, distribution, trust, or cost.",
+      "rubric": "Do not get defensive. Convert the challenge into a crisp strategy answer."
+    },
+    {
+      "type": "hostile_followup",
+      "prompt": "Why did it take your team so long to learn the customer did not care?",
+      "answer": "Explain the early signal you missed, the decision rule you added, and how cycle time improved afterward.",
+      "rubric": "Strong answers show humility plus a concrete operating-system change."
+    },
+    {
+      "type": "metric_precision",
+      "prompt": "Define a success metric for an AI interview coach.",
+      "answer": "Primary: weekly completed practice sessions leading to improved rubric score. Guardrails: answer quality, latency, and churn.",
+      "rubric": "Name numerator, denominator, cohort, timeframe, and one countermetric."
+    },
+    {
+      "type": "metric_precision",
+      "prompt": "How would you measure PMF for an AI workflow tool in B2B SaaS?",
+      "answer": "Use retained active teams, workflow completion, expansion intent, and qualitative pull from buyers and users.",
+      "rubric": "Avoid one-off demo excitement. Tie usage to a recurring business workflow."
+    }
+  ]
+}
