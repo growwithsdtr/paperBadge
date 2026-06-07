@@ -1,58 +1,108 @@
 #!/usr/bin/env python3
-"""Prepare a PaperBadge SD-card folder from sample data."""
+"""Prepare PaperBadge image assets inside a paperbadge SD-card folder."""
 
 from __future__ import annotations
 
 import argparse
-import json
-import shutil
 from pathlib import Path
 
+try:
+    from PIL import Image
+except ImportError as exc:  # pragma: no cover - depends on local environment
+    raise SystemExit(
+        "Pillow is required for image conversion. Install it with:\n"
+        "  python3 -m pip install Pillow"
+    ) from exc
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-SAMPLE_ROOT = REPO_ROOT / "sample-data"
-DEFAULT_OUTPUT = REPO_ROOT / "dist" / "PAPERSD"
-BADGE_JSON = SAMPLE_ROOT / "paperbadge" / "badge.json"
+
+PHOTO_INPUT_NAMES = (
+    "profilePhoto.png",
+    "profilePhoto.jpg",
+    "profilePhoto.jpeg",
+)
+QR_INPUT_NAMES = (
+    "qr.JPG",
+    "qr.jpg",
+    "qr.jpeg",
+    "qr.png",
+)
+PHOTO_OUTPUT_NAME = "profile_photo.png"
+QR_OUTPUT_NAME = "qr.png"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Copy PaperBadge sample assets into an SD-card-ready folder."
+        description="Convert PaperBadge photo and QR assets in a paperbadge folder."
     )
     parser.add_argument(
-        "--output",
+        "folder",
         type=Path,
-        default=DEFAULT_OUTPUT,
-        help=f"Destination folder, such as /Volumes/PAPERSD (default: {DEFAULT_OUTPUT})",
+        help="Path to the SD card paperbadge folder, such as /Volumes/PAPERSD/paperbadge.",
     )
     return parser.parse_args()
 
 
-def validate_badge_json() -> None:
-    with BADGE_JSON.open("r", encoding="utf-8") as file:
-        json.load(file)
+def first_existing(folder: Path, names: tuple[str, ...]) -> Path | None:
+    for name in names:
+        candidate = folder / name
+        if candidate.exists():
+            return candidate
+    return None
 
 
-def copy_sample_data(destination: Path) -> None:
-    destination.mkdir(parents=True, exist_ok=True)
+def center_crop_square(image: Image.Image) -> Image.Image:
+    width, height = image.size
+    side = min(width, height)
+    left = (width - side) // 2
+    top = (height - side) // 2
+    return image.crop((left, top, left + side, top + side))
 
-    for item in SAMPLE_ROOT.iterdir():
-        target = destination / item.name
-        if item.is_dir():
-            shutil.copytree(item, target, dirs_exist_ok=True)
-        else:
-            shutil.copy2(item, target)
+
+def save_profile_photo(source: Path, destination: Path) -> None:
+    with Image.open(source) as image:
+        prepared = center_crop_square(image.convert("L"))
+        prepared = prepared.resize((220, 220), Image.Resampling.LANCZOS)
+        prepared.save(destination, format="PNG", optimize=True)
+
+
+def save_qr(source: Path, destination: Path) -> None:
+    with Image.open(source) as image:
+        prepared = image.convert("L")
+        prepared = prepared.resize((320, 320), Image.Resampling.NEAREST)
+        prepared = prepared.point(lambda pixel: 255 if pixel > 160 else 0, mode="1")
+        prepared.save(destination, format="PNG", optimize=True)
+
+
+def print_output(label: str, path: Path) -> None:
+    with Image.open(path) as image:
+        print(f"{label}: {path}")
+        print(f"  size: {image.size[0]}x{image.size[1]}")
+        print(f"  bytes: {path.stat().st_size}")
 
 
 def main() -> None:
     args = parse_args()
-    destination = args.output.expanduser().resolve()
+    folder = args.folder.expanduser().resolve()
+    folder.mkdir(parents=True, exist_ok=True)
 
-    validate_badge_json()
-    copy_sample_data(destination)
+    photo_source = first_existing(folder, PHOTO_INPUT_NAMES)
+    qr_source = first_existing(folder, QR_INPUT_NAMES)
 
-    print(f"Prepared PaperBadge SD folder: {destination}")
-    print(f"Expected badge JSON: {destination / 'paperbadge' / 'badge.json'}")
+    if photo_source:
+        photo_output = folder / PHOTO_OUTPUT_NAME
+        save_profile_photo(photo_source, photo_output)
+        print_output("profile photo", photo_output)
+    else:
+        print("profile photo: no profilePhoto.png/.jpg/.jpeg found")
+
+    if qr_source:
+        qr_output = folder / QR_OUTPUT_NAME
+        save_qr(qr_source, qr_output)
+        print_output("QR", qr_output)
+    else:
+        print("QR: no qr.JPG/.jpg/.jpeg/.png found")
+
+    print("Original files were left untouched.")
 
 
 if __name__ == "__main__":

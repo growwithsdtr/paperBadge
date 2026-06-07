@@ -8,6 +8,7 @@ The firmware is intentionally small and built in compile-checked milestones. It 
 
 - v0.1: initialize the e-paper display, draw fallback badge text, mount microSD, check `/paperbadge/badge.json`, show `SD OK` or `SD FAIL`, and beep once on boot if the buzzer is available.
 - v0.2: parse English badge text from `/paperbadge/badge.json` using ArduinoJson. If SD, JSON, or fields are unavailable, the firmware renders hardcoded English fallback text.
+- v0.3: prepare image assets on the Mac and let firmware check whether `/paperbadge/profile_photo.png` and `/paperbadge/qr.png` exist. Firmware draws placeholder boxes only; it does not decode images yet.
 
 ## Hardware
 
@@ -39,7 +40,7 @@ The default upload speed is `1500000`. If upload is unstable through a cable or 
 pio device monitor --port /dev/tty.usbmodem1101
 ```
 
-The serial monitor prints board/display/flash/PSRAM details, whether the SD card mounted, whether `/paperbadge/badge.json` was found, JSON parse status, and whether rendered text came from JSON or fallback.
+The serial monitor prints board/display/flash/PSRAM details, whether the SD card mounted, whether `/paperbadge/badge.json`, `/paperbadge/profile_photo.png`, and `/paperbadge/qr.png` were found, JSON parse status, and whether rendered text came from JSON or fallback.
 
 ## SD Card
 
@@ -53,19 +54,21 @@ PAPERSD/
     qr.png
 ```
 
-For v0.2 only `badge.json` is read. Photos and QR codes are intentionally not loaded yet.
+For v0.3 only `badge.json` is read. Photos and QR codes are checked for existence and represented with placeholder boxes.
 
-Prepare the sample SD folder locally:
-
-```bash
-python3 tools/prepare_assets.py
-```
-
-Or copy directly to a mounted SD card:
+Install the image conversion dependency once:
 
 ```bash
-python3 tools/prepare_assets.py --output /Volumes/PAPERSD
+python3 -m pip install Pillow
 ```
+
+Prepare assets in a mounted SD card `paperbadge` folder:
+
+```bash
+python3 tools/prepare_assets.py /Volumes/PAPERSD/paperbadge
+```
+
+The script converts `profilePhoto.png`, `profilePhoto.jpg`, or `profilePhoto.jpeg` to `profile_photo.png` as a 220x220 grayscale PNG. It converts `qr.JPG`, `qr.jpg`, `qr.jpeg`, or `qr.png` to `qr.png` as a 320x320 high-contrast black/white PNG. Original files are not deleted.
 
 ## Download Mode
 

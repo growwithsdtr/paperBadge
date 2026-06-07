@@ -7,7 +7,10 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
+constexpr const char* kFirmwareVersion = "v0.3";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
+constexpr const char* kProfilePhotoPath = "/paperbadge/profile_photo.png";
+constexpr const char* kQrPath = "/paperbadge/qr.png";
 
 struct BadgeText {
   String name = "Daniel Jimenez";
@@ -15,6 +18,11 @@ struct BadgeText {
   String subtitle = "0->1 AI, SaaS & FinTech";
   String location = "Tokyo, Japan";
   String footer = "Scan for LinkedIn";
+};
+
+struct AssetStatus {
+  bool profilePhoto = false;
+  bool qr = false;
 };
 
 void waitForSerial() {
@@ -84,7 +92,19 @@ bool loadBadgeTextFromJson(BadgeText& badge) {
   return true;
 }
 
-void renderBadge(const BadgeText& badge, bool sdOk) {
+void drawAssetBox(int32_t x, int32_t y, int32_t size, const char* label, bool exists) {
+  auto& display = M5.Display;
+  display.drawRect(x, y, size, size, TFT_BLACK);
+  display.drawLine(x, y, x + size - 1, y + size - 1, TFT_BLACK);
+  display.drawLine(x + size - 1, y, x, y + size - 1, TFT_BLACK);
+  display.setTextDatum(textdatum_t::middle_center);
+  display.setTextSize(1);
+  display.drawString(label, x + size / 2, y + size / 2 - 14);
+  display.drawString(exists ? "FOUND" : "MISSING", x + size / 2, y + size / 2 + 14);
+  display.setTextDatum(textdatum_t::top_left);
+}
+
+void renderBadge(const BadgeText& badge, bool sdOk, const AssetStatus& assets) {
   auto& display = M5.Display;
 
   if (display.width() > display.height()) {
@@ -98,15 +118,20 @@ void renderBadge(const BadgeText& badge, bool sdOk) {
   display.setTextWrap(false, false);
 
   display.setFont(&fonts::Font2);
-  display.setTextSize(3);
-  display.drawString("PaperBadge+", 40, 80);
-  display.drawString(badge.name, 40, 150);
+  drawAssetBox(40, 70, 220, "PHOTO", assets.profilePhoto);
+
+  display.setTextDatum(textdatum_t::top_left);
+  display.setTextSize(2);
+  display.drawString("PaperBadge+", 300, 90);
+  display.drawString(badge.name, 300, 150);
 
   display.setTextSize(2);
-  display.drawString(badge.title, 40, 230);
-  display.drawString(badge.subtitle, 40, 290);
-  display.drawString(badge.location, 40, 350);
-  display.drawString(badge.footer, 40, 430);
+  display.drawString(badge.title, 40, 330);
+  display.drawString(badge.subtitle, 40, 390);
+  display.drawString(badge.location, 40, 450);
+  display.drawString(badge.footer, 40, 510);
+
+  drawAssetBox((display.width() - 320) / 2, 570, 320, "QR", assets.qr);
 
   display.setTextSize(2);
   display.drawString(sdOk ? "SD OK" : "SD FAIL", 40, display.height() - 100);
@@ -127,7 +152,7 @@ void setup() {
   waitForSerial();
 
   Serial.println();
-  Serial.println("PaperBadge+ v0.1 boot");
+  Serial.printf("PaperBadge+ %s boot\n", kFirmwareVersion);
   Serial.printf("M5 board id: %d\n", static_cast<int>(M5.getBoard()));
   Serial.printf("Display: %dx%d\n", M5.Display.width(), M5.Display.height());
   Serial.printf("Flash size: %u bytes\n", ESP.getFlashChipSize());
@@ -142,11 +167,17 @@ void setup() {
   const bool badgeJsonExists = sdMounted && SD.exists(kBadgeJsonPath);
   Serial.printf("badge.json %s: %s\n", badgeJsonExists ? "found" : "missing", kBadgeJsonPath);
 
+  AssetStatus assets;
+  assets.profilePhoto = sdMounted && SD.exists(kProfilePhotoPath);
+  assets.qr = sdMounted && SD.exists(kQrPath);
+  Serial.printf("profile_photo.png %s: %s\n", assets.profilePhoto ? "found" : "missing", kProfilePhotoPath);
+  Serial.printf("qr.png %s: %s\n", assets.qr ? "found" : "missing", kQrPath);
+
   BadgeText badge;
   const bool jsonOk = badgeJsonExists && loadBadgeTextFromJson(badge);
   Serial.printf("Text source: %s\n", jsonOk ? "JSON" : "fallback");
 
-  renderBadge(badge, sdMounted && badgeJsonExists);
+  renderBadge(badge, sdMounted && badgeJsonExists, assets);
 }
 
 void loop() {
