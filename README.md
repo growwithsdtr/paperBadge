@@ -20,6 +20,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v1.2: add a read-only PaperCoach sample deck engine. It loads `/papercoach/decks/sample_interview.json` from SD when present, otherwise uses an embedded senior AI/Product Manager interview deck with QA, MCQ, weak-answer, glossary, hostile-followup, and metric-precision items.
 - v1.3: regenerate English and Japanese full-screen badge fallbacks from one shared layout template. Both languages use the same profile, text, QR, margin, and divider positions; Japanese text is high contrast, the profile photo uses a soft circular treatment, and the public badge still shows no debug labels.
 - v1.4: reduce e-ink ghosting on QR/photo zoom transitions by using M5GFX `epd_quality` full refreshes for zoom entry, mode/orientation changes, and a conservative white refresh before returning from zoom to Badge mode.
+- v1.5: improve touch navigation with serial touch down/up logs, center long-press Home entry, bottom-left triple-tap emergency Home entry, a full PaperCoach Home/Menu, Debug-only touch diagnostics, and persistent PaperCoach font size controls.
 
 ## Hardware
 
@@ -105,27 +106,30 @@ Current selected repo assets:
 
 Badge mode defaults to 180 degree strap orientation so the badge appears upright when the PaperS3 is hanging from the neck strap holder. Home/Menu, Debug, Settings, and PaperCoach modes use normal handheld orientation. Physical buttons are not used for app controls.
 
-Long-press the center of the Badge screen to enter Home/Menu. Settings lets you persist:
+Long-press the center of the Badge screen to enter Home/Menu. If long press is hard to trigger, triple-tap the bottom-left area of the Badge screen as an emergency Home/Menu fallback. Settings lets you persist:
 
 - Badge orientation: `strap` or `handheld`
 - Badge language: `auto`, `English`, or `Japanese`
+- PaperCoach font size: `Medium`, `Large`, `XL`, or `Huge`
 
 Settings are stored in ESP32 Preferences/NVS and survive SD card removal.
 
 ## Home/Menu
 
-v1.1 Home/Menu entries:
+v1.5 Home/Menu entries:
 
 - Badge
 - Interview Practice
 - Blitz Quiz
 - Weak Answer Detector
+- Metric Precision
+- Hostile Follow-up
 - Glossary
 - Mock Interview
 - Settings
 - Debug
 
-PaperCoach screens are read-only in v1.2. There is no progress writing, spaced repetition, RTC scheduling, Wi-Fi, Bluetooth, or AI/API call behavior.
+PaperCoach screens are read-only in v1.5. There is no progress writing, spaced repetition, RTC scheduling, Wi-Fi, Bluetooth, or AI/API call behavior.
 
 ## PaperCoach Decks
 

@@ -11,7 +11,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v1.4";
+constexpr const char* kFirmwareVersion = "v1.5";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/sample_interview.json";
 constexpr const char* kPrefsNamespace = "paperbadge";
@@ -78,6 +78,8 @@ enum class Screen {
   InterviewPractice,
   BlitzQuiz,
   WeakAnswerDetector,
+  MetricPrecision,
+  HostileFollowup,
   Glossary,
   MockInterview,
 };
@@ -96,6 +98,13 @@ enum class LanguageMode : uint8_t {
   Auto = 0,
   English = 1,
   Japanese = 2,
+};
+
+enum class FontSizeMode : uint8_t {
+  Medium = 0,
+  Large = 1,
+  XL = 2,
+  Huge = 3,
 };
 
 enum class CoachItemType : uint8_t {
@@ -143,6 +152,7 @@ struct BadgeConfig {
 struct Settings {
   OrientationMode orientationMode = OrientationMode::Strap;
   LanguageMode languageMode = LanguageMode::Auto;
+  FontSizeMode fontSizeMode = FontSizeMode::Large;
 };
 
 struct CoachItem {
@@ -175,6 +185,8 @@ Rect gBadgeButton;
 Rect gInterviewButton;
 Rect gBlitzButton;
 Rect gWeakAnswerButton;
+Rect gMetricPrecisionButton;
+Rect gHostileFollowupButton;
 Rect gGlossaryButton;
 Rect gMockInterviewButton;
 Rect gSettingsButton;
@@ -183,8 +195,13 @@ Rect gOrientationButton;
 Rect gLanguageAutoButton;
 Rect gLanguageEnglishButton;
 Rect gLanguageJapaneseButton;
+Rect gFontMediumButton;
+Rect gFontLargeButton;
+Rect gFontXlButton;
+Rect gFontHugeButton;
 Rect gHomeButton;
 Rect gNextButton;
+Rect gTouchDebugButton;
 Rect gOptionButtons[kMaxOptions];
 bool gSdMounted = false;
 bool gBadgeJsonLoaded = false;
@@ -198,6 +215,13 @@ size_t gCoachIndex = 0;
 uint8_t gCoachStage = 0;
 int8_t gSelectedOption = -1;
 uint8_t gMockStep = 0;
+uint8_t gBottomLeftTapCount = 0;
+uint32_t gLastBottomLeftTapMs = 0;
+bool gTouchDebugEnabled = false;
+int32_t gLastTouchDownX = -1;
+int32_t gLastTouchDownY = -1;
+int32_t gLastTouchUpX = -1;
+int32_t gLastTouchUpY = -1;
 
 struct EmbeddedCoachItem {
   CoachItemType type;
@@ -517,10 +541,25 @@ const char* languageModeName() {
   }
 }
 
+const char* fontSizeModeName() {
+  switch (gSettings.fontSizeMode) {
+    case FontSizeMode::Medium:
+      return "Medium";
+    case FontSizeMode::XL:
+      return "XL";
+    case FontSizeMode::Huge:
+      return "Huge";
+    case FontSizeMode::Large:
+    default:
+      return "Large";
+  }
+}
+
 void loadSettings() {
   gPrefs.begin(kPrefsNamespace, true);
   const uint8_t orientation = gPrefs.getUChar("orient", static_cast<uint8_t>(OrientationMode::Strap));
   const uint8_t language = gPrefs.getUChar("lang", static_cast<uint8_t>(LanguageMode::Auto));
+  const uint8_t fontSize = gPrefs.getUChar("font", static_cast<uint8_t>(FontSizeMode::Large));
   gPrefs.end();
 
   gSettings.orientationMode = orientation == static_cast<uint8_t>(OrientationMode::Handheld) ? OrientationMode::Handheld
@@ -533,15 +572,28 @@ void loadSettings() {
     gSettings.languageMode = LanguageMode::Auto;
   }
 
-  Serial.printf("Settings loaded: orientation=%s language=%s\n", orientationModeName(), languageModeName());
+  if (fontSize == static_cast<uint8_t>(FontSizeMode::Medium)) {
+    gSettings.fontSizeMode = FontSizeMode::Medium;
+  } else if (fontSize == static_cast<uint8_t>(FontSizeMode::XL)) {
+    gSettings.fontSizeMode = FontSizeMode::XL;
+  } else if (fontSize == static_cast<uint8_t>(FontSizeMode::Huge)) {
+    gSettings.fontSizeMode = FontSizeMode::Huge;
+  } else {
+    gSettings.fontSizeMode = FontSizeMode::Large;
+  }
+
+  Serial.printf("Settings loaded: orientation=%s language=%s font=%s\n", orientationModeName(), languageModeName(),
+                fontSizeModeName());
 }
 
 void saveSettings() {
   gPrefs.begin(kPrefsNamespace, false);
   gPrefs.putUChar("orient", static_cast<uint8_t>(gSettings.orientationMode));
   gPrefs.putUChar("lang", static_cast<uint8_t>(gSettings.languageMode));
+  gPrefs.putUChar("font", static_cast<uint8_t>(gSettings.fontSizeMode));
   gPrefs.end();
-  Serial.printf("Settings saved: orientation=%s language=%s\n", orientationModeName(), languageModeName());
+  Serial.printf("Settings saved: orientation=%s language=%s font=%s\n", orientationModeName(), languageModeName(),
+                fontSizeModeName());
 }
 
 void enforceLanguageMode() {
@@ -783,6 +835,12 @@ bool itemMatchesScreen(const CoachItem& item, Screen screen) {
   if (screen == Screen::WeakAnswerDetector) {
     return item.type == CoachItemType::WeakAnswer;
   }
+  if (screen == Screen::MetricPrecision) {
+    return item.type == CoachItemType::MetricPrecision;
+  }
+  if (screen == Screen::HostileFollowup) {
+    return item.type == CoachItemType::HostileFollowup;
+  }
   if (screen == Screen::Glossary) {
     return item.type == CoachItemType::Glossary;
   }
@@ -979,7 +1037,8 @@ void drawButton(const Rect& rect, const String& label) {
 
 bool isCoachScreen(Screen screen) {
   return screen == Screen::InterviewPractice || screen == Screen::BlitzQuiz || screen == Screen::WeakAnswerDetector ||
-         screen == Screen::Glossary || screen == Screen::MockInterview;
+         screen == Screen::MetricPrecision || screen == Screen::HostileFollowup || screen == Screen::Glossary ||
+         screen == Screen::MockInterview;
 }
 
 const char* coachScreenTitle(Screen screen) {
@@ -988,6 +1047,10 @@ const char* coachScreenTitle(Screen screen) {
       return "Blitz Quiz";
     case Screen::WeakAnswerDetector:
       return "Weak Answer Detector";
+    case Screen::MetricPrecision:
+      return "Metric Precision";
+    case Screen::HostileFollowup:
+      return "Hostile Follow-up";
     case Screen::Glossary:
       return "Glossary";
     case Screen::MockInterview:
@@ -996,6 +1059,136 @@ const char* coachScreenTitle(Screen screen) {
     default:
       return "Interview Practice";
   }
+}
+
+const char* screenName(Screen screen) {
+  switch (screen) {
+    case Screen::Home:
+      return "Home";
+    case Screen::Settings:
+      return "Settings";
+    case Screen::Debug:
+      return "Debug";
+    case Screen::QrZoom:
+      return "QR zoom";
+    case Screen::PhotoZoom:
+      return "Photo zoom";
+    case Screen::InterviewPractice:
+    case Screen::BlitzQuiz:
+    case Screen::WeakAnswerDetector:
+    case Screen::MetricPrecision:
+    case Screen::HostileFollowup:
+    case Screen::Glossary:
+    case Screen::MockInterview:
+      return coachScreenTitle(screen);
+    case Screen::Badge:
+    default:
+      return "Badge";
+  }
+}
+
+uint8_t coachContentTextSize() {
+  switch (gSettings.fontSizeMode) {
+    case FontSizeMode::Medium:
+      return 1;
+    case FontSizeMode::XL:
+      return 1;
+    case FontSizeMode::Huge:
+      return 2;
+    case FontSizeMode::Large:
+    default:
+      return 2;
+  }
+}
+
+void applyCoachContentFont() {
+  auto& display = M5.Display;
+  if (gSettings.fontSizeMode == FontSizeMode::XL || gSettings.fontSizeMode == FontSizeMode::Huge) {
+    display.setFont(&fonts::Font4);
+  } else {
+    display.setFont(&fonts::Font2);
+  }
+  display.setTextSize(coachContentTextSize());
+}
+
+int32_t coachLineHeight() {
+  switch (gSettings.fontSizeMode) {
+    case FontSizeMode::Medium:
+      return 24;
+    case FontSizeMode::XL:
+      return 42;
+    case FontSizeMode::Huge:
+      return 66;
+    case FontSizeMode::Large:
+    default:
+      return 34;
+  }
+}
+
+uint8_t coachPromptLineCount() {
+  switch (gSettings.fontSizeMode) {
+    case FontSizeMode::Medium:
+      return 10;
+    case FontSizeMode::XL:
+      return 6;
+    case FontSizeMode::Huge:
+      return 4;
+    case FontSizeMode::Large:
+    default:
+      return 8;
+  }
+}
+
+uint8_t coachAnswerLineCount() {
+  switch (gSettings.fontSizeMode) {
+    case FontSizeMode::Medium:
+      return 8;
+    case FontSizeMode::XL:
+      return 4;
+    case FontSizeMode::Huge:
+      return 3;
+    case FontSizeMode::Large:
+    default:
+      return 7;
+  }
+}
+
+uint8_t coachRubricLineCount() {
+  switch (gSettings.fontSizeMode) {
+    case FontSizeMode::Medium:
+      return 5;
+    case FontSizeMode::XL:
+      return 3;
+    case FontSizeMode::Huge:
+      return 2;
+    case FontSizeMode::Large:
+    default:
+      return 4;
+  }
+}
+
+bool isBottomLeftTap(int32_t x, int32_t y) {
+  return x < M5.Display.width() / 3 && y > (M5.Display.height() * 2) / 3;
+}
+
+bool recordBottomLeftTripleTap(int32_t x, int32_t y) {
+  if (!isBottomLeftTap(x, y)) {
+    return false;
+  }
+
+  const uint32_t now = millis();
+  if (now - gLastBottomLeftTapMs > 1600) {
+    gBottomLeftTapCount = 0;
+  }
+  gLastBottomLeftTapMs = now;
+  ++gBottomLeftTapCount;
+
+  if (gBottomLeftTapCount >= 3) {
+    gBottomLeftTapCount = 0;
+    Serial.printf("triple tap detected: x=%ld y=%ld\n", static_cast<long>(x), static_cast<long>(y));
+    return true;
+  }
+  return false;
 }
 
 void drawWrappedText(const String& text, int32_t x, int32_t y, int32_t width, int32_t lineHeight, uint8_t maxLines) {
@@ -1091,11 +1284,14 @@ void renderCoachScreen() {
 
   auto& display = M5.Display;
   display.setTextDatum(textdatum_t::top_left);
-  display.setFont(&fonts::Font2);
-  display.setTextSize(2);
+  applyCoachContentFont();
+  const int32_t lineHeight = coachLineHeight();
+  const uint8_t promptLines = coachPromptLineCount();
+  const uint8_t answerLines = coachAnswerLineCount();
+  const uint8_t rubricLines = coachRubricLineCount();
 
   if (gCoachItemCount == 0) {
-    drawWrappedText("No PaperCoach deck available.", 34, 140, display.width() - 68, 34, 8);
+    drawWrappedText("No PaperCoach deck available.", 34, 140, display.width() - 68, lineHeight, promptLines);
     display.display();
     return;
   }
@@ -1106,7 +1302,7 @@ void renderCoachScreen() {
   }
 
   if (gScreen == Screen::BlitzQuiz) {
-    drawWrappedText(item.prompt, 34, 124, display.width() - 68, 34, 5);
+    drawWrappedText(item.prompt, 34, 124, display.width() - 68, lineHeight, promptLines < 5 ? promptLines : 5);
     int32_t y = 320;
     for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
       gOptionButtons[option] = {34, y, display.width() - 68, 68};
@@ -1123,24 +1319,23 @@ void renderCoachScreen() {
     }
     if (gSelectedOption >= 0) {
       display.setTextDatum(textdatum_t::top_left);
-      display.setFont(&fonts::Font2);
-      display.setTextSize(2);
-      drawWrappedText(item.explanation, 34, 682, display.width() - 68, 32, 4);
+      applyCoachContentFont();
+      drawWrappedText(item.explanation, 34, 682, display.width() - 68, lineHeight, rubricLines);
     }
     display.display();
     return;
   }
 
-  drawWrappedText(coachPromptFor(item), 34, 132, display.width() - 68, 34, 8);
+  drawWrappedText(coachPromptFor(item), 34, 132, display.width() - 68, lineHeight, promptLines);
 
   if (gCoachStage >= 1) {
     display.drawLine(34, 430, display.width() - 34, 430, TFT_BLACK);
-    drawWrappedText(coachAnswerFor(item), 34, 456, display.width() - 68, 32, 7);
+    drawWrappedText(coachAnswerFor(item), 34, 456, display.width() - 68, lineHeight, answerLines);
   }
 
   if (gCoachStage >= 2) {
     display.drawLine(34, 674, display.width() - 34, 674, TFT_BLACK);
-    drawWrappedText(coachRubricFor(item), 34, 700, display.width() - 68, 30, 4);
+    drawWrappedText(coachRubricFor(item), 34, 700, display.width() - 68, lineHeight, rubricLines);
   }
 
   display.display();
@@ -1165,9 +1360,9 @@ void renderHome(const char* refreshReason = "mode switch") {
   const int32_t width = display.width();
   const int32_t buttonX = 34;
   const int32_t buttonW = width - 68;
-  const int32_t buttonH = 66;
-  const int32_t gap = 15;
-  int32_t y = 132;
+  const int32_t buttonH = 62;
+  const int32_t gap = 8;
+  int32_t y = 124;
   gBadgeButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
   gInterviewButton = {buttonX, y, buttonW, buttonH};
@@ -1175,6 +1370,10 @@ void renderHome(const char* refreshReason = "mode switch") {
   gBlitzButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
   gWeakAnswerButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gMetricPrecisionButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gHostileFollowupButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
   gGlossaryButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
@@ -1188,6 +1387,8 @@ void renderHome(const char* refreshReason = "mode switch") {
   drawButton(gInterviewButton, "Interview Practice");
   drawButton(gBlitzButton, "Blitz Quiz");
   drawButton(gWeakAnswerButton, "Weak Answer Detector");
+  drawButton(gMetricPrecisionButton, "Metric Precision");
+  drawButton(gHostileFollowupButton, "Hostile Follow-up");
   drawButton(gGlossaryButton, "Glossary");
   drawButton(gMockInterviewButton, "Mock Interview");
   drawButton(gSettingsButton, "Settings");
@@ -1209,23 +1410,36 @@ void renderSettings(const char* refreshReason = "mode switch") {
   display.drawString("Settings", 32, 34);
   display.setFont(&fonts::Font2);
   display.setTextSize(2);
-  display.drawString("Badge orientation", 36, 112);
+  display.drawString("Badge orientation", 36, 98);
 
   const int32_t width = display.width();
-  gOrientationButton = {36, 158, width - 72, 78};
-  gLanguageAutoButton = {36, 326, width - 72, 70};
-  gLanguageEnglishButton = {36, 414, width - 72, 70};
-  gLanguageJapaneseButton = {36, 502, width - 72, 70};
+  const int32_t halfW = (width - 88) / 2;
+  gOrientationButton = {36, 136, width - 72, 66};
+  gLanguageAutoButton = {36, 284, width - 72, 58};
+  gLanguageEnglishButton = {36, 352, width - 72, 58};
+  gLanguageJapaneseButton = {36, 420, width - 72, 58};
+  gFontMediumButton = {36, 590, halfW, 58};
+  gFontLargeButton = {52 + halfW, 590, halfW, 58};
+  gFontXlButton = {36, 660, halfW, 58};
+  gFontHugeButton = {52 + halfW, 660, halfW, 58};
   gHomeButton = {36, display.height() - 104, 178, 70};
 
   drawButton(gOrientationButton, gSettings.orientationMode == OrientationMode::Strap ? "Strap 180" : "Handheld 0");
   display.setTextDatum(textdatum_t::top_left);
   display.setFont(&fonts::Font2);
   display.setTextSize(2);
-  display.drawString("Language mode", 36, 278);
+  display.drawString("Language mode", 36, 238);
   drawButton(gLanguageAutoButton, gSettings.languageMode == LanguageMode::Auto ? "Auto *" : "Auto");
   drawButton(gLanguageEnglishButton, gSettings.languageMode == LanguageMode::English ? "English *" : "English");
   drawButton(gLanguageJapaneseButton, gSettings.languageMode == LanguageMode::Japanese ? "Japanese *" : "Japanese");
+  display.setTextDatum(textdatum_t::top_left);
+  display.setFont(&fonts::Font2);
+  display.setTextSize(2);
+  display.drawString("PaperCoach font", 36, 542);
+  drawButton(gFontMediumButton, gSettings.fontSizeMode == FontSizeMode::Medium ? "Medium *" : "Medium");
+  drawButton(gFontLargeButton, gSettings.fontSizeMode == FontSizeMode::Large ? "Large *" : "Large");
+  drawButton(gFontXlButton, gSettings.fontSizeMode == FontSizeMode::XL ? "XL *" : "XL");
+  drawButton(gFontHugeButton, gSettings.fontSizeMode == FontSizeMode::Huge ? "Huge *" : "Huge");
   drawButton(gHomeButton, "Home");
 
   display.display();
@@ -1265,6 +1479,8 @@ void renderDebug(const char* refreshReason = "mode switch") {
   y += 26;
   display.drawString(String("language mode: ") + languageModeName(), 26, y);
   y += 26;
+  display.drawString(String("font size: ") + fontSizeModeName(), 26, y);
+  y += 26;
   display.drawString(String("orientation: ") + orientationModeName(), 26, y);
   y += 26;
   display.drawString(String("source: ") + gLastBadgeSource, 26, y);
@@ -1273,8 +1489,17 @@ void renderDebug(const char* refreshReason = "mode switch") {
   display.drawString(batteryMv > 0 ? String("battery: ") + batteryMv + " mV" : "battery: unknown", 26, y);
   y += 26;
   display.drawString(String("embedded bytes: ") + static_cast<unsigned>(embedded_assets::kEmbeddedPngTotalSize), 26, y);
-  y += 46;
-  display.drawString("Tap to return home", 26, y);
+  y += 30;
+  display.drawString(String("touch debug: ") + (gTouchDebugEnabled ? "on" : "off"), 26, y);
+  y += 26;
+  display.drawString(String("touch down: ") + gLastTouchDownX + "," + gLastTouchDownY, 26, y);
+  y += 26;
+  display.drawString(String("touch up: ") + gLastTouchUpX + "," + gLastTouchUpY, 26, y);
+
+  gTouchDebugButton = {26, display.height() - 178, display.width() - 52, 58};
+  gHomeButton = {26, display.height() - 100, display.width() - 52, 58};
+  drawButton(gTouchDebugButton, gTouchDebugEnabled ? "Touch debug off" : "Touch debug on");
+  drawButton(gHomeButton, "Home");
 
   display.display();
   Serial.println("Debug screen shown.");
@@ -1341,9 +1566,23 @@ void handleTouch() {
   }
 
   const auto detail = M5.Touch.getDetail();
+  if (detail.wasPressed()) {
+    gLastTouchDownX = constrain(detail.x, 0, M5.Display.width());
+    gLastTouchDownY = constrain(detail.y, 0, M5.Display.height());
+    Serial.printf("touch down coordinates: x=%ld y=%ld screen=%s\n", static_cast<long>(gLastTouchDownX),
+                  static_cast<long>(gLastTouchDownY), screenName(gScreen));
+  }
+  if (detail.wasClicked() || detail.wasReleased()) {
+    gLastTouchUpX = constrain(detail.x, 0, M5.Display.width());
+    gLastTouchUpY = constrain(detail.y, 0, M5.Display.height());
+    Serial.printf("touch up coordinates: x=%ld y=%ld screen=%s\n", static_cast<long>(gLastTouchUpX),
+                  static_cast<long>(gLastTouchUpY), screenName(gScreen));
+  }
   if (gScreen == Screen::Badge && detail.wasHold() && detail.x > M5.Display.width() / 4 &&
       detail.x < (M5.Display.width() * 3) / 4 && detail.y > M5.Display.height() / 4 &&
       detail.y < (M5.Display.height() * 3) / 4) {
+    Serial.printf("long press detected: x=%ld y=%ld\n", static_cast<long>(detail.x), static_cast<long>(detail.y));
+    Serial.println("entering Home");
     renderHome();
     return;
   }
@@ -1355,7 +1594,10 @@ void handleTouch() {
   }
 
   if (gScreen == Screen::Badge) {
-    if (gQrRect.contains(tapX, tapY)) {
+    if (recordBottomLeftTripleTap(tapX, tapY)) {
+      Serial.println("entering Home");
+      renderHome();
+    } else if (gQrRect.contains(tapX, tapY)) {
       renderQrZoom();
     } else if (gPhotoRect.contains(tapX, tapY)) {
       renderPhotoZoom();
@@ -1370,12 +1612,21 @@ void handleTouch() {
   }
 
   if (gScreen == Screen::Debug) {
-    renderHome();
+    if (gTouchDebugButton.contains(tapX, tapY)) {
+      gTouchDebugEnabled = !gTouchDebugEnabled;
+      renderDebug();
+    } else if (gHomeButton.contains(tapX, tapY)) {
+      Serial.println("entering Home");
+      renderHome();
+    } else if (gTouchDebugEnabled) {
+      renderDebug();
+    }
     return;
   }
 
   if (isCoachScreen(gScreen)) {
     if (gHomeButton.contains(tapX, tapY)) {
+      Serial.println("entering Home");
       renderHome();
     } else if (gNextButton.contains(tapX, tapY)) {
       nextCoachItem();
@@ -1419,7 +1670,24 @@ void handleTouch() {
       gBadgeLanguage = BadgeLanguage::Japanese;
       saveSettings();
       renderSettings();
+    } else if (gFontMediumButton.contains(tapX, tapY)) {
+      gSettings.fontSizeMode = FontSizeMode::Medium;
+      saveSettings();
+      renderSettings();
+    } else if (gFontLargeButton.contains(tapX, tapY)) {
+      gSettings.fontSizeMode = FontSizeMode::Large;
+      saveSettings();
+      renderSettings();
+    } else if (gFontXlButton.contains(tapX, tapY)) {
+      gSettings.fontSizeMode = FontSizeMode::XL;
+      saveSettings();
+      renderSettings();
+    } else if (gFontHugeButton.contains(tapX, tapY)) {
+      gSettings.fontSizeMode = FontSizeMode::Huge;
+      saveSettings();
+      renderSettings();
     } else if (gHomeButton.contains(tapX, tapY)) {
+      Serial.println("entering Home");
       renderHome();
     }
     return;
@@ -1427,6 +1695,7 @@ void handleTouch() {
 
   if (gScreen == Screen::Home) {
     if (gBadgeButton.contains(tapX, tapY)) {
+      Serial.println("returning to Badge");
       renderBadge(true, "mode switch");
     } else if (gInterviewButton.contains(tapX, tapY)) {
       startCoachMode(Screen::InterviewPractice);
@@ -1436,6 +1705,12 @@ void handleTouch() {
       renderCoachScreen();
     } else if (gWeakAnswerButton.contains(tapX, tapY)) {
       startCoachMode(Screen::WeakAnswerDetector);
+      renderCoachScreen();
+    } else if (gMetricPrecisionButton.contains(tapX, tapY)) {
+      startCoachMode(Screen::MetricPrecision);
+      renderCoachScreen();
+    } else if (gHostileFollowupButton.contains(tapX, tapY)) {
+      startCoachMode(Screen::HostileFollowup);
       renderCoachScreen();
     } else if (gGlossaryButton.contains(tapX, tapY)) {
       startCoachMode(Screen::Glossary);
