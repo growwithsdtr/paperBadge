@@ -21,6 +21,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v1.3: regenerate English and Japanese full-screen badge fallbacks from one shared layout template. Both languages use the same profile, text, QR, margin, and divider positions; Japanese text is high contrast, the profile photo uses a soft circular treatment, and the public badge still shows no debug labels.
 - v1.4: reduce e-ink ghosting on QR/photo zoom transitions by using M5GFX `epd_quality` full refreshes for zoom entry, mode/orientation changes, and a conservative white refresh before returning from zoom to Badge mode.
 - v1.5: improve touch navigation with serial touch down/up logs, center long-press Home entry, bottom-left triple-tap emergency Home entry, a full PaperCoach Home/Menu, Debug-only touch diagnostics, and persistent PaperCoach font size controls.
+- v1.6: convert the real Markdown interview prep sheet at `sample-data/papercoach/interview_prep_sheet3.md` into generated PaperCoach JSON. The converter extracts 71 cards, including 17 must-master cards, writes generated deck/drill/glossary JSON, and prepares an SD-ready deck copy under `dist/sdcard/papercoach/decks/`.
 
 ## Hardware
 
@@ -143,6 +144,19 @@ PAPERSD/
 ```
 
 The repo includes a matching sample file at `sample-data/papercoach/decks/sample_interview.json`.
+
+Convert the real Markdown prep sheet into generated deck files:
+
+```bash
+/Users/danieljimenez/AIDevelopment/.venv/bin/python tools/convert_prep_sheet.py
+```
+
+Generated outputs:
+
+- `generated/papercoach/interview_cards.json`
+- `generated/papercoach/drills.json`
+- `generated/papercoach/glossary.json`
+- `dist/sdcard/papercoach/decks/interview_cards.json`
 
 Supported item types:
 

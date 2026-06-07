@@ -1,0 +1,1993 @@
+{
+  "schema_version": 1,
+  "drills": [
+    {
+      "id": "A01-confidence",
+      "type": "mcq",
+      "card_id": "A01",
+      "prompt": "What confidence framing belongs with: Self-introduction / career & recent work?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card A01 is tagged: Evidence-backed."
+    },
+    {
+      "id": "A01-watch",
+      "type": "weak_answer",
+      "card_id": "A01",
+      "prompt": "What is the main risk in a weak answer to: Self-introduction / career & recent work?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 0,
+      "explanation": "Over-talk risk — three strengths, one recent signal, stop. Have your exact PhD status ready so \"research background\" can't read as evasive."
+    },
+    {
+      "id": "A02-confidence",
+      "type": "mcq",
+      "card_id": "A02",
+      "prompt": "What confidence framing belongs with: Why leave consulting for an in-house role?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card A02 is tagged: Evidence-backed."
+    },
+    {
+      "id": "A02-watch",
+      "type": "weak_answer",
+      "card_id": "A02",
+      "prompt": "What is the main risk in a weak answer to: Why leave consulting for an in-house role?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 3,
+      "explanation": "Don't blame execution teams (\"failed the moment it left my hands\") — take responsibility for the scoping gaps; lead with owning the telemetry/iteration loop."
+    },
+    {
+      "id": "A03-confidence",
+      "type": "mcq",
+      "card_id": "A03",
+      "prompt": "What confidence framing belongs with: Why this company and industry?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card A03 is tagged: Evidence-backed for Tripla."
+    },
+    {
+      "id": "A03-watch",
+      "type": "weak_answer",
+      "card_id": "A03",
+      "prompt": "What is the main risk in a weak answer to: Why this company and industry?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Frame take-rate as a different model, not a smaller commission; have the CAC/unit-economics answer (AI lifts the hotel's own conversion) ready."
+    },
+    {
+      "id": "A04-confidence",
+      "type": "mcq",
+      "card_id": "A04",
+      "prompt": "What confidence framing belongs with: Success / 90-day impact & successful traits?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 1,
+      "explanation": "Card A04 is tagged: Framework-only — a plan, not a track record."
+    },
+    {
+      "id": "A04-watch",
+      "type": "weak_answer",
+      "card_id": "A04",
+      "prompt": "What is the main risk in a weak answer to: Success / 90-day impact & successful traits?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "State dated, proactive milestones; don't assume their team model; handle the legacy-mess and upstream-risk probes head-on."
+    },
+    {
+      "id": "A05-confidence",
+      "type": "mcq",
+      "card_id": "A05",
+      "prompt": "What confidence framing belongs with: Why a Senior PM role / criteria for your next step?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card A05 is tagged: Evidence-backed."
+    },
+    {
+      "id": "A05-watch",
+      "type": "weak_answer",
+      "card_id": "A05",
+      "prompt": "What is the main risk in a weak answer to: Why a Senior PM role / criteria for your next step?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 0,
+      "explanation": "Defuse overqualification: own a product outcome, not the org chart; say explicitly you won't reach into engineering's architecture."
+    },
+    {
+      "id": "A06-confidence",
+      "type": "mcq",
+      "card_id": "A06",
+      "prompt": "What confidence framing belongs with: Why an MBA after a tech/research background?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card A06 is tagged: Evidence-backed."
+    },
+    {
+      "id": "A06-watch",
+      "type": "weak_answer",
+      "card_id": "A06",
+      "prompt": "What is the main risk in a weak answer to: Why an MBA after a tech/research background?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Have one concrete unit-economics-killed-a-feature example ready; don't sound dismissive of research; \"much of the job,\" not \"the whole job.\""
+    },
+    {
+      "id": "A07-confidence",
+      "type": "mcq",
+      "card_id": "A07",
+      "prompt": "What confidence framing belongs with: Your biggest career achievement?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card A07 is tagged: Evidence-backed."
+    },
+    {
+      "id": "A07-watch",
+      "type": "weak_answer",
+      "card_id": "A07",
+      "prompt": "What is the main risk in a weak answer to: Your biggest career achievement?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 1,
+      "explanation": "Define the ROI denominator inline; foreground the transferable method; don't dwell on press for an AI role."
+    },
+    {
+      "id": "A08-confidence",
+      "type": "mcq",
+      "card_id": "A08",
+      "prompt": "What confidence framing belongs with: Scale of startups you worked at, and where those ventures stand now?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card A08 is tagged: Evidence-backed."
+    },
+    {
+      "id": "A08-watch",
+      "type": "weak_answer",
+      "card_id": "A08",
+      "prompt": "What is the main risk in a weak answer to: Scale of startups you worked at, and where those ventures stand now?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Lead with the SDTR-vs-Safed clarification; say Safed was an operating role; have CAC, 6-month stickiness, and the exact Pita transaction structure ready."
+    },
+    {
+      "id": "A09-confidence",
+      "type": "mcq",
+      "card_id": "A09",
+      "prompt": "What confidence framing belongs with: Japanese proficiency / experience with Japanese customers?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card A09 is tagged: Evidence-backed."
+    },
+    {
+      "id": "A09-watch",
+      "type": "weak_answer",
+      "card_id": "A09",
+      "prompt": "What is the main risk in a weak answer to: Japanese proficiency / experience with Japanese customers?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 0,
+      "explanation": "Demonstrate, don't disclaim; have a Japanese answer ready for the inevitable switch — including how you'd persuade conservative stakeholders to move from legacy to AI."
+    },
+    {
+      "id": "A10-confidence",
+      "type": "mcq",
+      "card_id": "A10",
+      "prompt": "What confidence framing belongs with: Do you have an engineering background / justify the business+technical blend?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card A10 is tagged: Evidence-backed."
+    },
+    {
+      "id": "A10-watch",
+      "type": "weak_answer",
+      "card_id": "A10",
+      "prompt": "What is the main risk in a weak answer to: Do you have an engineering background / justify the business+technical blend?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "State exact PhD status; reconcile deterministic semantic-web vs stochastic LLM proactively (you bound the model with structure); drop \"vibe-code.\""
+    },
+    {
+      "id": "A11-confidence",
+      "type": "mcq",
+      "card_id": "A11",
+      "prompt": "What confidence framing belongs with: How you work with and manage distributed, cross-border teams?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card A11 is tagged: Evidence-backed."
+    },
+    {
+      "id": "A11-watch",
+      "type": "weak_answer",
+      "card_id": "A11",
+      "prompt": "What is the main risk in a weak answer to: How you work with and manage distributed, cross-border teams?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 2,
+      "explanation": "Lead with the concrete behavior (pre-read → decision → written log); clarify Transcom was coordination, not direct management of all centers; fix the mechanism, not the symptom."
+    },
+    {
+      "id": "A12-confidence",
+      "type": "mcq",
+      "card_id": "A12",
+      "prompt": "What confidence framing belongs with: Job-hunting status, certainty of moving, availability to join?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card A12 is tagged: Evidence-backed (situational)."
+    },
+    {
+      "id": "A12-watch",
+      "type": "weak_answer",
+      "card_id": "A12",
+      "prompt": "What is the main risk in a weak answer to: Job-hunting status, certainty of moving, availability to join?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 2,
+      "explanation": "Keep it clean and confident; don't name competitors or repeat framework language; stay flexible on the start-date probe."
+    },
+    {
+      "id": "A13-confidence",
+      "type": "mcq",
+      "card_id": "A13",
+      "prompt": "What confidence framing belongs with: What you look for from the company / expectations of us?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card A13 is tagged: Evidence-backed."
+    },
+    {
+      "id": "A13-watch",
+      "type": "weak_answer",
+      "card_id": "A13",
+      "prompt": "What is the main risk in a weak answer to: What you look for from the company / expectations of us?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "State operational expectations, not a culture manifesto; caveat \"experiment-friendly\" hard for a high-stakes vertical so it doesn't sound reckless."
+    },
+    {
+      "id": "A14-confidence",
+      "type": "mcq",
+      "card_id": "A14",
+      "prompt": "What confidence framing belongs with: Would you consider a CEO/COO role in future?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card A14 is tagged: Evidence-backed."
+    },
+    {
+      "id": "A14-watch",
+      "type": "weak_answer",
+      "card_id": "A14",
+      "prompt": "What is the main risk in a weak answer to: Would you consider a CEO/COO role in future?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Reassure on flight-risk; reframe owner's mindset as prioritization discipline, not ambition for their seat; drop \"survival and growth.\""
+    },
+    {
+      "id": "A15-confidence",
+      "type": "mcq",
+      "card_id": "A15",
+      "prompt": "What confidence framing belongs with: Where can you help us most (e.g., within the CEO office)?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card A15 is tagged: Evidence-backed."
+    },
+    {
+      "id": "A15-watch",
+      "type": "weak_answer",
+      "card_id": "A15",
+      "prompt": "What is the main risk in a weak answer to: Where can you help us most (e.g., within the CEO office)?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Never call the CEO's ideas \"messy\"; define \"validated\" concretely; frame yourself as an internal owner, not a consultant. ---"
+    },
+    {
+      "id": "B16-confidence",
+      "type": "mcq",
+      "card_id": "B16",
+      "prompt": "What confidence framing belongs with: Ideate a new product or feature for our niche?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card B16 is tagged: Evidence-backed (real ideation); TAM is an estimate."
+    },
+    {
+      "id": "B16-watch",
+      "type": "weak_answer",
+      "card_id": "B16",
+      "prompt": "What is the main risk in a weak answer to: Ideate a new product or feature for our niche?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 5,
+      "explanation": "Lead with the pain + how you'd validate it; show the TAM as assumptions; have the \"why us vs Copilot/CI vendor\" answer ready."
+    },
+    {
+      "id": "B17-confidence",
+      "type": "mcq",
+      "card_id": "B17",
+      "prompt": "What confidence framing belongs with: Walk through a past project — problem, contribution, hardest parts, diagnosis?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card B17 is tagged: Evidence-backed."
+    },
+    {
+      "id": "B17-watch",
+      "type": "weak_answer",
+      "card_id": "B17",
+      "prompt": "What is the main risk in a weak answer to: Walk through a past project — problem, contribution, hardest parts, diagnosis?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 1,
+      "explanation": "Define retention (low-single-digit baseline; matched-cohort lift); own attribution as directional; don't muddle in Digital Senpai."
+    },
+    {
+      "id": "B18-confidence",
+      "type": "mcq",
+      "card_id": "B18",
+      "prompt": "What confidence framing belongs with: Prioritize features for a roadmap or migration?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card B18 is tagged: Evidence-backed."
+    },
+    {
+      "id": "B18-watch",
+      "type": "weak_answer",
+      "card_id": "B18",
+      "prompt": "What is the main risk in a weak answer to: Prioritize features for a roadmap or migration?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 2,
+      "explanation": "Lead with one concrete prioritization + when you broke the framework; don't stack RICE/ICE/I-I-O as a textbook recital."
+    },
+    {
+      "id": "B19-confidence",
+      "type": "mcq",
+      "card_id": "B19",
+      "prompt": "What confidence framing belongs with: Zero-to-one discovery, and how you choose a POC / who's involved?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card B19 is tagged: Evidence-backed."
+    },
+    {
+      "id": "B19-watch",
+      "type": "weak_answer",
+      "card_id": "B19",
+      "prompt": "What is the main risk in a weak answer to: Zero-to-one discovery, and how you choose a POC / who's involved?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 5,
+      "explanation": "Lead with a software example; answer the B2B-can't-pre-pay probe directly (LOIs / paid pilots / fake-door); keep Pita secondary."
+    },
+    {
+      "id": "B20-confidence",
+      "type": "mcq",
+      "card_id": "B20",
+      "prompt": "What confidence framing belongs with: Unique value proposition vs competitors / value we bring to customers?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card B20 is tagged: Evidence-backed for Tripla."
+    },
+    {
+      "id": "B20-watch",
+      "type": "weak_answer",
+      "card_id": "B20",
+      "prompt": "What is the main risk in a weak answer to: Unique value proposition vs competitors / value we bring to customers?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 0,
+      "explanation": "Don't claim live inventory is itself the moat (OTAs have PMS APIs too) — the moat is the guest relationship + switching cost; don't over-defend OTAs."
+    },
+    {
+      "id": "B21-confidence",
+      "type": "mcq",
+      "card_id": "B21",
+      "prompt": "What confidence framing belongs with: What should we do about [industry challenge] (e.g., travelers booking via ChatGPT)?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card B21 is tagged: Evidence-backed (prototype)."
+    },
+    {
+      "id": "B21-watch",
+      "type": "weak_answer",
+      "card_id": "B21",
+      "prompt": "What is the main risk in a weak answer to: What should we do about [industry challenge] (e.g., travelers booking via ChatGPT)?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 0,
+      "explanation": "Correct the MCP-discovery misconception yourself; separate \"machine-readable data\" (real) from \"agents auto-discover me\" (not how MCP works)."
+    },
+    {
+      "id": "B22-confidence",
+      "type": "mcq",
+      "card_id": "B22",
+      "prompt": "What confidence framing belongs with: Why is [product area, e.g. Payments] important, and why interested given your AI background?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card B22 is tagged: Evidence-backed."
+    },
+    {
+      "id": "B22-watch",
+      "type": "weak_answer",
+      "card_id": "B22",
+      "prompt": "What is the main risk in a weak answer to: Why is [product area, e.g. Payments] important, and why interested given your AI background?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Don't muddle back-office forecasting with checkout conversion; state Moneytree was consulting. ---"
+    },
+    {
+      "id": "C23-confidence",
+      "type": "mcq",
+      "card_id": "C23",
+      "prompt": "What confidence framing belongs with: How do you QA/test a non-deterministic chatbot or AI output?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card C23 is tagged: Evidence-backed (pilot-scale, not hyperscale MLOps)."
+    },
+    {
+      "id": "C23-watch",
+      "type": "weak_answer",
+      "card_id": "C23",
+      "prompt": "What is the main risk in a weak answer to: How do you QA/test a non-deterministic chatbot or AI output?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 5,
+      "explanation": "Lead with \"much of it is deterministic\" to defuse the CI-bottleneck probe; calibrate the judge against human labels; state pilot-scale maturity."
+    },
+    {
+      "id": "C24-confidence",
+      "type": "mcq",
+      "card_id": "C24",
+      "prompt": "What confidence framing belongs with: Guardrails against hallucinations / PII leaks?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card C24 is tagged: Evidence-backed on architecture; measured red-team is a framework upgrade."
+    },
+    {
+      "id": "C24-watch",
+      "type": "weak_answer",
+      "card_id": "C24",
+      "prompt": "What is the main risk in a weak answer to: Guardrails against hallucinations / PII leaks?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Name OWASP LLM Top 10; lead with access control + grounding (temperature minor); fix the async hole — high-risk = synchronous pre-emission."
+    },
+    {
+      "id": "C25a-confidence",
+      "type": "mcq",
+      "card_id": "C25a",
+      "prompt": "What confidence framing belongs with: Decide an AI feature is ready to release?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card C25a is tagged: Evidence-backed on the decision; full shadow/canary mechanics are framework."
+    },
+    {
+      "id": "C25a-watch",
+      "type": "weak_answer",
+      "card_id": "C25a",
+      "prompt": "What is the main risk in a weak answer to: Decide an AI feature is ready to release?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 1,
+      "explanation": "Give concrete thresholds; explain how you evaluate shadow without ground truth (vs baseline + eval set); acknowledge shadow's cost."
+    },
+    {
+      "id": "C25b-confidence",
+      "type": "mcq",
+      "card_id": "C25b",
+      "prompt": "What confidence framing belongs with: Debug non-deterministic output?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card C25b is tagged: Evidence-backed on the harness; methodical steps are the articulation."
+    },
+    {
+      "id": "C25b-watch",
+      "type": "weak_answer",
+      "card_id": "C25b",
+      "prompt": "What is the main risk in a weak answer to: Debug non-deterministic output?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Don't imply temp-0 is deterministic; lead with measuring a failure rate to separate bug from jitter; define which drift."
+    },
+    {
+      "id": "C26-confidence",
+      "type": "mcq",
+      "card_id": "C26",
+      "prompt": "What confidence framing belongs with: AI quality measurement across multiple languages / translated output?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 1,
+      "explanation": "Card C26 is tagged: Framework-only for real-time AI translation QA."
+    },
+    {
+      "id": "C26-watch",
+      "type": "weak_answer",
+      "card_id": "C26",
+      "prompt": "What is the main risk in a weak answer to: AI quality measurement across multiple languages / translated output?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 0,
+      "explanation": "COMET needs references — split offline (COMET/golden sets) from online (reference-free: LLM-judge, back-translation, task-success). Don't claim COMET on live dialogue."
+    },
+    {
+      "id": "C27-confidence",
+      "type": "mcq",
+      "card_id": "C27",
+      "prompt": "What confidence framing belongs with: Structured data for an AI agent (RAG) — what works / doesn't?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card C27 is tagged: Evidence-backed (prototype + depth); state prototype maturity."
+    },
+    {
+      "id": "C27-watch",
+      "type": "weak_answer",
+      "card_id": "C27",
+      "prompt": "What is the main risk in a weak answer to: Structured data for an AI agent (RAG) — what works / doesn't?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 5,
+      "explanation": "Lead with tool-calling for live structured data (not vector-dumping); name GraphRAG as an option for relational schemas; say \"prototype.\""
+    },
+    {
+      "id": "C28-confidence",
+      "type": "mcq",
+      "card_id": "C28",
+      "prompt": "What confidence framing belongs with: Biggest challenges for this AI product?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card C28 is tagged: Evidence-backed."
+    },
+    {
+      "id": "C28-watch",
+      "type": "weak_answer",
+      "card_id": "C28",
+      "prompt": "What is the main risk in a weak answer to: Biggest challenges for this AI product?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 1,
+      "explanation": "Give the immediate staleness mitigation (don't make it a multi-quarter platform promise); name 2–3 risks with a metric each; drop the reused conversational-agent anecdote here. ---"
+    },
+    {
+      "id": "D29-confidence",
+      "type": "mcq",
+      "card_id": "D29",
+      "prompt": "What confidence framing belongs with: Preferred style of collaborating with engineers?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card D29 is tagged: Evidence-backed."
+    },
+    {
+      "id": "D29-watch",
+      "type": "weak_answer",
+      "card_id": "D29",
+      "prompt": "What is the main risk in a weak answer to: Preferred style of collaborating with engineers?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 2,
+      "explanation": "Vary the phrasing; show the \"challenge trade-offs\" line is technical, not positional; give the concrete intake mechanism, not \"filtering noise.\""
+    },
+    {
+      "id": "D30-confidence",
+      "type": "mcq",
+      "card_id": "D30",
+      "prompt": "What confidence framing belongs with: A time you disagreed with a technical stakeholder — resolution and outcome?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card D30 is tagged: Evidence-backed."
+    },
+    {
+      "id": "D30-watch",
+      "type": "weak_answer",
+      "card_id": "D30",
+      "prompt": "What is the main risk in a weak answer to: A time you disagreed with a technical stakeholder — resolution and outcome?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Don't make the CTO look shallow or do \"I told you so\"; the lesson is influence-via-cheap-experiment; keep the lift cohort-scoped."
+    },
+    {
+      "id": "D31-confidence",
+      "type": "mcq",
+      "card_id": "D31",
+      "prompt": "What confidence framing belongs with: Working with engineers day-to-day when products exist and there's pressure?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card D31 is tagged: Evidence-backed."
+    },
+    {
+      "id": "D31-watch",
+      "type": "weak_answer",
+      "card_id": "D31",
+      "prompt": "What is the main risk in a weak answer to: Working with engineers day-to-day when products exist and there's pressure?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 2,
+      "explanation": "Translate \"High-Integrity Commitments\" into plain terms; pre-empt the \"40% = you cut testing\" probe; don't pack five frameworks in."
+    },
+    {
+      "id": "D32-confidence",
+      "type": "mcq",
+      "card_id": "D32",
+      "prompt": "What confidence framing belongs with: Prove your proposal's value to other stakeholders / PMs?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card D32 is tagged: Evidence-backed."
+    },
+    {
+      "id": "D32-watch",
+      "type": "weak_answer",
+      "card_id": "D32",
+      "prompt": "What is the main risk in a weak answer to: Prove your proposal's value to other stakeholders / PMs?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 5,
+      "explanation": "State Sparkle's real outcome (prototype + interest), not implied revenue; show you handled KYC/AML/custody as the reason for sequencing. ---"
+    },
+    {
+      "id": "E33-confidence",
+      "type": "mcq",
+      "card_id": "E33",
+      "prompt": "What confidence framing belongs with: Define a North Star metric and sub-metrics (and does it change by stage)?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card E33 is tagged: Evidence-backed (Safed real; Langets illustrative)."
+    },
+    {
+      "id": "E33-watch",
+      "type": "weak_answer",
+      "card_id": "E33",
+      "prompt": "What is the main risk in a weak answer to: Define a North Star metric and sub-metrics (and does it change by stage)?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 1,
+      "explanation": "Acknowledge guardrail metrics so \"one indicator\" isn't naive; show how you'd measure proficiency fast (proxy checkpoints) and avoid the vanity trap."
+    },
+    {
+      "id": "E34-confidence",
+      "type": "mcq",
+      "card_id": "E34",
+      "prompt": "What confidence framing belongs with: Measure the success of a newly released AI feature?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card E34 is tagged: Evidence-backed (role real)."
+    },
+    {
+      "id": "E34-watch",
+      "type": "weak_answer",
+      "card_id": "E34",
+      "prompt": "What is the main risk in a weak answer to: Measure the success of a newly released AI feature?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Lead with speed-only-if-quality-holds; don't say \"client picks most of it = working\"; mention power/interleaving."
+    },
+    {
+      "id": "E35-confidence",
+      "type": "mcq",
+      "card_id": "E35",
+      "prompt": "What confidence framing belongs with: Validate the correlation between a sub-metric and the North Star?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card E35 is tagged: Evidence-backed."
+    },
+    {
+      "id": "E35-watch",
+      "type": "weak_answer",
+      "card_id": "E35",
+      "prompt": "What is the main risk in a weak answer to: Validate the correlation between a sub-metric and the North Star?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Name the specific confounders you controlled for; keep the lift cohort-scoped and call it directional."
+    },
+    {
+      "id": "E36-confidence",
+      "type": "mcq",
+      "card_id": "E36",
+      "prompt": "What confidence framing belongs with: A product decision made from data analysis?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card E36 is tagged: Evidence-backed that it was a real engagement and reported outcome; treat the +40% as directional, not a personally-run RCT."
+    },
+    {
+      "id": "E36-watch",
+      "type": "weak_answer",
+      "card_id": "E36",
+      "prompt": "What is the main risk in a weak answer to: A product decision made from data analysis?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 0,
+      "explanation": "State Moneytree was consulting; present +40% as directional; don't over-claim shipped ownership. ---"
+    },
+    {
+      "id": "F37-confidence",
+      "type": "mcq",
+      "card_id": "F37",
+      "prompt": "What confidence framing belongs with: Architecture and tools of your prototype, and how you built it?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card F37 is tagged: Evidence-backed (prototype)."
+    },
+    {
+      "id": "F37-watch",
+      "type": "weak_answer",
+      "card_id": "F37",
+      "prompt": "What is the main risk in a weak answer to: Architecture and tools of your prototype, and how you built it?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 5,
+      "explanation": "Lead with API-vs-generation separation; say \"prototype, not production\"; correct the MCP-discovery misconception and name the auth/scraping risks."
+    },
+    {
+      "id": "F38-confidence",
+      "type": "mcq",
+      "card_id": "F38",
+      "prompt": "What confidence framing belongs with: Build it in terms of resources and time (POC vs production)?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card F38 is tagged: Evidence-backed (POC + production shipping)."
+    },
+    {
+      "id": "F38-watch",
+      "type": "weak_answer",
+      "card_id": "F38",
+      "prompt": "What is the main risk in a weak answer to: Build it in terms of resources and time (POC vs production)?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Call the 3–5× and 30/30/30 heuristics with assumptions; name the economic kill-gate (token cost vs margin)."
+    },
+    {
+      "id": "F39-confidence",
+      "type": "mcq",
+      "card_id": "F39",
+      "prompt": "What confidence framing belongs with: Resource planning: backend engineers vs ML/data specialists?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card F39 is tagged: Evidence-backed."
+    },
+    {
+      "id": "F39-watch",
+      "type": "weak_answer",
+      "card_id": "F39",
+      "prompt": "What is the main risk in a weak answer to: Resource planning: backend engineers vs ML/data specialists?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Lead with \"staff by uncertainty\"; have the retrieval-precision-stuck reallocation example ready."
+    },
+    {
+      "id": "F40-confidence",
+      "type": "mcq",
+      "card_id": "F40",
+      "prompt": "What confidence framing belongs with: Do you also code / how much now?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card F40 is tagged: Evidence-backed."
+    },
+    {
+      "id": "F40-watch",
+      "type": "weak_answer",
+      "card_id": "F40",
+      "prompt": "What is the main risk in a weak answer to: Do you also code / how much now?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 5,
+      "explanation": "Drop \"vibe-code\" and \"call BS\"; be ready to name a real bug you debugged and the prototype's modules; don't claim production-engineer competence."
+    },
+    {
+      "id": "F41-confidence",
+      "type": "mcq",
+      "card_id": "F41",
+      "prompt": "What confidence framing belongs with: RAG / agent-orchestration experience actually delivered?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card F41 is tagged: Evidence-backed (delivered to pilot)."
+    },
+    {
+      "id": "F41-watch",
+      "type": "weak_answer",
+      "card_id": "F41",
+      "prompt": "What is the main risk in a weak answer to: RAG / agent-orchestration experience actually delivered?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 5,
+      "explanation": "Define pilot scope (users/period); stress you verified accuracy held, not just speed; keep MCP out unless asked. ---"
+    },
+    {
+      "id": "G42-confidence",
+      "type": "mcq",
+      "card_id": "G42",
+      "prompt": "What confidence framing belongs with: Recent AI trends you're experimenting with, and how you keep sharp?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card G42 is tagged: Evidence-backed."
+    },
+    {
+      "id": "G42-watch",
+      "type": "weak_answer",
+      "card_id": "G42",
+      "prompt": "What is the main risk in a weak answer to: Recent AI trends you're experimenting with, and how you keep sharp?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 2,
+      "explanation": "Lead with capabilities, not framework/protocol names; explain test-time compute as a cheap-classifier latency decision; don't re-cite the hackathon as your only proof."
+    },
+    {
+      "id": "G43-confidence",
+      "type": "mcq",
+      "card_id": "G43",
+      "prompt": "What confidence framing belongs with: In the age of AI, how should the PM role change / qualities of a great AI PM?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 2,
+      "explanation": "Card G43 is tagged: Perspective."
+    },
+    {
+      "id": "G43-watch",
+      "type": "weak_answer",
+      "card_id": "G43",
+      "prompt": "What is the main risk in a weak answer to: In the age of AI, how should the PM role change / qualities of a great AI PM?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Lead with \"evaluation-first\" as the concrete differentiator; answer the PRD/SLA reality (error rates + guardrails, not fixed specs); keep it concrete, don't lecture."
+    },
+    {
+      "id": "G44-confidence",
+      "type": "mcq",
+      "card_id": "G44",
+      "prompt": "What confidence framing belongs with: How you structure the AI strategy and team?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card G44 is tagged: Evidence-backed."
+    },
+    {
+      "id": "G44-watch",
+      "type": "weak_answer",
+      "card_id": "G44",
+      "prompt": "What is the main risk in a weak answer to: How you structure the AI strategy and team?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Lead by solving the bottleneck (platform as self-serve API); add portfolio + cost-allocation; don't sound top-down-centralized. ---"
+    },
+    {
+      "id": "H45-confidence",
+      "type": "mcq",
+      "card_id": "H45",
+      "prompt": "What confidence framing belongs with: How long should an efficient meeting be?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 2,
+      "explanation": "Card H45 is tagged: Perspective."
+    },
+    {
+      "id": "H45-watch",
+      "type": "weak_answer",
+      "card_id": "H45",
+      "prompt": "What is the main risk in a weak answer to: How long should an efficient meeting be?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 2,
+      "explanation": "Don't sound abrasive about meetings; give the force-a-decision mechanism and the Japanese-exec nuance."
+    },
+    {
+      "id": "H46-confidence",
+      "type": "mcq",
+      "card_id": "H46",
+      "prompt": "What confidence framing belongs with: What you learned in the Duke DeFi course / DeFi-Web3 motivation?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card H46 is tagged: Evidence-backed."
+    },
+    {
+      "id": "H46-watch",
+      "type": "weak_answer",
+      "card_id": "H46",
+      "prompt": "What is the main risk in a weak answer to: What you learned in the Duke DeFi course / DeFi-Web3 motivation?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 0,
+      "explanation": "Don't overclaim \"web3 is how agents will settle\"; add the regulated-payments caveat; label it a hackathon; gate relevance to FinTech/Web3 roles. ---"
+    },
+    {
+      "id": "I47-confidence",
+      "type": "mcq",
+      "card_id": "I47",
+      "prompt": "What confidence framing belongs with: Is AI even the right tool — scoping an AI problem / AI vs a heuristic?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card I47 is tagged: Evidence-backed (real \"don't over-engineer\" calls)."
+    },
+    {
+      "id": "I47-watch",
+      "type": "weak_answer",
+      "card_id": "I47",
+      "prompt": "What is the main risk in a weak answer to: Is AI even the right tool — scoping an AI problem / AI vs a heuristic?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Drop the \"Desirable/Possible/Probable\" alliteration for the plain checklist; lead with the heuristic-first test; have the OCR throughput number ready."
+    },
+    {
+      "id": "I48-confidence",
+      "type": "mcq",
+      "card_id": "I48",
+      "prompt": "What confidence framing belongs with: ML/AI system design (recommendation / search-ranking / fraud)?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card I48 is tagged: Framework-only on a hyperscale recommender; evidence-backed on the analogous matching problem."
+    },
+    {
+      "id": "I48-watch",
+      "type": "weak_answer",
+      "card_id": "I48",
+      "prompt": "What is the main risk in a weak answer to: ML/AI system design (recommendation / search-ranking / fraud)?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Lead with decision-type; say two-tower is \"one pattern, not universal\"; treat fraud differently (graph/anomaly/rules); name cold-start; separate design knowledge from delivery."
+    },
+    {
+      "id": "I49-confidence",
+      "type": "mcq",
+      "card_id": "I49",
+      "prompt": "What confidence framing belongs with: Foundation-model selection / build-vs-buy (cost, latency, quality)?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card I49 is tagged: Evidence-backed (the analysis is yours; the build wasn't)."
+    },
+    {
+      "id": "I49-watch",
+      "type": "weak_answer",
+      "card_id": "I49",
+      "prompt": "What is the main risk in a weak answer to: Foundation-model selection / build-vs-buy (cost, latency, quality)?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Say \"build\" usually = fine-tune/distill/self-host; give reasons beyond moat (privacy/latency/cost/control); state your advisory role on the from-scratch build; mention model portfolio/routing."
+    },
+    {
+      "id": "I50-confidence",
+      "type": "mcq",
+      "card_id": "I50",
+      "prompt": "What confidence framing belongs with: Prompt engineering vs RAG vs fine-tuning?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card I50 is tagged: Evidence-backed."
+    },
+    {
+      "id": "I50-watch",
+      "type": "weak_answer",
+      "card_id": "I50",
+      "prompt": "What is the main risk in a weak answer to: Prompt engineering vs RAG vs fine-tuning?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Reframe as knowledge (RAG/tools) vs behavior/format (fine-tune) vs workflow (agents); note LoRA/many-shot; add freshness handling."
+    },
+    {
+      "id": "I51-confidence",
+      "type": "mcq",
+      "card_id": "I51",
+      "prompt": "What confidence framing belongs with: Responsible AI, privacy, and compliance for B2B in Japan?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card I51 is tagged: Evidence-backed on operating-under-constraint + privacy-by-design; APPI/governance specifics are framework-led."
+    },
+    {
+      "id": "I51-watch",
+      "type": "weak_answer",
+      "card_id": "I51",
+      "prompt": "What is the main risk in a weak answer to: Responsible AI, privacy, and compliance for B2B in Japan?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 1,
+      "explanation": "Name NIST AI RMF + OWASP LLM Top 10; don't conflate KYC/AML with AI governance; give PII specifics (NER+policy) and the vector-store deletion problem; explainability = attribution/logs, not SHAP."
+    },
+    {
+      "id": "I52-confidence",
+      "type": "mcq",
+      "card_id": "I52",
+      "prompt": "What confidence framing belongs with: Human-in-the-loop / graduated autonomy?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card I52 is tagged: Evidence-backed."
+    },
+    {
+      "id": "I52-watch",
+      "type": "weak_answer",
+      "card_id": "I52",
+      "prompt": "What is the main risk in a weak answer to: Human-in-the-loop / graduated autonomy?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Gate autonomy by reversibility/blast-radius, not just acceptance %; call it an improvement/eval-data queue (not \"retraining\" for RAG); name reviewer-bias/label-noise risk."
+    },
+    {
+      "id": "I53-confidence",
+      "type": "mcq",
+      "card_id": "I53",
+      "prompt": "What confidence framing belongs with: Latency & cost optimization?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card I53 is tagged: Evidence-backed on the trade-off; router/caching/infra are framework you'd apply, with deep infra owned by engineering."
+    },
+    {
+      "id": "I53-watch",
+      "type": "weak_answer",
+      "card_id": "I53",
+      "prompt": "What is the main risk in a weak answer to: Latency & cost optimization?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 0,
+      "explanation": "Lead with budget-as-gate; caveat cache invalidation and router latency; don't claim to hand-tune compression/speculative decoding — frame as awareness + lean on engineering."
+    },
+    {
+      "id": "I54-confidence",
+      "type": "mcq",
+      "card_id": "I54",
+      "prompt": "What confidence framing belongs with: Agentic system design?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card I54 is tagged: Evidence-backed."
+    },
+    {
+      "id": "I54-watch",
+      "type": "weak_answer",
+      "card_id": "I54",
+      "prompt": "What is the main risk in a weak answer to: Agentic system design?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Replace \"reflection\" with verification + state machine + allowlists + rollback; note single-orchestrator is often safer; connect contract-net/blackboard to modern orchestration to turn the \"dated PhD\" probe into a strength."
+    },
+    {
+      "id": "I55-confidence",
+      "type": "mcq",
+      "card_id": "I55",
+      "prompt": "What confidence framing belongs with: AI business case / ROI?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card I55 is tagged: Evidence-backed."
+    },
+    {
+      "id": "I55-watch",
+      "type": "weak_answer",
+      "card_id": "I55",
+      "prompt": "What is the main risk in a weak answer to: AI business case / ROI?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Lead with unit economics (value-per-task − full cost-to-serve incl. data toil); anchor on Safed P&L, not the Pita watch ROI; name a concrete equation."
+    },
+    {
+      "id": "I56-confidence",
+      "type": "mcq",
+      "card_id": "I56",
+      "prompt": "What confidence framing belongs with: Data strategy for an AI product?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 0,
+      "explanation": "Card I56 is tagged: Evidence-backed."
+    },
+    {
+      "id": "I56-watch",
+      "type": "weak_answer",
+      "card_id": "I56",
+      "prompt": "What is the main risk in a weak answer to: Data strategy for an AI product?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Qualify the flywheel with feedback bias (selection/position/survivorship/model-induced); add data contracts; call it an improvement/eval-data queue. ---"
+    },
+    {
+      "id": "J57-confidence",
+      "type": "mcq",
+      "card_id": "J57",
+      "prompt": "What confidence framing belongs with: Incident response for an AI failure?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 3,
+      "explanation": "Card J57 is tagged: Framework-led with a real severity-weighted-rollback anchor (no public AI incident run)."
+    },
+    {
+      "id": "J57-watch",
+      "type": "weak_answer",
+      "card_id": "J57",
+      "prompt": "What is the main risk in a weak answer to: Incident response for an AI failure?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Lead with classify→contain→remediate→RCA→prevent; name the fallback and the eval-set update; don't promise zero incidents."
+    },
+    {
+      "id": "J58-confidence",
+      "type": "mcq",
+      "card_id": "J58",
+      "prompt": "What confidence framing belongs with: Enterprise AI procurement / buyer trust?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 3,
+      "explanation": "Card J58 is tagged: Framework-led, grounded in real regulated-B2B / Japan experience (no formal SOC2/ISO program run)."
+    },
+    {
+      "id": "J58-watch",
+      "type": "weak_answer",
+      "card_id": "J58",
+      "prompt": "What is the main risk in a weak answer to: Enterprise AI procurement / buyer trust?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 0,
+      "explanation": "Frame trust as a product deliverable (questionnaire, retention, audit logs, override, eval report); offer bounded liability + incident process, not an uncapped guarantee."
+    },
+    {
+      "id": "J59-confidence",
+      "type": "mcq",
+      "card_id": "J59",
+      "prompt": "What confidence framing belongs with: Model/provider operational risk, portability & Day-2 drift?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 3,
+      "explanation": "Card J59 is tagged: Framework-led (sound design; not operated at scale)."
+    },
+    {
+      "id": "J59-watch",
+      "type": "weak_answer",
+      "card_id": "J59",
+      "prompt": "What is the main risk in a weak answer to: Model/provider operational risk, portability & Day-2 drift?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Lead with abstraction + cross-provider eval + fallback; name the silent-weight-change → re-calibrate-evals trap; review retention/training-use terms."
+    },
+    {
+      "id": "J60-confidence",
+      "type": "mcq",
+      "card_id": "J60",
+      "prompt": "What confidence framing belongs with: Data rights & consent — using customer data for training and evaluation?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 3,
+      "explanation": "Card J60 is tagged: Framework-led, grounded in real PII / Japan-B2B experience."
+    },
+    {
+      "id": "J60-watch",
+      "type": "weak_answer",
+      "card_id": "J60",
+      "prompt": "What is the main risk in a weak answer to: Data rights & consent — using customer data for training and evaluation?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 4,
+      "explanation": "Lead with \"logs ≠ training/eval data; needs consent/contract, per-tenant in Japan\"; name anonymization, opt-out, retention, prod/eval separation, synthetic fallback."
+    },
+    {
+      "id": "J61-confidence",
+      "type": "mcq",
+      "card_id": "J61",
+      "prompt": "What confidence framing belongs with: Pricing & packaging for an AI feature?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 3,
+      "explanation": "Card J61 is tagged: Framework-led, grounded in real commercial/P&L experience (no specific AI-pricing case claimed)."
+    },
+    {
+      "id": "J61-watch",
+      "type": "weak_answer",
+      "card_id": "J61",
+      "prompt": "What is the main risk in a weak answer to: Pricing & packaging for an AI feature?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 1,
+      "explanation": "Start from value metric + cost-to-serve; weigh usage vs seat vs outcome with the predictability/margin trade-offs; protect margin with caps; paid pilot over free beta."
+    },
+    {
+      "id": "J62-confidence",
+      "type": "mcq",
+      "card_id": "J62",
+      "prompt": "What confidence framing belongs with: Legacy-infrastructure migration & corporate gridlock (Japan enterprise)?",
+      "options": [
+        "Evidence-backed",
+        "Framework-only",
+        "Perspective",
+        "Unclear"
+      ],
+      "correct_index": 3,
+      "explanation": "Card J62 is tagged: Framework-led, grounded in real Japan-enterprise / incremental-delivery experience."
+    },
+    {
+      "id": "J62-watch",
+      "type": "weak_answer",
+      "card_id": "J62",
+      "prompt": "What is the main risk in a weak answer to: Legacy-infrastructure migration & corporate gridlock (Japan enterprise)?",
+      "options": [
+        "overclaims maturity",
+        "weak metric framing",
+        "too generic",
+        "sounds defensive",
+        "lacks mechanism",
+        "confuses prototype/pilot/production"
+      ],
+      "correct_index": 1,
+      "explanation": "Lead with strangler-pattern + access-layer (not big-bang); name the org gate (data owners / legacy-team relationship) as the real first-30-days work; sequence by value × access-friction. --- # PART 2 — The questions you ask them Pick 3–5 and lead with #1. Phrased so you can say them close to verbatim. 1. \"Six months in, what would make you say this hire was clearly the right one?\" — Lead with this. Surfaces the real success criteria and reads senior. 2. \"What's the biggest struggle right now — generating ideas, building POCs, or shipping to production?\" — Pinpoints where you add value. Best with CEO/founder or hiring manager. 3. \"Where does AI sit in the strategy — a core platform or a feature — and which in-house AI bets are you most excited about?\" — Tells you whether AI here is real or decorative. Best with leadership. 4. \"How do customer or operator insights reach the roadmap today — what's the path from a real pain to a prioritized build?\" — Probes discovery rigor without lecturing. Best with a product leader. 5. \"What's your vision for the next one, three, and five years, and where's the market expansion?\" — Long-horizon interest. Good with founders. 6. \"In the first quarter, what would I own outright versus influence?\" — Clarifies real scope and autonomy. 7. \"How are decisions made when AI work is uncertain — who calls it, and how do you avoid over-investing in unproven bets?\" — Shows you've shipped AI. Best with a CTO/technical panel. 8. (Late / logistics) \"Does the company support AI tooling, learning, and conference attendance?\" — Fine as a closing question. Ask carefully or skip. \"Why did [predecessor] leave?\" / \"Why have so many people left recently?\" read as red-flag-hunting. Soften to \"How has the team evolved over the last year?\" Selection by room. CEO/founder → #1 + #2 + #5. Product leader → #1 + #4 + #6. CTO/technical panel → #1 + #3 + #7. --- End of prep sheet (v2, hardened). Coverage: Part 1 categories A–J (63 cards: A–H = 46 with item 25 split = 47; Section I = 47–56; Section J = 57–62) + Part 2 (8 questions to ask). All metrics locked and defensibly framed; maturity stated in each answer; standards named only where defensible."
+    },
+    {
+      "id": "metric-01",
+      "type": "metric_precision",
+      "card_id": "",
+      "prompt": "Which phrasing is most defensible for ~3× retention (Cotomo)?",
+      "options": [
+        "low-single-digit baseline; matched cohort; fixed period; my action = the Talk-the-News loop; directional, not an RCT",
+        "Claim it as a clean randomized causal result.",
+        "Use the largest number without naming denominator.",
+        "Avoid baseline and cohort details."
+      ],
+      "correct_index": 0,
+      "explanation": "low-single-digit baseline; matched cohort; fixed period; my action = the Talk-the-News loop; directional, not an RCT"
+    },
+    {
+      "id": "metric-02",
+      "type": "metric_precision",
+      "card_id": "",
+      "prompt": "Which phrasing is most defensible for ~50% longer sessions?",
+      "options": [
+        "session = a usage session; target cohort; directional",
+        "Claim it as a clean randomized causal result.",
+        "Use the largest number without naming denominator.",
+        "Avoid baseline and cohort details."
+      ],
+      "correct_index": 0,
+      "explanation": "session = a usage session; target cohort; directional"
+    },
+    {
+      "id": "metric-03",
+      "type": "metric_precision",
+      "card_id": "",
+      "prompt": "Which phrasing is most defensible for 2.5× user growth (Safed)?",
+      "options": [
+        "full-time operating role, not advisory; have CAC + 6-month stickiness ready",
+        "Claim it as a clean randomized causal result.",
+        "Use the largest number without naming denominator.",
+        "Avoid baseline and cohort details."
+      ],
+      "correct_index": 0,
+      "explanation": "full-time operating role, not advisory; have CAC + 6-month stickiness ready"
+    },
+    {
+      "id": "metric-04",
+      "type": "metric_precision",
+      "card_id": "",
+      "prompt": "Which phrasing is most defensible for 250% ROI (Pita)?",
+      "options": [
+        "on the initial investment; year-two basis",
+        "Claim it as a clean randomized causal result.",
+        "Use the largest number without naming denominator.",
+        "Avoid baseline and cohort details."
+      ],
+      "correct_index": 0,
+      "explanation": "on the initial investment; year-two basis"
+    },
+    {
+      "id": "metric-05",
+      "type": "metric_precision",
+      "card_id": "",
+      "prompt": "Which phrasing is most defensible for +40% retention (Moneytree)?",
+      "options": [
+        "consulting engagement; targeted segment; directional",
+        "Claim it as a clean randomized causal result.",
+        "Use the largest number without naming denominator.",
+        "Avoid baseline and cohort details."
+      ],
+      "correct_index": 0,
+      "explanation": "consulting engagement; targeted segment; directional"
+    },
+    {
+      "id": "metric-06",
+      "type": "metric_precision",
+      "card_id": "",
+      "prompt": "Which phrasing is most defensible for ~20% fewer queries / ~65% faster (Digital Senpai)?",
+      "options": [
+        "pilot scope (bounded users, fixed period); verified accuracy held, not just speed",
+        "Claim it as a clean randomized causal result.",
+        "Use the largest number without naming denominator.",
+        "Avoid baseline and cohort details."
+      ],
+      "correct_index": 0,
+      "explanation": "pilot scope (bounded users, fixed period); verified accuracy held, not just speed"
+    },
+    {
+      "id": "metric-07",
+      "type": "metric_precision",
+      "card_id": "",
+      "prompt": "Which phrasing is most defensible for −40% time-to-market (Safed)?",
+      "options": [
+        "baseline cycle time; came from cutting rework and decision latency, not cutting QA",
+        "Claim it as a clean randomized causal result.",
+        "Use the largest number without naming denominator.",
+        "Avoid baseline and cohort details."
+      ],
+      "correct_index": 0,
+      "explanation": "baseline cycle time; came from cutting rework and decision latency, not cutting QA"
+    }
+  ]
+}

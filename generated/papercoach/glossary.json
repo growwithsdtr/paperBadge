@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "terms": [
+    {
+      "term": "\"vibe-code\"",
+      "definition": "Prefer: \"AI-assisted prototyping in Python/Next.js, then productionize with engineering\"",
+      "source": "phrases_to_retire"
+    },
+    {
+      "term": "\"call BS on an estimate\"",
+      "definition": "Prefer: \"pressure-test an estimate / ask the right questions about it\"",
+      "source": "phrases_to_retire"
+    },
+    {
+      "term": "\"CEO's messy ideas\"",
+      "definition": "Prefer: \"ambiguous, high-level ideas\"",
+      "source": "phrases_to_retire"
+    },
+    {
+      "term": "\"own technical architecture\"",
+      "definition": "Prefer: \"own the technical trade-off decisions with engineering\"",
+      "source": "phrases_to_retire"
+    },
+    {
+      "term": "\"Local Champion,\" \"data moat,\" \"AI wrapper,\" \"failure-friendly,\" \"burning issue,\" \"medicine vs vitamin\"",
+      "definition": "Prefer: use once each; prefer \"high-frequency, high-severity problem,\" \"proprietary data advantage,\" \"ships controlled experiments safely\"",
+      "source": "phrases_to_retire"
+    },
+    {
+      "term": "\"eval-set → regression-gate → monitoring → fallback\" (repeated)",
+      "definition": "Prefer: state once, then refer to \"the eval and release system\"",
+      "source": "phrases_to_retire"
+    },
+    {
+      "term": "Tripla take rate",
+      "definition": "1.42% vs ~25% OTA commission | Different business models, not a smaller commission — frame accordingly. Corrects the 1.67% draft.",
+      "source": "locked_figures"
+    },
+    {
+      "term": "Conversational agent (Cotomo)",
+      "definition": "~3× retention uplift (matched cohort) + ~50% longer sessions; sub-3% baseline | Corrects \"70% Day-7.\"",
+      "source": "locked_figures"
+    },
+    {
+      "term": "Digital Senpai",
+      "definition": "~20% fewer mentor queries / ~65% faster time-to-answer; PoC→pilot | Consistent across docs.",
+      "source": "locked_figures"
+    },
+    {
+      "term": "Safed K.K.",
+      "definition": "2.5× users / 2× revenue / +55% engagement / −40% TTM; team of 8 + 30-person Vietnam dev team | Operating role. Corrects \"70 at Safed.\" Spelling Safed.",
+      "source": "locked_figures"
+    },
+    {
+      "term": "Pita Barcelona",
+      "definition": "profitability Yr1; 250% ROI Yr2 (initial investment); NYT/WSJ/Bloomberg | Verified.",
+      "source": "locked_figures"
+    },
+    {
+      "term": "Hackathon",
+      "definition": "Winner, AI Voice Agents Hackathon Tokyo 2026 (Google Japan / DeepLearning.AI); smartyPants | It's a hackathon — use as recency signal, not as your only proof.",
+      "source": "locked_figures"
+    },
+    {
+      "term": "ETHGlobal Tokyo 2023",
+      "definition": "4 awards (1,500+ participants), blockchain payroll tool | Hackathon.",
+      "source": "locked_figures"
+    },
+    {
+      "term": "Moneytree",
+      "definition": "+40% retention (consulting; directional) | Corrects \"80% usage.\"",
+      "source": "locked_figures"
+    },
+    {
+      "term": "triplaNeo",
+      "definition": "AEO \"truth layer\": JSON-LD/schema.org + governed APIs | Prototype, not production.",
+      "source": "locked_figures"
+    },
+    {
+      "term": "PhD",
+      "definition": "research in multi-agent systems & semantic web; 2 papers, 256 citations | State your exact status if asked.",
+      "source": "locked_figures"
+    }
+  ]
+}
