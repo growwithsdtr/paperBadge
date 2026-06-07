@@ -3,11 +3,12 @@
 #include <SD.h>
 #include <SPI.h>
 #include <M5Unified.h>
+#include <cstring>
 
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v0.6";
+constexpr const char* kFirmwareVersion = "v0.7";
 constexpr uint32_t kDefaultIntervalSeconds = 15;
 constexpr bool kTryJapaneseGlyphs = true;
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
@@ -49,8 +50,32 @@ struct AssetStatus {
   bool qr = false;
 };
 
+struct Rect {
+  Rect() = default;
+  Rect(int32_t xValue, int32_t yValue, int32_t wValue, int32_t hValue)
+      : x(xValue), y(yValue), w(wValue), h(hValue) {}
+
+  int32_t x = 0;
+  int32_t y = 0;
+  int32_t w = 0;
+  int32_t h = 0;
+
+  bool contains(int32_t px, int32_t py) const {
+    return px >= x && px <= x + w && py >= y && py <= y + h;
+  }
+};
+
+enum class ViewMode {
+  Badge,
+  QrZoom,
+  PhotoZoom,
+};
+
 BadgeConfig gBadge;
 AssetStatus gAssets;
+Rect gPhotoRect;
+Rect gQrRect;
+ViewMode gViewMode = ViewMode::Badge;
 bool gSdOk = false;
 bool gShowJapanese = false;
 bool gLandscape = false;
@@ -177,6 +202,11 @@ bool drawPngAsset(const char* path, int32_t x, int32_t y, int32_t size, const ch
   return drawn;
 }
 
+bool drawPngAsset(const char* path, const Rect& rect, const char* label, bool exists) {
+  const int32_t size = min(rect.w, rect.h);
+  return drawPngAsset(path, rect.x, rect.y, size, label, exists);
+}
+
 const BadgeText& currentBadgeText() {
   if (!gShowJapanese) {
     return gBadge.english;
@@ -248,19 +278,24 @@ void drawBadgeTextBlock(int32_t x, int32_t y, int32_t lineHeight) {
 
 void renderPortrait() {
   auto& display = M5.Display;
-  drawPngAsset(kProfilePhotoPath, (display.width() - 220) / 2, 50, 220, "PHOTO", gAssets.profilePhoto);
+  gPhotoRect = {(display.width() - 220) / 2, 50, 220, 220};
+  gQrRect = {(display.width() - 320) / 2, 650, 320, 320};
+  drawPngAsset(kProfilePhotoPath, gPhotoRect, "PHOTO", gAssets.profilePhoto);
   drawBadgeTextBlock(40, 300, 60);
-  drawPngAsset(kQrPath, (display.width() - 320) / 2, 650, 320, "QR", gAssets.qr);
+  drawPngAsset(kQrPath, gQrRect, "QR", gAssets.qr);
 }
 
 void renderLandscape() {
   auto& display = M5.Display;
-  drawPngAsset(kProfilePhotoPath, 40, 120, 220, "PHOTO", gAssets.profilePhoto);
+  gPhotoRect = {40, 120, 220, 220};
+  gQrRect = {display.width() - 360, 110, 320, 320};
+  drawPngAsset(kProfilePhotoPath, gPhotoRect, "PHOTO", gAssets.profilePhoto);
   drawBadgeTextBlock(310, 90, 48);
-  drawPngAsset(kQrPath, display.width() - 360, 110, 320, "QR", gAssets.qr);
+  drawPngAsset(kQrPath, gQrRect, "QR", gAssets.qr);
 }
 
 void renderBadge() {
+  gViewMode = ViewMode::Badge;
   applyLayoutRotation();
   auto& display = M5.Display;
 
@@ -277,6 +312,23 @@ void renderBadge() {
   }
 
   drawStatusLine();
+  display.display();
+}
+
+void renderZoomAsset(const char* path, const char* label, bool exists) {
+  applyLayoutRotation();
+  auto& display = M5.Display;
+  const int32_t margin = strcmp(label, "QR") == 0 ? 56 : 40;
+  const int32_t size = min(display.width(), display.height()) - margin * 2;
+  const int32_t x = (display.width() - size) / 2;
+  const int32_t y = (display.height() - size) / 2;
+
+  display.setEpdMode(m5gfx::epd_fastest);
+  display.fillScreen(TFT_WHITE);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.setTextDatum(textdatum_t::top_left);
+  display.setTextWrap(false, false);
+  drawPngAsset(path, x, y, size, label, exists);
   display.display();
 }
 
@@ -325,6 +377,33 @@ void toggleLayout(const char* reason) {
   Serial.printf("Layout: %s (%s)\n", gLandscape ? "landscape" : "portrait", reason);
   renderBadge();
 }
+
+void showQrZoom() {
+  gViewMode = ViewMode::QrZoom;
+  Serial.println("View: QR zoom");
+  renderZoomAsset(kQrPath, "QR", gAssets.qr);
+}
+
+void showPhotoZoom() {
+  gViewMode = ViewMode::PhotoZoom;
+  Serial.println("View: photo zoom");
+  renderZoomAsset(kProfilePhotoPath, "PHOTO", gAssets.profilePhoto);
+}
+
+bool clickedPoint(int32_t& x, int32_t& y) {
+  if (!M5.Touch.isEnabled()) {
+    return false;
+  }
+
+  auto detail = M5.Touch.getDetail();
+  if (!detail.wasClicked()) {
+    return false;
+  }
+
+  x = constrain(detail.x, 0, M5.Display.width());
+  y = constrain(detail.y, 0, M5.Display.height());
+  return true;
+}
 }  // namespace
 
 void setup() {
@@ -372,14 +451,26 @@ void setup() {
 
 void loop() {
   M5.update();
-  if (topRightTapWasClicked()) {
-    toggleLayout("top-right tap");
-  } else if (centerTapWasClicked()) {
-    toggleLanguage("center tap");
+
+  int32_t tapX = 0;
+  int32_t tapY = 0;
+  if (clickedPoint(tapX, tapY)) {
+    if (gViewMode != ViewMode::Badge) {
+      Serial.println("View: badge");
+      renderBadge();
+    } else if (gQrRect.contains(tapX, tapY)) {
+      showQrZoom();
+    } else if (gPhotoRect.contains(tapX, tapY)) {
+      showPhotoZoom();
+    } else if (topRightTapWasClicked()) {
+      toggleLayout("top-right tap");
+    } else if (centerTapWasClicked()) {
+      toggleLanguage("center tap");
+    }
   }
 
   const uint32_t intervalMs = gBadge.intervalSeconds * 1000UL;
-  if (intervalMs > 0 && millis() - gLastLanguageSwitchMs >= intervalMs) {
+  if (gViewMode == ViewMode::Badge && intervalMs > 0 && millis() - gLastLanguageSwitchMs >= intervalMs) {
     toggleLanguage("timer");
   }
 
