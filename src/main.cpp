@@ -7,7 +7,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v0.5";
+constexpr const char* kFirmwareVersion = "v0.6";
 constexpr uint32_t kDefaultIntervalSeconds = 15;
 constexpr bool kTryJapaneseGlyphs = true;
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
@@ -29,6 +29,8 @@ struct BadgeText {
 
 struct BadgeConfig {
   uint32_t intervalSeconds = kDefaultIntervalSeconds;
+  bool initialLandscape = false;
+  bool upsideDown = false;
   BadgeText english;
   BadgeText japanese;
   BadgeText japaneseRomanized = {
@@ -51,6 +53,9 @@ BadgeConfig gBadge;
 AssetStatus gAssets;
 bool gSdOk = false;
 bool gShowJapanese = false;
+bool gLandscape = false;
+uint8_t gPortraitRotation = 0;
+uint8_t gLandscapeRotation = 1;
 uint32_t gLastLanguageSwitchMs = 0;
 
 void waitForSerial() {
@@ -124,6 +129,10 @@ bool loadBadgeConfigFromJson(BadgeConfig& config) {
 
   uint32_t intervalSeconds = doc["interval_seconds"] | config.intervalSeconds;
   config.intervalSeconds = intervalSeconds > 0 ? intervalSeconds : kDefaultIntervalSeconds;
+  const uint8_t orientation = doc["orientation"] | 0;
+  const uint8_t strapOrientation = doc["strap_orientation"] | 0;
+  config.initialLandscape = orientation == 1 || orientation == 3;
+  config.upsideDown = orientation == 2 || strapOrientation == 2;
 
   config.englishFromJson = readBadgeText(doc["english"], config.english);
   if (!config.englishFromJson) {
@@ -135,6 +144,8 @@ bool loadBadgeConfigFromJson(BadgeConfig& config) {
 
   Serial.println("JSON parse OK.");
   Serial.printf("Language interval: %u seconds\n", config.intervalSeconds);
+  Serial.printf("Initial layout: %s\n", config.initialLandscape ? "landscape" : "portrait");
+  Serial.printf("Upside-down rotation: %s\n", config.upsideDown ? "enabled" : "disabled");
   Serial.printf("Japanese text source: %s\n", config.japaneseFromJson ? "JSON" : "romanized fallback");
   return true;
 }
@@ -178,13 +189,80 @@ const BadgeText& currentBadgeText() {
   return gBadge.japaneseRomanized;
 }
 
-void renderBadge() {
+void captureBaseRotations() {
+  auto& display = M5.Display;
+  const uint8_t currentRotation = display.getRotation() & 3;
+
+  if (display.width() > display.height()) {
+    gLandscapeRotation = currentRotation;
+    gPortraitRotation = (currentRotation + 1) & 3;
+  } else {
+    gPortraitRotation = currentRotation;
+    gLandscapeRotation = (currentRotation + 1) & 3;
+  }
+}
+
+void applyLayoutRotation() {
+  uint8_t targetRotation = gLandscape ? gLandscapeRotation : gPortraitRotation;
+  if (gBadge.upsideDown) {
+    targetRotation = (targetRotation + 2) & 3;
+  }
+  M5.Display.setRotation(targetRotation);
+}
+
+void setBadgeFont() {
+  if (gShowJapanese && kTryJapaneseGlyphs && gBadge.japaneseFromJson) {
+    M5.Display.setFont(&fonts::efontJA_16);
+    M5.Display.setTextSize(1);
+  } else {
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setTextSize(2);
+  }
+}
+
+void drawStatusLine() {
+  auto& display = M5.Display;
+  display.setFont(&fonts::Font2);
+  display.setTextSize(2);
+  display.drawString(gSdOk ? "SD OK" : "SD FAIL", 40, display.height() - 50);
+  display.drawString(gShowJapanese ? "JP" : "EN", display.width() - 150, display.height() - 50);
+  display.drawString(gLandscape ? "LAND" : "PORT", display.width() - 90, display.height() - 50);
+}
+
+void drawBadgeTextBlock(int32_t x, int32_t y, int32_t lineHeight) {
   const BadgeText& badge = currentBadgeText();
   auto& display = M5.Display;
 
-  if (display.width() > display.height()) {
-    display.setRotation(display.getRotation() ^ 1);
-  }
+  display.setFont(&fonts::Font2);
+  display.setTextSize(2);
+  display.drawString("PaperBadge+", x, y);
+
+  setBadgeFont();
+  display.drawString(badge.name, x, y + lineHeight);
+  display.drawString(badge.title, x, y + lineHeight * 2);
+  display.drawString(badge.subtitle, x, y + lineHeight * 3);
+  display.drawString(badge.location, x, y + lineHeight * 4);
+  display.drawString(badge.footer, x, y + lineHeight * 5);
+  display.setFont(&fonts::Font2);
+}
+
+void renderPortrait() {
+  auto& display = M5.Display;
+  drawPngAsset(kProfilePhotoPath, (display.width() - 220) / 2, 50, 220, "PHOTO", gAssets.profilePhoto);
+  drawBadgeTextBlock(40, 300, 60);
+  drawPngAsset(kQrPath, (display.width() - 320) / 2, 650, 320, "QR", gAssets.qr);
+}
+
+void renderLandscape() {
+  auto& display = M5.Display;
+  drawPngAsset(kProfilePhotoPath, 40, 120, 220, "PHOTO", gAssets.profilePhoto);
+  drawBadgeTextBlock(310, 90, 48);
+  drawPngAsset(kQrPath, display.width() - 360, 110, 320, "QR", gAssets.qr);
+}
+
+void renderBadge() {
+  applyLayoutRotation();
+  auto& display = M5.Display;
 
   display.setEpdMode(m5gfx::epd_fastest);
   display.fillScreen(TFT_WHITE);
@@ -192,36 +270,13 @@ void renderBadge() {
   display.setTextDatum(textdatum_t::top_left);
   display.setTextWrap(false, false);
 
-  display.setFont(&fonts::Font2);
-  drawPngAsset(kProfilePhotoPath, (display.width() - 220) / 2, 50, 220, "PHOTO", gAssets.profilePhoto);
-
-  display.setTextDatum(textdatum_t::top_left);
-  display.setFont(&fonts::Font2);
-  display.setTextSize(2);
-  display.drawString("PaperBadge+", 40, 300);
-
-  if (gShowJapanese && kTryJapaneseGlyphs && gBadge.japaneseFromJson) {
-    display.setFont(&fonts::efontJA_16);
-    display.setTextSize(1);
+  if (gLandscape) {
+    renderLandscape();
   } else {
-    display.setFont(&fonts::Font2);
-    display.setTextSize(2);
+    renderPortrait();
   }
 
-  display.drawString(badge.name, 40, 360);
-
-  display.drawString(badge.title, 40, 420);
-  display.drawString(badge.subtitle, 40, 480);
-  display.drawString(badge.location, 40, 540);
-  display.drawString(badge.footer, 40, 600);
-
-  display.setFont(&fonts::Font2);
-
-  drawPngAsset(kQrPath, (display.width() - 320) / 2, 650, 320, "QR", gAssets.qr);
-
-  display.setTextSize(2);
-  display.drawString(gSdOk ? "SD OK" : "SD FAIL", 40, display.height() - 50);
-  display.drawString(gShowJapanese ? "JP" : "EN", display.width() - 80, display.height() - 50);
+  drawStatusLine();
   display.display();
 }
 
@@ -236,7 +291,7 @@ void toggleLanguage(const char* reason) {
   switchLanguage(!gShowJapanese, reason);
 }
 
-bool centerTapWasClicked() {
+bool touchWasClickedInZone(int32_t xMin, int32_t xMax, int32_t yMin, int32_t yMax) {
   if (!M5.Touch.isEnabled()) {
     return false;
   }
@@ -248,9 +303,27 @@ bool centerTapWasClicked() {
 
   const int32_t width = M5.Display.width();
   const int32_t height = M5.Display.height();
-  const bool inCenterX = detail.x >= width / 4 && detail.x <= (width * 3) / 4;
-  const bool inCenterY = detail.y >= height / 4 && detail.y <= (height * 3) / 4;
-  return inCenterX && inCenterY;
+  const int32_t x = constrain(detail.x, 0, width);
+  const int32_t y = constrain(detail.y, 0, height);
+  return x >= xMin && x <= xMax && y >= yMin && y <= yMax;
+}
+
+bool centerTapWasClicked() {
+  const int32_t width = M5.Display.width();
+  const int32_t height = M5.Display.height();
+  return touchWasClickedInZone(width / 4, (width * 3) / 4, height / 4, (height * 3) / 4);
+}
+
+bool topRightTapWasClicked() {
+  const int32_t width = M5.Display.width();
+  const int32_t height = M5.Display.height();
+  return touchWasClickedInZone((width * 3) / 4, width, 0, height / 4);
+}
+
+void toggleLayout(const char* reason) {
+  gLandscape = !gLandscape;
+  Serial.printf("Layout: %s (%s)\n", gLandscape ? "landscape" : "portrait", reason);
+  renderBadge();
 }
 }  // namespace
 
@@ -265,6 +338,7 @@ void setup() {
 
   M5.begin(cfg);
   waitForSerial();
+  captureBaseRotations();
 
   Serial.println();
   Serial.printf("PaperBadge+ %s boot\n", kFirmwareVersion);
@@ -290,6 +364,7 @@ void setup() {
   const bool jsonOk = badgeJsonExists && loadBadgeConfigFromJson(gBadge);
   Serial.printf("Text source: %s\n", jsonOk ? "JSON" : "fallback");
 
+  gLandscape = gBadge.initialLandscape;
   gSdOk = sdMounted && badgeJsonExists;
   gLastLanguageSwitchMs = millis();
   renderBadge();
@@ -297,7 +372,9 @@ void setup() {
 
 void loop() {
   M5.update();
-  if (centerTapWasClicked()) {
+  if (topRightTapWasClicked()) {
+    toggleLayout("top-right tap");
+  } else if (centerTapWasClicked()) {
     toggleLanguage("center tap");
   }
 
