@@ -24,6 +24,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v1.6: convert the real Markdown interview prep sheet at `sample-data/papercoach/interview_prep_sheet3.md` into generated PaperCoach JSON. The converter extracts 71 cards, including 17 must-master cards, writes generated deck/drill/glossary JSON, and prepares an SD-ready deck copy under `dist/sdcard/papercoach/decks/`.
 - v1.7: embed the full 71-card PaperCoach interview deck in firmware as a flash-resident C++ fallback. Runtime first tries SD override `/papercoach/decks/interview_cards.json`; if SD is missing or parsing fails, PaperCoach still has the full embedded deck.
 - v1.8: make Interview Practice useful with real deck cards, question/spoken/anchor/watch pages, long-answer pagination, All vs Must-master filter, left/right page zones, and PaperCoach font-size support.
+- v1.9: add objective PaperCoach drills generated offline from the real deck: Blitz Quiz MCQs, Weak Answer Detector options, Metric Precision phrasing drills, and Hostile Follow-up prompts. The embedded fallback includes 149 drills.
 
 ## Hardware
 

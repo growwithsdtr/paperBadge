@@ -335,6 +335,18 @@ def build_drills(cards: list[dict[str, Any]], metadata: dict[str, Any]) -> dict[
                     "explanation": card["watch"],
                 }
             )
+        if card.get("must_master") and card.get("watch"):
+            drills.append(
+                {
+                    "id": f"{card['id']}-hostile",
+                    "type": "hostile_followup",
+                    "card_id": card["id"],
+                    "prompt": f"Interviewer pushes on '{card['title']}': {card['watch']}",
+                    "options": [],
+                    "correct_index": 0,
+                    "explanation": f"Best response principle: {card['anchor'] or card['confidence']}",
+                }
+            )
 
     for index, row in enumerate(metadata.get("metric_defense", []), start=1):
         values = list(row.values())

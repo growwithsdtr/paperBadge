@@ -10,6 +10,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_PATH = REPO_ROOT / "generated" / "papercoach" / "interview_cards.json"
+DRILLS_PATH = REPO_ROOT / "generated" / "papercoach" / "drills.json"
 HEADER_PATH = REPO_ROOT / "src" / "embedded_papercoach_deck.h"
 
 
@@ -25,9 +26,13 @@ def raw_string(text: Any) -> str:
 def main() -> None:
     if not SOURCE_PATH.exists():
         raise SystemExit(f"Missing generated deck: {SOURCE_PATH}. Run tools/convert_prep_sheet.py first.")
+    if not DRILLS_PATH.exists():
+        raise SystemExit(f"Missing generated drills: {DRILLS_PATH}. Run tools/convert_prep_sheet.py first.")
 
     payload = json.loads(SOURCE_PATH.read_text(encoding="utf-8"))
+    drills_payload = json.loads(DRILLS_PATH.read_text(encoding="utf-8"))
     cards = payload.get("cards", [])
+    drills = drills_payload.get("drills", [])
     if len(cards) < 50:
         raise SystemExit(f"Refusing to embed only {len(cards)} cards; expected at least 50.")
 
@@ -52,9 +57,22 @@ def main() -> None:
         "  const char* watch;",
         "};",
         "",
+        "struct Drill {",
+        "  const char* id;",
+        "  const char* type;",
+        "  const char* cardId;",
+        "  const char* prompt;",
+        "  const char* options[4];",
+        "  uint8_t optionCount;",
+        "  uint8_t correctIndex;",
+        "  const char* explanation;",
+        "};",
+        "",
         f"constexpr size_t kCardCount = {len(cards)};",
         f"constexpr size_t kMustMasterCount = {payload.get('must_master_count', 0)};",
+        f"constexpr size_t kDrillCount = {len(drills)};",
         f"constexpr size_t kSourceJsonBytes = {SOURCE_PATH.stat().st_size};",
+        f"constexpr size_t kDrillsJsonBytes = {DRILLS_PATH.stat().st_size};",
         f'constexpr const char* kSourcePath = "{payload.get("source_path", "")}";',
         "",
         "const Card kCards[] PROGMEM = {",
@@ -83,6 +101,38 @@ def main() -> None:
         [
             "};",
             "",
+            "const Drill kDrills[] PROGMEM = {",
+        ]
+    )
+
+    for drill in drills:
+        options = list(drill.get("options", []))[:4]
+        while len(options) < 4:
+            options.append("")
+        lines.extend(
+            [
+                "  {",
+                f"    {raw_string(drill.get('id'))},",
+                f"    {raw_string(drill.get('type'))},",
+                f"    {raw_string(drill.get('card_id'))},",
+                f"    {raw_string(drill.get('prompt'))},",
+                "    {",
+                f"      {raw_string(options[0])},",
+                f"      {raw_string(options[1])},",
+                f"      {raw_string(options[2])},",
+                f"      {raw_string(options[3])},",
+                "    },",
+                f"    {len([option for option in options if option])},",
+                f"    {int(drill.get('correct_index', 0))},",
+                f"    {raw_string(drill.get('explanation'))},",
+                "  },",
+            ]
+        )
+
+    lines.extend(
+        [
+            "};",
+            "",
             "}  // namespace embedded_papercoach",
             "",
         ]
@@ -91,7 +141,9 @@ def main() -> None:
     HEADER_PATH.write_text("\n".join(lines), encoding="utf-8")
     print(f"Embedded PaperCoach cards: {len(cards)}")
     print(f"Must-master cards: {payload.get('must_master_count', 0)}")
+    print(f"Embedded PaperCoach drills: {len(drills)}")
     print(f"Source JSON bytes: {SOURCE_PATH.stat().st_size}")
+    print(f"Drills JSON bytes: {DRILLS_PATH.stat().st_size}")
     print(f"Header: {HEADER_PATH.relative_to(REPO_ROOT)} ({HEADER_PATH.stat().st_size} bytes)")
 
 

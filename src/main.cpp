@@ -12,7 +12,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v1.8";
+constexpr const char* kFirmwareVersion = "v1.9";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -247,6 +247,8 @@ bool gSdMounted = false;
 bool gBadgeJsonLoaded = false;
 bool gCoachDeckLoadedFromSd = false;
 size_t gCoachMustMasterCount = 0;
+size_t gCoachCardCount = 0;
+size_t gCoachDrillCount = 0;
 String gCoachDeckSource = "embedded";
 uint8_t gNormalPortraitRotation = 0;
 uint32_t gLastLanguageSwitchMs = 0;
@@ -758,6 +760,8 @@ void clearCoachDeck() {
   }
   gCoachItemCount = 0;
   gCoachMustMasterCount = 0;
+  gCoachCardCount = 0;
+  gCoachDrillCount = 0;
   gCoachIndex = 0;
   gCoachStage = 0;
   gSelectedOption = -1;
@@ -774,12 +778,15 @@ bool addCoachItem(const CoachItem& item) {
 
 void loadEmbeddedCoachDeck() {
   clearCoachDeck();
-  gCoachItemCount = embedded_papercoach::kCardCount;
+  gCoachCardCount = embedded_papercoach::kCardCount;
+  gCoachDrillCount = embedded_papercoach::kDrillCount;
+  gCoachItemCount = gCoachCardCount + gCoachDrillCount;
   gCoachMustMasterCount = embedded_papercoach::kMustMasterCount;
   gCoachDeckLoadedFromSd = false;
   gCoachDeckSource = "embedded";
   Serial.println("PaperCoach deck source: embedded");
-  Serial.printf("PaperCoach card count: %u\n", static_cast<unsigned>(gCoachItemCount));
+  Serial.printf("PaperCoach card count: %u\n", static_cast<unsigned>(gCoachCardCount));
+  Serial.printf("PaperCoach drill count: %u\n", static_cast<unsigned>(gCoachDrillCount));
   Serial.printf("PaperCoach must-master count: %u\n", static_cast<unsigned>(gCoachMustMasterCount));
 }
 
@@ -874,8 +881,11 @@ bool loadCoachDeckFromSd() {
 
   gCoachDeckLoadedFromSd = true;
   gCoachDeckSource = "SD";
+  gCoachCardCount = gCoachItemCount;
+  gCoachDrillCount = 0;
   Serial.printf("PaperCoach deck source: SD (%s)\n", path);
   Serial.printf("PaperCoach card count: %u\n", static_cast<unsigned>(gCoachItemCount));
+  Serial.printf("PaperCoach drill count: %u\n", static_cast<unsigned>(gCoachDrillCount));
   Serial.printf("PaperCoach must-master count: %u\n", static_cast<unsigned>(gCoachMustMasterCount));
   return true;
 }
@@ -935,6 +945,29 @@ CoachItemView coachItemAt(size_t index) {
     view.prompt = card.title;
     view.answer = card.spoken;
     view.rubric = card.anchor;
+    return view;
+  }
+
+  const size_t drillIndex = index - embedded_papercoach::kCardCount;
+  if (drillIndex < embedded_papercoach::kDrillCount) {
+    const auto& drill = embedded_papercoach::kDrills[drillIndex];
+    view.type = parseCoachType(drill.type);
+    view.id = drill.id;
+    view.sectionId = "D";
+    view.section = "PaperCoach Drills";
+    view.number = "";
+    view.title = drill.prompt;
+    view.theme = drill.type;
+    view.prompt = drill.prompt;
+    view.answer = drill.explanation;
+    view.rubric = drill.explanation;
+    view.explanation = drill.explanation;
+    view.category = drill.optionCount > 0 && drill.correctIndex < drill.optionCount ? drill.options[drill.correctIndex] : "";
+    view.optionCount = drill.optionCount;
+    view.correctIndex = drill.correctIndex;
+    for (uint8_t option = 0; option < kMaxOptions; ++option) {
+      view.options[option] = drill.options[option];
+    }
   }
   return view;
 }
@@ -1388,6 +1421,9 @@ String coachPromptFor(const CoachItemView& item) {
     return item.term;
   }
   if (item.type == CoachItemType::WeakAnswer) {
+    if (strlen(item.weakAnswer) == 0) {
+      return item.prompt;
+    }
     return String(item.prompt) + "\nWeak answer: " + item.weakAnswer;
   }
   return item.prompt;
@@ -1398,6 +1434,9 @@ String coachAnswerFor(const CoachItemView& item) {
     return item.definition;
   }
   if (item.type == CoachItemType::WeakAnswer) {
+    if (strlen(item.category) == 0) {
+      return item.explanation;
+    }
     return String(item.category) + ": " + item.explanation;
   }
   return item.answer;
@@ -1575,7 +1614,10 @@ void renderCoachScreen() {
     display.drawString(String("Prompt ") + (gMockStep + 1) + "/5", 34, 118);
   }
 
-  if (gScreen == Screen::BlitzQuiz) {
+  const bool optionDrill = (gScreen == Screen::BlitzQuiz || gScreen == Screen::WeakAnswerDetector ||
+                            gScreen == Screen::MetricPrecision) &&
+                           item.optionCount > 0;
+  if (optionDrill) {
     drawWrappedText(item.prompt, 34, 124, display.width() - 68, lineHeight, promptLines < 5 ? promptLines : 5);
     int32_t y = 320;
     for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
@@ -1947,7 +1989,9 @@ void handleTouch() {
     } else if (gNextButton.contains(tapX, tapY)) {
       nextCoachItem();
       renderCoachScreen();
-    } else if (gScreen == Screen::BlitzQuiz && gSelectedOption < 0) {
+    } else if ((gScreen == Screen::BlitzQuiz || gScreen == Screen::WeakAnswerDetector ||
+                gScreen == Screen::MetricPrecision) &&
+               gSelectedOption < 0) {
       const CoachItemView item = coachItemAt(gCoachIndex);
       for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
         if (gOptionButtons[option].contains(tapX, tapY)) {

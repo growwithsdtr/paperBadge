@@ -32,6 +32,15 @@
       "explanation": "Over-talk risk — three strengths, one recent signal, stop. Have your exact PhD status ready so \"research background\" can't read as evasive."
     },
     {
+      "id": "A01-hostile",
+      "type": "hostile_followup",
+      "card_id": "A01",
+      "prompt": "Interviewer pushes on 'Self-introduction / career & recent work': Over-talk risk — three strengths, one recent signal, stop. Have your exact PhD status ready so \"research background\" can't read as evasive.",
+      "options": [],
+      "correct_index": 0,
+      "explanation": "Best response principle: RAG pilots (Digital Senpai) as the production-grade signal; hackathon as recency; Pita (250% ROI Yr2) and Cotomo (~3× retention) as range. Alt: lead with Safed COO for operator-heavy roles."
+    },
+    {
       "id": "A02-confidence",
       "type": "mcq",
       "card_id": "A02",
@@ -60,6 +69,15 @@
       ],
       "correct_index": 3,
       "explanation": "Don't blame execution teams (\"failed the moment it left my hands\") — take responsibility for the scoping gaps; lead with owning the telemetry/iteration loop."
+    },
+    {
+      "id": "A02-hostile",
+      "type": "hostile_followup",
+      "card_id": "A02",
+      "prompt": "Interviewer pushes on 'Why leave consulting for an in-house role': Don't blame execution teams (\"failed the moment it left my hands\") — take responsibility for the scoping gaps; lead with owning the telemetry/iteration loop.",
+      "options": [],
+      "correct_index": 0,
+      "explanation": "Best response principle: SDTR breadth vs Safed end-to-end ownership (2.5× growth)."
     },
     {
       "id": "A03-confidence",
@@ -92,6 +110,15 @@
       "explanation": "Frame take-rate as a different model, not a smaller commission; have the CAC/unit-economics answer (AI lifts the hotel's own conversion) ready."
     },
     {
+      "id": "A03-hostile",
+      "type": "hostile_followup",
+      "card_id": "A03",
+      "prompt": "Interviewer pushes on 'Why this company and industry': Frame take-rate as a different model, not a smaller commission; have the CAC/unit-economics answer (AI lifts the hotel's own conversion) ready.",
+      "options": [],
+      "correct_index": 0,
+      "explanation": "Best response principle: Tripla take rate 1.42% vs ~25% OTA; re-ground per company."
+    },
+    {
       "id": "A04-confidence",
       "type": "mcq",
       "card_id": "A04",
@@ -120,6 +147,15 @@
       ],
       "correct_index": 4,
       "explanation": "State dated, proactive milestones; don't assume their team model; handle the legacy-mess and upstream-risk probes head-on."
+    },
+    {
+      "id": "A04-hostile",
+      "type": "hostile_followup",
+      "card_id": "A04",
+      "prompt": "Interviewer pushes on 'Success / 90-day impact & successful traits': State dated, proactive milestones; don't assume their team model; handle the legacy-mess and upstream-risk probes head-on.",
+      "options": [],
+      "correct_index": 0,
+      "explanation": "Best response principle: Forward-looking plan; the fast-POC capability is real and supports the quick-win claim."
     },
     {
       "id": "A05-confidence",
@@ -270,6 +306,15 @@
       ],
       "correct_index": 0,
       "explanation": "Demonstrate, don't disclaim; have a Japanese answer ready for the inevitable switch — including how you'd persuade conservative stakeholders to move from legacy to AI."
+    },
+    {
+      "id": "A09-hostile",
+      "type": "hostile_followup",
+      "card_id": "A09",
+      "prompt": "Interviewer pushes on 'Japanese proficiency / experience with Japanese customers': Demonstrate, don't disclaim; have a Japanese answer ready for the inevitable switch — including how you'd persuade conservative stakeholders to move from legacy to AI.",
+      "options": [],
+      "correct_index": 0,
+      "explanation": "Best response principle: ~10 yrs Tokyo; managed JP HQ in Japanese; Ginza stakeholder interviews in Japanese."
     },
     {
       "id": "A10-confidence",
@@ -482,6 +527,15 @@
       "explanation": "Lead with the pain + how you'd validate it; show the TAM as assumptions; have the \"why us vs Copilot/CI vendor\" answer ready."
     },
     {
+      "id": "B16-hostile",
+      "type": "hostile_followup",
+      "card_id": "B16",
+      "prompt": "Interviewer pushes on 'Ideate a new product or feature for our niche': Lead with the pain + how you'd validate it; show the TAM as assumptions; have the \"why us vs Copilot/CI vendor\" answer ready.",
+      "options": [],
+      "correct_index": 0,
+      "explanation": "Best response principle: Genesys Debugger (Autify work-sample ideation); TAM is your estimate. Alt: Cotomo Talk-the-News for a consumer/data niche."
+    },
+    {
       "id": "B17-confidence",
       "type": "mcq",
       "card_id": "B17",
@@ -512,6 +566,15 @@
       "explanation": "Define retention (low-single-digit baseline; matched-cohort lift); own attribution as directional; don't muddle in Digital Senpai."
     },
     {
+      "id": "B17-hostile",
+      "type": "hostile_followup",
+      "card_id": "B17",
+      "prompt": "Interviewer pushes on 'Walk through a past project — problem, contribution, hardest parts, diagnosis': Define retention (low-single-digit baseline; matched-cohort lift); own attribution as directional; don't muddle in Digital Senpai.",
+      "options": [],
+      "correct_index": 0,
+      "explanation": "Best response principle: Cotomo, ~3× retention (matched cohort) + ~50% longer sessions. Alt: Digital Senpai for a B2B/RAG panel."
+    },
+    {
       "id": "B18-confidence",
       "type": "mcq",
       "card_id": "B18",
@@ -540,6 +603,15 @@
       ],
       "correct_index": 2,
       "explanation": "Lead with one concrete prioritization + when you broke the framework; don't stack RICE/ICE/I-I-O as a textbook recital."
+    },
+    {
+      "id": "B18-hostile",
+      "type": "hostile_followup",
+      "card_id": "B18",
+      "prompt": "Interviewer pushes on 'Prioritize features for a roadmap or migration': Lead with one concrete prioritization + when you broke the framework; don't stack RICE/ICE/I-I-O as a textbook recital.",
+      "options": [],
+      "correct_index": 0,
+      "explanation": "Best response principle: Safed (overrode the score on a reliability/onboarding fix; +55% engagement / −40% TTM)."
     },
     {
       "id": "B19-confidence",
@@ -692,6 +764,15 @@
       "explanation": "Lead with \"much of it is deterministic\" to defuse the CI-bottleneck probe; calibrate the judge against human labels; state pilot-scale maturity."
     },
     {
+      "id": "C23-hostile",
+      "type": "hostile_followup",
+      "card_id": "C23",
+      "prompt": "Interviewer pushes on 'How do you QA/test a non-deterministic chatbot or AI output': Lead with \"much of it is deterministic\" to defuse the CI-bottleneck probe; calibrate the judge against human labels; state pilot-scale maturity.",
+      "options": [],
+      "correct_index": 0,
+      "explanation": "Best response principle: Digital Senpai eval harness (designed/built at pilot scale)."
+    },
+    {
       "id": "C24-confidence",
       "type": "mcq",
       "card_id": "C24",
@@ -720,6 +801,15 @@
       ],
       "correct_index": 4,
       "explanation": "Name OWASP LLM Top 10; lead with access control + grounding (temperature minor); fix the async hole — high-risk = synchronous pre-emission."
+    },
+    {
+      "id": "C24-hostile",
+      "type": "hostile_followup",
+      "card_id": "C24",
+      "prompt": "Interviewer pushes on 'Guardrails against hallucinations / PII leaks': Name OWASP LLM Top 10; lead with access control + grounding (temperature minor); fix the async hole — high-risk = synchronous pre-emission.",
+      "options": [],
+      "correct_index": 0,
+      "explanation": "Best response principle: Deterministic PII redaction (Japanese LM agent / Digital Senpai) — architecture is real; the red-team leak-rate is what you'd gate on."
     },
     {
       "id": "C25a-confidence",
@@ -902,6 +992,15 @@
       "explanation": "Vary the phrasing; show the \"challenge trade-offs\" line is technical, not positional; give the concrete intake mechanism, not \"filtering noise.\""
     },
     {
+      "id": "D29-hostile",
+      "type": "hostile_followup",
+      "card_id": "D29",
+      "prompt": "Interviewer pushes on 'Preferred style of collaborating with engineers': Vary the phrasing; show the \"challenge trade-offs\" line is technical, not positional; give the concrete intake mechanism, not \"filtering noise.\"",
+      "options": [],
+      "correct_index": 0,
+      "explanation": "Best response principle: Safed / 30-person Vietnam dev team; single-intake backlog."
+    },
+    {
       "id": "D30-confidence",
       "type": "mcq",
       "card_id": "D30",
@@ -930,6 +1029,15 @@
       ],
       "correct_index": 4,
       "explanation": "Don't make the CTO look shallow or do \"I told you so\"; the lesson is influence-via-cheap-experiment; keep the lift cohort-scoped."
+    },
+    {
+      "id": "D30-hostile",
+      "type": "hostile_followup",
+      "card_id": "D30",
+      "prompt": "Interviewer pushes on 'A time you disagreed with a technical stakeholder — resolution and outcome': Don't make the CTO look shallow or do \"I told you so\"; the lesson is influence-via-cheap-experiment; keep the lift cohort-scoped.",
+      "options": [],
+      "correct_index": 0,
+      "explanation": "Best response principle: Cotomo CTO disagreement; cohort-scoped retention lift from Talk-the-News."
     },
     {
       "id": "D31-confidence",
@@ -1022,6 +1130,15 @@
       "explanation": "Acknowledge guardrail metrics so \"one indicator\" isn't naive; show how you'd measure proficiency fast (proxy checkpoints) and avoid the vanity trap."
     },
     {
+      "id": "E33-hostile",
+      "type": "hostile_followup",
+      "card_id": "E33",
+      "prompt": "Interviewer pushes on 'Define a North Star metric and sub-metrics (and does it change by stage)': Acknowledge guardrail metrics so \"one indicator\" isn't naive; show how you'd measure proficiency fast (proxy checkpoints) and avoid the vanity trap.",
+      "options": [],
+      "correct_index": 0,
+      "explanation": "Best response principle: Langets (illustrative) + Safed lived North Star (active users)."
+    },
+    {
       "id": "E34-confidence",
       "type": "mcq",
       "card_id": "E34",
@@ -1050,6 +1167,15 @@
       ],
       "correct_index": 4,
       "explanation": "Lead with speed-only-if-quality-holds; don't say \"client picks most of it = working\"; mention power/interleaving."
+    },
+    {
+      "id": "E34-hostile",
+      "type": "hostile_followup",
+      "card_id": "E34",
+      "prompt": "Interviewer pushes on 'Measure the success of a newly released AI feature': Lead with speed-only-if-quality-holds; don't say \"client picks most of it = working\"; mention power/interleaving.",
+      "options": [],
+      "correct_index": 0,
+      "explanation": "Best response principle: VISASQ Time-to-First-Match (role real); shortlist ratio illustrative."
     },
     {
       "id": "E35-confidence",
@@ -1140,6 +1266,15 @@
       ],
       "correct_index": 5,
       "explanation": "Lead with API-vs-generation separation; say \"prototype, not production\"; correct the MCP-discovery misconception and name the auth/scraping risks."
+    },
+    {
+      "id": "F37-hostile",
+      "type": "hostile_followup",
+      "card_id": "F37",
+      "prompt": "Interviewer pushes on 'Architecture and tools of your prototype, and how you built it': Lead with API-vs-generation separation; say \"prototype, not production\"; correct the MCP-discovery misconception and name the auth/scraping risks.",
+      "options": [],
+      "correct_index": 0,
+      "explanation": "Best response principle: triplaNeo (working prototype; Python/Next.js/Vercel). Alt: smartyPants hackathon build."
     },
     {
       "id": "F38-confidence",
@@ -1260,6 +1395,15 @@
       ],
       "correct_index": 5,
       "explanation": "Define pilot scope (users/period); stress you verified accuracy held, not just speed; keep MCP out unless asked. ---"
+    },
+    {
+      "id": "F41-hostile",
+      "type": "hostile_followup",
+      "card_id": "F41",
+      "prompt": "Interviewer pushes on 'RAG / agent-orchestration experience actually delivered': Define pilot scope (users/period); stress you verified accuracy held, not just speed; keep MCP out unless asked. ---",
+      "options": [],
+      "correct_index": 0,
+      "explanation": "Best response principle: Digital Senpai (delivered to pilot; ~20% / ~65%)."
     },
     {
       "id": "G42-confidence",
