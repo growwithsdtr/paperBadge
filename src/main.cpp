@@ -16,7 +16,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v3.6";
+constexpr const char* kFirmwareVersion = "v3.7";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -1084,6 +1084,29 @@ String compactPowerStatusLine() {
   return status;
 }
 
+void drawBatteryBar(int32_t x, int32_t y, int32_t w, int32_t h, int32_t level) {
+  auto& display = M5.Display;
+  const int32_t terminalW = 5;
+  const int32_t innerX = x + 2;
+  const int32_t innerY = y + 2;
+  const int32_t innerW = w - 4;
+  const int32_t innerH = h - 4;
+  const int32_t clampedLevel = level >= 0 ? constrain(level, 0, 100) : 0;
+  const int32_t fillW = innerW * clampedLevel / 100;
+
+  display.drawRect(x, y, w, h, TFT_BLACK);
+  display.fillRect(x + w, y + h / 4, terminalW, h / 2, TFT_BLACK);
+  display.fillRect(innerX, innerY, innerW, innerH, TFT_WHITE);
+  if (level >= 0 && fillW > 0) {
+    display.fillRect(innerX, innerY, fillW, innerH, TFT_BLACK);
+  }
+  if (level < 0) {
+    for (int32_t hatchX = innerX; hatchX < innerX + innerW; hatchX += 10) {
+      display.drawLine(hatchX, innerY + innerH, hatchX + 8, innerY, TFT_DARKGREY);
+    }
+  }
+}
+
 void logPowerAudit(const char* reason) {
   const int16_t batteryMv = M5.Power.getBatteryVoltage();
   const int32_t level = batteryLevelPercent();
@@ -1091,15 +1114,22 @@ void logPowerAudit(const char* reason) {
   const int16_t vbusMv = M5.Power.getVBUSVoltage();
   const bool wifiOff = WiFi.getMode() == WIFI_OFF;
   const bool bluetoothStarted = btStarted();
+  const bool badgeStatic = gSettings.languageMode != LanguageMode::Auto || autoRotateIntervalSeconds() == 0;
+  const uint32_t activeLoopDelayMs =
+      gIdleModeActive && gSettings.powerMode == PowerMode::ConferenceBadge && gScreen == Screen::Badge
+          ? 500
+          : (gSettings.powerMode == PowerMode::BatterySaver || gSettings.powerMode == PowerMode::ConferenceBadge ? 120
+                                                                                                                   : 50);
 
   Serial.printf(
       "Power audit: reason=%s mode=%s idle=%s batteryMv=%d level=%ld charge=%s currentMa=%ld vbusMv=%d usb=%s "
-      "wifi=%s bluetooth=%s imu=disabled speaker=stopped badgeMode=%s badgeLang=%s redraws=%u sleep=deferred\n",
+      "wifi=%s bluetooth=%s imu=disabled speaker=stopped badgeMode=%s badgeLang=%s autoInterval=%s staticBadge=%s "
+      "redraws=%u loopDelayMs=%u sleep=deferred\n",
       reason && reason[0] != '\0' ? reason : "audit", powerModeName(), gIdleModeActive ? "yes" : "no",
       static_cast<int>(batteryMv), static_cast<long>(level), chargingStateName(M5.Power.isCharging()),
       static_cast<long>(currentMa), static_cast<int>(vbusMv), usbPowerName(vbusMv), wifiOff ? "off" : "on",
-      bluetoothStarted ? "on" : "off", languageModeName(), languageName(gBadgeLanguage),
-      static_cast<unsigned>(gBadgeRedrawCount));
+      bluetoothStarted ? "on" : "off", languageModeName(), languageName(gBadgeLanguage), autoRotateIntervalName(),
+      badgeStatic ? "yes" : "no", static_cast<unsigned>(gBadgeRedrawCount), static_cast<unsigned>(activeLoopDelayMs));
 }
 
 void cyclePowerMode() {
@@ -3641,19 +3671,20 @@ void renderSettings(const char* refreshReason = "mode switch") {
   prepareFullRefresh(refreshReason, true);
 
   auto& display = M5.Display;
+  const int32_t width = display.width();
   display.setTextDatum(textdatum_t::top_left);
   applyCoachTitleFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.drawString("Settings", 32, 34);
   applyCoachMetadataFont();
   display.drawString(compactPowerStatusLine(), 36, 76);
-  display.drawString("Badge orientation", 36, 104);
+  drawBatteryBar(36, 102, width - 84, 16, batteryLevelPercent());
+  display.drawString("Badge orientation", 36, 132);
 
-  const int32_t width = display.width();
   const int32_t halfW = (width - 88) / 2;
-  gOrientationButton = {36, 136, width - 72, 58};
-  gLanguageAutoButton = {36, 238, width - 72, 52};
-  gLanguageEnglishButton = {36, 296, width - 72, 52};
+  gOrientationButton = {36, 160, width - 72, 54};
+  gLanguageAutoButton = {36, 244, width - 72, 52};
+  gLanguageEnglishButton = {36, 302, width - 72, 52};
   gLanguageJapaneseButton = {};
   gFontMediumButton = {36, 400, halfW, 52};
   gFontLargeButton = {52 + halfW, 400, halfW, 52};
@@ -3668,7 +3699,7 @@ void renderSettings(const char* refreshReason = "mode switch") {
   drawButton(gOrientationButton, gSettings.orientationMode == OrientationMode::Strap ? "Strap 180" : "Handheld 0");
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
-  display.drawString("Badge language", 36, 206);
+  display.drawString("Badge language", 36, 218);
   drawButton(gLanguageAutoButton, String("Mode: ") + languageModeName());
   drawButton(gLanguageEnglishButton, String("Auto interval: ") + autoRotateIntervalName());
   display.setTextDatum(textdatum_t::top_left);
@@ -3736,6 +3767,8 @@ void renderDebug(const char* refreshReason = "mode switch") {
   y += 24;
   display.drawString(batteryStatusLine(), 26, y);
   y += 24;
+  drawBatteryBar(26, y, 220, 16, batteryLevelPercent());
+  y += 26;
   display.drawString(chargeStatusLine(), 26, y);
   y += 24;
   display.drawString(usbStatusLine(), 26, y);

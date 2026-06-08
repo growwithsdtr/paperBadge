@@ -41,6 +41,8 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v3.3a: diagnose the PaperCoach font path, replace the five nominal size choices with three visibly distinct reader sizes, mark legacy XXL/Huge as colliding buckets, add Font Lab measurement rows with actual height/width/line-height metrics, add Tight/Normal/Loose line spacing, and sanitize live PaperCoach text to avoid square-box glyphs.
 - v3.4: replace raw-character Practice pagination with sanitized, measured wrapped-line pagination, compact the reading header/footer, move page information into Back/Next buttons, remove deck/filter labels from reading screens, and auto-fit long Reader L Practice content down to Reader M.
 - v3.5: add an SD-only intermediate reader font experiment. Font Lab probes `/paperbadge/fonts/reader_mid.vlw` when present, logs actual height/width, and always falls back to built-in reader fonts when the file is missing or fails to load.
+- v3.6: compact footer/button geometry, keep the Home footer control icon-only, retain large invisible hitboxes, and left-align wrapped MCQ option text so answers are easier to compare on the e-ink panel.
+- v3.7: add a visual battery bar to Settings and Debug, expand power audit logs with static-badge and loop-delay state, document the conservative no-sleep policy, and keep adaptive refresh behavior focused on reading vs image/zoom transitions.
 
 ## Hardware
 
@@ -151,9 +153,9 @@ Power modes:
 
 The idle state is not ESP32 deep sleep or light sleep. M5Unified exposes deep/light sleep APIs and the ESP32-S3 reports wake causes, but PaperS3 touch wake behavior must be verified on the physical device before enabling sleep that could make the badge difficult to wake. Serial logs report the selected power mode, idle entry/exit, and boot wake reason.
 
-v3.2 shows power status only in diagnostic contexts: Settings has a compact battery/USB line, and Debug shows battery voltage, approximate percent, charge/discharge state, battery current, USB/VBUS status, current power mode, and the radio/peripheral policy. Badge, Practice, and Drills do not show a battery indicator. Percent is whatever M5Unified reports when available, with a conservative voltage estimate fallback.
+v3.7 shows power status only in diagnostic contexts: Settings has a compact battery/USB line plus a horizontal battery bar, and Debug shows the same bar with battery voltage, approximate percent, charge/discharge state, battery current, USB/VBUS status, current power mode, and the radio/peripheral policy. Badge, Practice, and Drills do not show a battery indicator. Percent is whatever M5Unified reports when available, with a conservative voltage estimate fallback.
 
-The power audit log confirms the app policy: Wi-Fi off, Bluetooth stopped, IMU disabled in `M5.config()`, speaker stopped, badge language mode/current language, redraw count, VBUS, battery voltage, charge state, and sleep deferred.
+The power audit log confirms the app policy: Wi-Fi off, Bluetooth stopped, IMU disabled in `M5.config()`, speaker stopped, badge language mode/current language, auto-rotate interval, whether the badge is currently static, redraw count, loop delay, VBUS, battery voltage, charge state, and sleep deferred.
 
 ## E-Ink Refresh Policy
 
@@ -162,6 +164,8 @@ v2.7 adds case-by-case refresh control:
 - `Fast`: uses fast text refreshes where possible, but still performs clean refreshes for badge, image, language, orientation, and zoom transitions.
 - `Balanced`: default for new installs. It performs clean refreshes on mode changes and image-heavy transitions, then uses faster updates for normal PaperCoach text navigation.
 - `Clean`: prioritizes ghosting reduction and uses clean refreshes more often. Zoom exit still performs an explicit white clean refresh before returning to Badge.
+
+Balanced remains the recommended default for reading. It avoids full refreshes on every normal Practice/Drills tap, but still uses clean refreshes for mode changes requested as high-quality renders and for badge/image/zoom/language/orientation transitions. `Fast` is available for extra battery savings, and `Clean` is available when ghosting is more important than speed or energy.
 
 Firmware tracks consecutive non-clean transitions and forces a clean refresh after 14 transitions regardless of mode. Serial logs include refresh mode, refresh reason, actual refresh type, transition count, and whether the hard-clean counter fired.
 
