@@ -43,6 +43,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v3.5: add an SD-only intermediate reader font experiment. Font Lab probes `/paperbadge/fonts/reader_mid.vlw` when present, logs actual height/width, and always falls back to built-in reader fonts when the file is missing or fails to load.
 - v3.6: compact footer/button geometry, keep the Home footer control icon-only, retain large invisible hitboxes, and left-align wrapped MCQ option text so answers are easier to compare on the e-ink panel.
 - v3.7: add a visual battery bar to Settings and Debug, expand power audit logs with static-badge and loop-delay state, document the conservative no-sleep policy, and keep adaptive refresh behavior focused on reading vs image/zoom transitions.
+- v3.8: add bolder hand-drawn primitive Back/Next icons, use icon + page-count Practice footer buttons, and add Debug -> Visual QA with the physical screenshot checklist and current typography/refresh/power settings.
 
 ## Hardware
 
@@ -192,6 +193,21 @@ v2.2 Home/Menu entries:
 - Debug
 
 Practice uses the real embedded or SD interview deck and supports page-based study. Drills contains All Drills, Weak Answer, Metric Precision, Follow-up Defense, Framework Choice, and Maturity Claim categories. Exam is a placeholder for a future 10-question readiness test. Results is a placeholder and shows no session results yet. There is no progress writing, spaced repetition, RTC scheduling, Wi-Fi, Bluetooth, or AI/API call behavior.
+
+## Visual QA
+
+Debug -> Visual QA shows the current reader size/style, refresh mode, power mode, whether `/paperbadge/fonts/reader_mid.vlw` was detected, and a short checklist for physical screenshots:
+
+- Practice first page
+- Practice long answer page
+- Practice last page
+- Drills MCQ screen
+- Settings battery area
+- Font Lab comparison
+- Badge English
+- Badge Japanese
+
+Icons are hand-authored display primitives; there is no icon font runtime dependency and no external icon license to track.
 
 ## PaperCoach Typography
 

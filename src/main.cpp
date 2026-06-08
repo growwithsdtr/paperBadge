@@ -16,7 +16,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v3.7";
+constexpr const char* kFirmwareVersion = "v3.8";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -93,6 +93,7 @@ enum class Screen {
   Settings,
   Debug,
   FontLab,
+  VisualQa,
   QrZoom,
   PhotoZoom,
   InterviewPractice,
@@ -175,6 +176,8 @@ enum class AutoRotateIntervalMode : uint8_t {
 enum class IconType : uint8_t {
   None,
   Home,
+  Back,
+  Next,
   Badge,
   Practice,
   Drills,
@@ -406,6 +409,7 @@ Rect gFilterButton;
 Rect gTouchDebugButton;
 Rect gLayoutDebugButton;
 Rect gFontLabButton;
+Rect gVisualQaButton;
 Rect gTypographyResetButton;
 Rect gFontLabStyleButton;
 Rect gFontLabSizeButton;
@@ -2134,6 +2138,14 @@ void drawIcon(IconType icon, int32_t x, int32_t y, int32_t size) {
       display.fillRect(x + s / 5, y + s / 2, (s * 3) / 5, s / 2 - 2, TFT_BLACK);
       display.fillRect(x + s / 2 - s / 10, y + (s * 2) / 3, s / 5, s / 3 - 2, TFT_WHITE);
       break;
+    case IconType::Back:
+      display.fillTriangle(x + 3, y + s / 2, x + s / 2, y + 4, x + s / 2, y + s - 4, TFT_BLACK);
+      display.fillRect(x + s / 2 - 1, y + s / 3, s / 2 - 3, s / 3, TFT_BLACK);
+      break;
+    case IconType::Next:
+      display.fillTriangle(x + s - 3, y + s / 2, x + s / 2, y + 4, x + s / 2, y + s - 4, TFT_BLACK);
+      display.fillRect(x + 3, y + s / 3, s / 2, s / 3, TFT_BLACK);
+      break;
     case IconType::Badge:
       display.drawRoundRect(x + 2, y + 5, s - 4, s - 10, 4, TFT_BLACK);
       display.drawRoundRect(x + 3, y + 6, s - 6, s - 12, 4, TFT_BLACK);
@@ -2295,6 +2307,8 @@ const char* screenName(Screen screen) {
       return "Debug";
     case Screen::FontLab:
       return "Font Lab";
+    case Screen::VisualQa:
+      return "Visual QA";
     case Screen::QrZoom:
       return "QR zoom";
     case Screen::PhotoZoom:
@@ -3377,12 +3391,16 @@ void renderInterviewPracticeScreen() {
   gFilterButton = {24, layout.footerY, 152, layout.buttonH};
   gHomeButton = {(display.width() - 108) / 2, layout.footerY, 108, layout.buttonH};
   gNextButton = {display.width() - 176, layout.footerY, 152, layout.buttonH};
-  const String backLabel = gCoachStage > 0 ? String("< ") + gCoachStage + "/" + pageCounts.totalPages : "";
+  const String backLabel = gCoachStage > 0 ? String(gCoachStage) + "/" + pageCounts.totalPages : "";
   const String nextLabel =
-      gCoachStage + 1 < pageCounts.totalPages ? String("> ") + (gCoachStage + 2) + "/" + pageCounts.totalPages : ">";
-  drawButton(gFilterButton, backLabel);
+      gCoachStage + 1 < pageCounts.totalPages ? String(gCoachStage + 2) + "/" + pageCounts.totalPages : "";
+  if (backLabel.length() > 0) {
+    drawButton(gFilterButton, backLabel, IconType::Back);
+  } else {
+    drawButton(gFilterButton, "");
+  }
   drawButton(gHomeButton, "", IconType::Home);
-  drawButton(gNextButton, nextLabel);
+  drawButton(gNextButton, nextLabel, IconType::Next);
 
   gSettings.fontSizeMode = savedSize;
   finishDisplayRefresh();
@@ -3799,11 +3817,13 @@ void renderDebug(const char* refreshReason = "mode switch") {
   y += 24;
   display.drawString(String("touch debug: ") + (gTouchDebugEnabled ? "on" : "off"), 26, y);
 
-  gFontLabButton = {26, display.height() - 336, display.width() - 52, 52};
-  gTypographyResetButton = {26, display.height() - 278, display.width() - 52, 52};
-  gLayoutDebugButton = {26, display.height() - 220, display.width() - 52, 52};
-  gTouchDebugButton = {26, display.height() - 162, display.width() - 52, 52};
+  gVisualQaButton = {26, display.height() - 360, display.width() - 52, 46};
+  gFontLabButton = {26, display.height() - 308, display.width() - 52, 46};
+  gTypographyResetButton = {26, display.height() - 256, display.width() - 52, 46};
+  gLayoutDebugButton = {26, display.height() - 204, display.width() - 52, 46};
+  gTouchDebugButton = {26, display.height() - 152, display.width() - 52, 46};
   gHomeButton = {26, display.height() - 94, display.width() - 52, 58};
+  drawButton(gVisualQaButton, "Visual QA", IconType::Exam);
   drawButton(gFontLabButton, "Font Lab");
   drawButton(gTypographyResetButton, "Reset typography");
   drawButton(gLayoutDebugButton, "Layout log");
@@ -3814,6 +3834,61 @@ void renderDebug(const char* refreshReason = "mode switch") {
   logTypographySettings("debug screen");
   logPowerAudit("debug screen");
   Serial.println("Debug screen shown.");
+}
+
+void renderVisualQa(const char* refreshReason = "mode switch") {
+  gScreen = Screen::VisualQa;
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  const uint16_t darkGray = metadataTextColor();
+  static constexpr const char* checklist[] = {
+      "Practice first page",
+      "Practice long answer page",
+      "Practice last page",
+      "Drills MCQ screen",
+      "Settings battery area",
+      "Font Lab comparison",
+      "Badge English",
+      "Badge Japanese",
+  };
+
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachTitleFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Visual QA", 28, 26);
+
+  applyCoachMetadataFont();
+  display.setTextColor(darkGray, TFT_WHITE);
+  display.drawString(String("Reader: ") + fontSizeModeName() + " / " + fontStyleModeName(), 30, 84);
+  display.drawString(String("Refresh: ") + refreshModeName() + "  Power: " + powerModeName(), 30, 112);
+  display.drawString(String("Custom font: ") + (gReaderMidVlwAvailable ? "yes" : "no"), 30, 140);
+  display.drawString(kReaderMidVlwPath, 30, 166);
+
+  applySansBoldFont(24);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  int32_t y = 210;
+  display.drawString("Photograph these screens:", 30, y);
+  y += 52;
+  for (size_t index = 0; index < countOf(checklist); ++index) {
+    display.drawRect(34, y + 8, 24, 24, TFT_BLACK);
+    display.drawRect(35, y + 9, 22, 22, TFT_BLACK);
+    display.drawString(checklist[index], 74, y);
+    y += 54;
+  }
+
+  applyCoachMetadataFont();
+  display.setTextColor(darkGray, TFT_WHITE);
+  display.drawString("Use this as the screenshot/photo checklist after flashing.", 30, y + 12);
+
+  gHomeButton = {26, display.height() - 94, display.width() - 52, 58};
+  drawButton(gHomeButton, "Home");
+
+  finishDisplayRefresh();
+  Serial.printf("Visual QA shown: reader=%s style=%s refresh=%s power=%s customFont=%s checklist=%u\n",
+                fontSizeModeName(), fontStyleModeName(), refreshModeName(), powerModeName(),
+                gReaderMidVlwAvailable ? "yes" : "no", static_cast<unsigned>(countOf(checklist)));
 }
 
 void drawFontLabProbeRow(FontStyleMode style, FontSizeMode size, const char* label, const char* sample, int32_t y,
@@ -4127,7 +4202,9 @@ void handleTouch() {
   }
 
   if (gScreen == Screen::Debug) {
-    if (hitTarget(gFontLabButton, "font lab", tapX, tapY)) {
+    if (hitTarget(gVisualQaButton, "visual qa", tapX, tapY)) {
+      renderVisualQa();
+    } else if (hitTarget(gFontLabButton, "font lab", tapX, tapY)) {
       renderFontLab();
     } else if (hitTarget(gTypographyResetButton, "reset typography", tapX, tapY)) {
       resetTypographyDefaults();
@@ -4145,6 +4222,15 @@ void handleTouch() {
     } else if (gTouchDebugEnabled) {
       markHitTarget("touch debug canvas", tapX, tapY);
       renderDebug();
+    }
+    noteIgnoredIfNoHit(tapX, tapY);
+    return;
+  }
+
+  if (gScreen == Screen::VisualQa) {
+    if (hitTarget(gHomeButton, "home", tapX, tapY)) {
+      Serial.println("entering Home");
+      renderHome();
     }
     noteIgnoredIfNoHit(tapX, tapY);
     return;
