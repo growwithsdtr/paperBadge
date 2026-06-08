@@ -4,6 +4,61 @@ Firmware for a custom PaperBadgePlus e-ink badge on M5Stack PaperS3 / M5PaperS3 
 
 The firmware is intentionally simple and compile-checked in milestones. It does not enable Wi-Fi/Bluetooth features or make cloud calls; power diagnostics use only local M5Unified/ESP32 APIs.
 
+## Current Overview
+
+PaperBadge is also PaperCoach: an offline e-ink interview preparation device for senior AI/Product Manager practice. It boots into a static conference badge and exposes a normal-orientation Home menu with Badge, Practice, Drills, Exam, Glossary, Results, Settings, and Debug.
+
+Current firmware version in source: `v4.7`.
+
+## Quick Commands
+
+```bash
+pio run
+pio run -t upload
+pio device monitor -p /dev/tty.usbmodem1101 -b 115200
+```
+
+Default upload and monitor port: `/dev/tty.usbmodem1101`.
+
+## Current SD Paths
+
+- `/paperbadge/badge.json`: optional badge config.
+- `/paperbadge/badge_en.png`, `/paperbadge/badge_ja.png`: optional full badge image overrides.
+- `/paperbadge/profile_photo.png`, `/paperbadge/qr.png`: optional zoom assets.
+- `/papercoach/decks/interview_cards.json`: optional card deck override.
+- `/papercoach/glossary.json`: optional glossary override.
+- `/papercoach/debug/render_trace.txt`: render trace output.
+- `/papercoach/debug/embedded_deck_dump.md`: on-device deck text export.
+- `/papercoach/progress/session_results.json`: SD-backed drill/exam session results.
+
+## PaperCoach Modes
+
+- Practice: choose Must cards, All cards, Continue last card, or Help/Legend; read cards with content taps for page turns and footer arrows for previous/next card.
+- Drills: answer MCQ-style weak answer, metric precision, framework, and follow-up drills; question and choices render together when they fit.
+- Exam: run a 5- or 10-question mixed exam with no immediate feedback; summary appears at the end.
+- Glossary: category grid for AI/RAG, Evals, Metrics, Product, and Interview terms.
+- Results: session total, accuracy, category bars, weakest areas, recent misses, and recommended next practice.
+- Debug: render trace export, deck export, visual QA, font lab, and power audit.
+
+## Badge And Power Behavior
+
+Badge mode is static by default and uses e-ink as intended: render once, hold the image, and avoid redraws unless the user acts. Wi-Fi and Bluetooth are shut off at boot and during power policy refreshes; speaker output is stopped; IMU polling is disabled in `M5.config()`. Settings includes `Badge sleep: Off / Light / Deep experiment`; Light uses short timer-based light sleep after static Badge idle, and Deep experiment is blocked until PaperS3 touch wake is physically verified.
+
+## Known Limitations
+
+- Deep sleep touch wake is not enabled automatically.
+- Results are session-oriented; SD persistence writes the current session only.
+- Glossary search and SRS are not implemented yet.
+- Per-option drill explanations are not embedded yet, so feedback uses a clean placeholder and logs the missing detail.
+- No Wi-Fi, Bluetooth, API, cloud, audio, paid API, or LLM calls are used.
+
+## Product Docs
+
+- [PaperCoach PRD](docs/PAPERCOACH_PRD.md)
+- [QA Guide](docs/QA_GUIDE.md)
+- [Content Schema](docs/CONTENT_SCHEMA.md)
+- [Power Notes](docs/POWER_NOTES.md)
+
 ## Version Status
 
 - v0.1: initialize the e-paper display, draw fallback badge text, mount microSD, check `/paperbadge/badge.json`, show `SD OK` or `SD FAIL`, and beep once on boot if the buzzer is available.
