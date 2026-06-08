@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v4.5";
+constexpr const char* kFirmwareVersion = "v4.6";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -40,6 +40,8 @@ constexpr int32_t kHitboxPadding = 10;
 constexpr size_t kMaxCoachItems = 180;
 constexpr size_t kMaxSdGlossaryTerms = 56;
 constexpr size_t kMaxSessionResults = 160;
+constexpr uint8_t kMaxExamQuestions = 10;
+constexpr size_t kMaxExamPool = 180;
 constexpr uint8_t kMaxOptions = 4;
 constexpr uint8_t kMaxWrappedLines = 18;
 constexpr uint8_t kMaxReaderPageCount = 32;
@@ -442,6 +444,9 @@ Rect gPracticeButton;
 Rect gDrillsButton;
 Rect gExamButton;
 Rect gResultsButton;
+Rect gExamStart10Button;
+Rect gExamStart5Button;
+Rect gExamReviewButton;
 Rect gGlossaryAiButton;
 Rect gGlossaryEvalsButton;
 Rect gGlossaryMetricsButton;
@@ -554,6 +559,19 @@ SessionResult gSessionResults[kMaxSessionResults];
 size_t gSessionResultCount = 0;
 uint32_t gSessionId = 0;
 String gResultsStorageStatus = "RAM session only";
+size_t gExamItemIndices[kMaxExamQuestions];
+uint8_t gExamCount = 0;
+uint8_t gExamPosition = 0;
+uint8_t gExamCorrect = 0;
+bool gExamActive = false;
+bool gExamSummary = false;
+bool gExamHadShortage = false;
+uint8_t gLastExamCount = 0;
+uint8_t gLastExamCorrect = 0;
+bool gLastExamHadShortage = false;
+char gLastExamMissIds[kMaxExamQuestions][32] = {};
+char gLastExamMissCategories[kMaxExamQuestions][28] = {};
+uint8_t gLastExamMissCount = 0;
 
 const char* screenName(Screen screen);
 const char* fontSizeModeName();
@@ -3917,6 +3935,12 @@ bool isOptionDrillScreen(Screen screen, const CoachItemView& item) {
          item.optionCount > 0;
 }
 
+bool isExamEligibleItem(const CoachItemView& item) {
+  return item.optionCount > 0 &&
+         (item.type == CoachItemType::Mcq || item.type == CoachItemType::WeakAnswer ||
+          item.type == CoachItemType::MetricPrecision);
+}
+
 const char* coachDisplayId(const CoachItemView& item) {
   if (item.cardId && item.cardId[0] != '\0') {
     return item.cardId;
@@ -4429,6 +4453,30 @@ void drawCompactDrillHeader(const CoachItemView& item, uint8_t pageNumber, uint8
   }
   if (categoryLine.length() > 0 && categoryLine != drillHeaderLabel(item)) {
     display.drawString(sanitizeCoachText(categoryLine, "drill-category"), kCoachMargin, 52);
+  }
+  if (pageCount > 1) {
+    display.setTextDatum(textdatum_t::top_right);
+    display.drawString(String("page ") + pageNumber + "/" + pageCount, display.width() - kCoachMargin, 22);
+    display.setTextDatum(textdatum_t::top_left);
+  }
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+}
+
+void drawExamHeader(const CoachItemView& item, uint8_t pageNumber, uint8_t pageCount) {
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  String line = sanitizeCoachText(coachDisplayId(item), "exam-id");
+  line += " · ";
+  line += drillHeaderLabel(item);
+  line += " · ";
+  line += static_cast<unsigned>(gExamPosition + 1);
+  line += "/";
+  line += static_cast<unsigned>(gExamCount);
+  display.drawString(line, kCoachMargin, 22);
+  if (item.cardId && item.cardId[0] != '\0') {
+    display.drawString(String("Card ") + item.cardId, kCoachMargin, 52);
   }
   if (pageCount > 1) {
     display.setTextDatum(textdatum_t::top_right);
@@ -5022,6 +5070,283 @@ void renderPlaceholderScreen(Screen screen, const char* title, const char* body,
 
   finishDisplayRefresh();
   Serial.printf("%s placeholder shown.\n", title);
+}
+
+void renderExamMenu(const char* refreshReason = "mode switch") {
+  gScreen = Screen::Exam;
+  gExamActive = false;
+  gExamSummary = false;
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachTitleFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Exam", 32, 34);
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString("School test mode", 34, 92);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+
+  const int32_t buttonX = 34;
+  const int32_t buttonW = display.width() - 68;
+  const int32_t buttonH = 86;
+  const int32_t gap = 18;
+  int32_t y = 148;
+  gExamStart10Button = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gExamStart5Button = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gExamReviewButton = {buttonX, y, buttonW, buttonH};
+  gHomeButton = {buttonX, display.height() - 110, buttonW, 76};
+
+  drawButton(gExamStart10Button, "Start 10-question mixed exam", IconType::Exam);
+  drawButton(gExamStart5Button, "Start 5-question quick exam", IconType::Exam);
+  drawButton(gExamReviewButton, "Review last exam results", IconType::Results);
+  drawButton(gHomeButton, "", IconType::Home);
+
+  finishDisplayRefresh();
+  Serial.printf("Exam menu shown: lastCount=%u\n", static_cast<unsigned>(gLastExamCount));
+}
+
+void finishExam() {
+  gExamActive = false;
+  gExamSummary = true;
+  gLastExamCount = gExamCount;
+  gLastExamCorrect = gExamCorrect;
+  gLastExamHadShortage = gExamHadShortage;
+  Serial.printf("Exam finished: score=%u/%u shortage=%s misses=%u\n", static_cast<unsigned>(gLastExamCorrect),
+                static_cast<unsigned>(gLastExamCount), gLastExamHadShortage ? "yes" : "no",
+                static_cast<unsigned>(gLastExamMissCount));
+}
+
+void renderExamSummary(const char* refreshReason = "exam summary") {
+  gScreen = Screen::Exam;
+  gExamActive = false;
+  gExamSummary = true;
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachTitleFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Exam Results", 32, 34);
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString(gResultsStorageStatus, 34, 92);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+
+  int32_t y = 136;
+  if (gLastExamCount == 0) {
+    applyCoachContentFont();
+    drawWrappedText("No completed exam yet. Start a quick or mixed exam first.", kCoachMargin, y,
+                    display.width() - kCoachMargin * 2, coachLineHeight(), 4, "exam-empty", 1);
+  } else {
+    applyCoachContentFont();
+    const uint8_t score = resultAccuracyPercent(gLastExamCorrect, gLastExamCount);
+    display.drawString(String("Score: ") + static_cast<unsigned>(gLastExamCorrect) + "/" +
+                           static_cast<unsigned>(gLastExamCount) + " (" + static_cast<unsigned>(score) + "%)",
+                       34, y);
+    y += 56;
+    if (gLastExamHadShortage) {
+      applyCoachMetadataFont();
+      display.drawString("Not enough items; used all available.", 34, y);
+      y += 34;
+    }
+
+    applyCoachMetadataFont();
+    display.drawString("Missed items", 34, y);
+    y += 30;
+    if (gLastExamMissCount == 0) {
+      display.drawString("No misses.", 48, y);
+      y += 30;
+    } else {
+      for (uint8_t index = 0; index < gLastExamMissCount && index < 5; ++index) {
+        display.drawString(String(gLastExamMissIds[index]) + " " + gLastExamMissCategories[index], 48, y);
+        y += 28;
+      }
+    }
+
+    y += 8;
+    display.drawString("Weak categories", 34, y);
+    y += 30;
+    CategoryStat missStats[6];
+    uint8_t missStatCount = 0;
+    for (uint8_t miss = 0; miss < gLastExamMissCount; ++miss) {
+      uint8_t stat = 0;
+      for (; stat < missStatCount; ++stat) {
+        if (strcmp(missStats[stat].name, gLastExamMissCategories[miss]) == 0) {
+          break;
+        }
+      }
+      if (stat == missStatCount && missStatCount < countOf(missStats)) {
+        copyToBuffer(missStats[missStatCount].name, sizeof(missStats[missStatCount].name),
+                     gLastExamMissCategories[miss]);
+        ++missStatCount;
+      }
+      if (stat < missStatCount) {
+        ++missStats[stat].total;
+      }
+    }
+    if (missStatCount == 0) {
+      display.drawString("None.", 48, y);
+      y += 28;
+    } else {
+      for (uint8_t index = 0; index < missStatCount && index < 3; ++index) {
+        display.drawString(String(missStats[index].name) + " misses: " + static_cast<unsigned>(missStats[index].total),
+                           48, y);
+        y += 28;
+      }
+    }
+
+    y += 8;
+    display.drawString("Next", 34, y);
+    y += 30;
+    drawWrappedText(recommendedNextPractice(), 48, y, display.width() - 96, coachTypography().metadataLineHeight, 2,
+                    "exam-recommendation", 1);
+  }
+
+  gHomeButton = {34, display.height() - 110, display.width() - 68, 76};
+  drawButton(gHomeButton, "", IconType::Home);
+  finishDisplayRefresh();
+  Serial.printf("Exam summary shown: score=%u/%u\n", static_cast<unsigned>(gLastExamCorrect),
+                static_cast<unsigned>(gLastExamCount));
+}
+
+void renderExamQuestion(const char* refreshReason = "exam question") {
+  gScreen = Screen::Exam;
+  gExamActive = true;
+  applyAppRotation();
+  prepareCoachContentRefresh(refreshReason);
+
+  auto& display = M5.Display;
+  for (uint8_t option = 0; option < kMaxOptions; ++option) {
+    gOptionButtons[option] = {};
+  }
+
+  if (gExamCount == 0 || gExamPosition >= gExamCount) {
+    finishExam();
+    renderExamSummary();
+    return;
+  }
+
+  gCoachIndex = gExamItemIndices[gExamPosition];
+  const CoachItemView item = coachItemAt(gCoachIndex);
+  const FontSizeMode savedSize = gSettings.fontSizeMode;
+  const FontSizeMode renderSize = coachReaderSizeFor(item);
+  gSettings.fontSizeMode = renderSize;
+  const PracticeLayout layout = practiceLayoutFor(renderSize);
+  applyCoachContentFont();
+  const DrillPagePlan plan = buildDrillPagePlan(item, layout);
+  if (gCoachStage >= plan.totalPages) {
+    gCoachStage = plan.totalPages - 1;
+  }
+  drawExamHeader(item, gCoachStage + 1, plan.totalPages);
+  gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
+
+  if (plan.combinedQuestionOptions) {
+    drawReaderPage(plan.questionPages, 0, layout.contentX, layout.contentY, layout.lineHeight);
+    int32_t y = layout.contentY + plan.questionBlockHeight + 18;
+    const int32_t optionGap = 10;
+    String traceBody = String(item.prompt) + "\n";
+    for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
+      const String label = optionLabelWithLetter(item, option);
+      const int32_t buttonH = optionButtonHeightFor(label, layout.contentW);
+      gOptionButtons[option] = {layout.contentX, y, layout.contentW, buttonH};
+      drawOptionButton(gOptionButtons[option], label);
+      traceBody += "\n";
+      traceBody += label;
+      y += buttonH + optionGap;
+    }
+    ReaderPageSet combinedTrace = buildReaderPages(traceBody, layout.contentW, layout.linesPerPage, "ExamQuestion");
+    recordRenderTrace(item, "ExamQuestion", traceBody, combinedTrace, 0, false);
+  } else if (gCoachStage < plan.questionPages.pageCount) {
+    drawReaderPage(plan.questionPages, gCoachStage, layout.contentX, layout.contentY, layout.lineHeight);
+    if (gCoachStage + 1 == plan.questionPages.pageCount) {
+      applyCoachMetadataFont();
+      display.setTextColor(metadataTextColor(), TFT_WHITE);
+      display.drawString("Choices ->", layout.contentX, layout.footerY - coachTypography().metadataLineHeight - 8);
+      display.setTextColor(TFT_BLACK, TFT_WHITE);
+    }
+    recordRenderTrace(item, "ExamQuestion", item.prompt, plan.questionPages, gCoachStage, true);
+  } else {
+    const uint8_t optionPageIndex = gCoachStage - plan.questionPages.pageCount;
+    const DrillOptionPage& optionPage =
+        plan.optionPages[optionPageIndex < plan.optionPageCount ? optionPageIndex : plan.optionPageCount - 1];
+    int32_t y = layout.contentY;
+    applyCoachMetadataFont();
+    display.setTextColor(metadataTextColor(), TFT_WHITE);
+    TextLayoutResult reminderLayout =
+        drawWrappedText(plan.reminder, layout.contentX, y, layout.contentW, coachTypography().metadataLineHeight, 2,
+                        "exam-question-reminder", 1);
+    y += reminderLayout.height + 12;
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    String traceBody = plan.reminder;
+    const int32_t optionGap = 10;
+    for (uint8_t offset = 0; offset < optionPage.optionCount; ++offset) {
+      const uint8_t option = optionPage.firstOption + offset;
+      if (option >= item.optionCount || option >= kMaxOptions) {
+        continue;
+      }
+      const String label = optionLabelWithLetter(item, option);
+      const int32_t buttonH = optionButtonHeightFor(label, layout.contentW);
+      gOptionButtons[option] = {layout.contentX, y, layout.contentW, buttonH};
+      drawOptionButton(gOptionButtons[option], label);
+      traceBody += "\n";
+      traceBody += label;
+      y += buttonH + optionGap;
+    }
+    ReaderPageSet optionTrace = buildReaderPages(traceBody, layout.contentW, layout.linesPerPage, "ExamOptions");
+    recordRenderTrace(item, "ExamOptions", traceBody, optionTrace, 0, true);
+  }
+
+  drawCenteredHomeFooter();
+  gSettings.fontSizeMode = savedSize;
+  finishDisplayRefresh();
+  Serial.printf("Exam question shown: position=%u/%u item=%s\n", static_cast<unsigned>(gExamPosition + 1),
+                static_cast<unsigned>(gExamCount), coachDisplayId(item));
+}
+
+void startExam(uint8_t desiredCount) {
+  size_t pool[kMaxExamPool];
+  size_t poolCount = 0;
+  for (size_t index = 0; index < gCoachItemCount && poolCount < kMaxExamPool; ++index) {
+    const CoachItemView item = coachItemAt(index);
+    if (isExamEligibleItem(item)) {
+      pool[poolCount++] = index;
+    }
+  }
+
+  for (size_t index = 0; index < poolCount; ++index) {
+    const size_t swapIndex = index + (esp_random() % (poolCount - index));
+    const size_t temp = pool[index];
+    pool[index] = pool[swapIndex];
+    pool[swapIndex] = temp;
+  }
+
+  gExamCount = static_cast<uint8_t>(poolCount < desiredCount ? poolCount : desiredCount);
+  gExamHadShortage = poolCount < desiredCount;
+  for (uint8_t index = 0; index < gExamCount; ++index) {
+    gExamItemIndices[index] = pool[index];
+  }
+  gExamPosition = 0;
+  gExamCorrect = 0;
+  gLastExamMissCount = 0;
+  gCoachStage = 0;
+  gSelectedOption = -1;
+  gExamActive = gExamCount > 0;
+  gExamSummary = gExamCount == 0;
+  gCoachNeedsCleanEntryRefresh = true;
+  Serial.printf("Exam start: requested=%u actual=%u pool=%u shortage=%s\n", static_cast<unsigned>(desiredCount),
+                static_cast<unsigned>(gExamCount), static_cast<unsigned>(poolCount), gExamHadShortage ? "yes" : "no");
+  if (gExamCount == 0) {
+    gLastExamCount = 0;
+    renderExamSummary();
+    return;
+  }
+  renderExamQuestion("exam start");
 }
 
 void drawResultBar(int32_t x, int32_t y, int32_t w, int32_t h, uint8_t percent) {
@@ -5891,7 +6216,83 @@ void handleTouch() {
     return;
   }
 
-  if (gScreen == Screen::Exam || gScreen == Screen::Results) {
+  if (gScreen == Screen::Exam) {
+    if (hitTarget(gHomeButton, "home", tapX, tapY)) {
+      Serial.println("entering Home");
+      renderHome();
+      noteIgnoredIfNoHit(tapX, tapY);
+      return;
+    }
+    if (!gExamActive && !gExamSummary) {
+      if (hitTarget(gExamStart10Button, "exam 10", tapX, tapY)) {
+        startExam(10);
+      } else if (hitTarget(gExamStart5Button, "exam 5", tapX, tapY)) {
+        startExam(5);
+      } else if (hitTarget(gExamReviewButton, "exam review", tapX, tapY)) {
+        renderExamSummary("exam review");
+      }
+      noteIgnoredIfNoHit(tapX, tapY);
+      return;
+    }
+    if (gExamSummary) {
+      noteIgnoredIfNoHit(tapX, tapY);
+      return;
+    }
+    if (gExamActive && gExamCount > 0 && gExamPosition < gExamCount) {
+      const CoachItemView item = coachItemAt(gExamItemIndices[gExamPosition]);
+      for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
+        const String optionTarget = String("exam option ") + static_cast<char>('A' + option);
+        if (hitTarget(gOptionButtons[option], optionTarget.c_str(), tapX, tapY)) {
+          recordDrillAnswer(item, option);
+          if (option == item.correctIndex) {
+            ++gExamCorrect;
+          } else if (gLastExamMissCount < kMaxExamQuestions) {
+            copyToBuffer(gLastExamMissIds[gLastExamMissCount], sizeof(gLastExamMissIds[gLastExamMissCount]), item.id);
+            copyToBuffer(gLastExamMissCategories[gLastExamMissCount],
+                         sizeof(gLastExamMissCategories[gLastExamMissCount]), drillHeaderLabel(item));
+            ++gLastExamMissCount;
+          }
+          ++gExamPosition;
+          gCoachStage = 0;
+          if (gExamPosition >= gExamCount) {
+            finishExam();
+            renderExamSummary();
+          } else {
+            renderExamQuestion("exam next question");
+          }
+          return;
+        }
+      }
+      if (gReaderContentRect.contains(tapX, tapY)) {
+        const FontSizeMode savedSize = gSettings.fontSizeMode;
+        const FontSizeMode renderSize = coachReaderSizeFor(item);
+        gSettings.fontSizeMode = renderSize;
+        const PracticeLayout layout = practiceLayoutFor(renderSize);
+        applyCoachContentFont();
+        applyCoachButtonFont();
+        const DrillPagePlan plan = buildDrillPagePlan(item, layout);
+        gSettings.fontSizeMode = savedSize;
+        if (tapY < gReaderContentRect.y + gReaderContentRect.h / 2) {
+          markHitTarget("exam previous page", tapX, tapY);
+          if (gCoachStage > 0) {
+            --gCoachStage;
+            renderExamQuestion("exam previous page");
+          }
+        } else {
+          markHitTarget("exam next page", tapX, tapY);
+          if (gCoachStage + 1 < plan.totalPages) {
+            ++gCoachStage;
+            renderExamQuestion("exam next page");
+          }
+        }
+        return;
+      }
+    }
+    noteIgnoredIfNoHit(tapX, tapY);
+    return;
+  }
+
+  if (gScreen == Screen::Results) {
     if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
@@ -6032,7 +6433,7 @@ void handleTouch() {
     } else if (hitTarget(gDrillsButton, "drills", tapX, tapY)) {
       renderDrillsMenu();
     } else if (hitTarget(gExamButton, "exam", tapX, tapY)) {
-      renderPlaceholderScreen(Screen::Exam, "Exam", "10-question readiness test later.");
+      renderExamMenu();
     } else if (hitTarget(gGlossaryButton, "glossary", tapX, tapY)) {
       renderGlossaryMenu();
     } else if (hitTarget(gResultsButton, "results", tapX, tapY)) {
