@@ -15,7 +15,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v2.7";
+constexpr const char* kFirmwareVersion = "v2.8";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -123,7 +123,8 @@ enum class FontSizeMode : uint8_t {
   Medium = 0,
   Large = 1,
   XL = 2,
-  Huge = 3,
+  XXL = 3,
+  Huge = 4,
 };
 
 enum class RefreshMode : uint8_t {
@@ -227,9 +228,9 @@ struct Settings {
   OrientationMode orientationMode = OrientationMode::Strap;
   LanguageMode languageMode = LanguageMode::Manual;
   AutoRotateIntervalMode autoRotateIntervalMode = AutoRotateIntervalMode::Off;
-  FontSizeMode fontSizeMode = FontSizeMode::XL;
-  FontStyleMode fontStyleMode = FontStyleMode::LargeReader;
-  ContrastMode contrastMode = ContrastMode::Dark;
+  FontSizeMode fontSizeMode = FontSizeMode::XXL;
+  FontStyleMode fontStyleMode = FontStyleMode::HighContrast;
+  ContrastMode contrastMode = ContrastMode::Max;
   RefreshMode refreshMode = RefreshMode::Balanced;
   PowerMode powerMode = PowerMode::Normal;
 };
@@ -350,6 +351,7 @@ Rect gContrastButton;
 Rect gFontMediumButton;
 Rect gFontLargeButton;
 Rect gFontXlButton;
+Rect gFontXxlButton;
 Rect gFontHugeButton;
 Rect gHomeButton;
 Rect gNextButton;
@@ -357,6 +359,7 @@ Rect gFilterButton;
 Rect gTouchDebugButton;
 Rect gLayoutDebugButton;
 Rect gFontLabButton;
+Rect gTypographyResetButton;
 Rect gFontLabStyleButton;
 Rect gFontLabSizeButton;
 Rect gFontLabContrastButton;
@@ -761,6 +764,8 @@ const char* fontSizeModeName() {
       return "Medium";
     case FontSizeMode::XL:
       return "XL";
+    case FontSizeMode::XXL:
+      return "XXL";
     case FontSizeMode::Huge:
       return "Huge";
     case FontSizeMode::Large:
@@ -1002,6 +1007,9 @@ void cycleFontSizeMode() {
       gSettings.fontSizeMode = FontSizeMode::XL;
       break;
     case FontSizeMode::XL:
+      gSettings.fontSizeMode = FontSizeMode::XXL;
+      break;
+    case FontSizeMode::XXL:
       gSettings.fontSizeMode = FontSizeMode::Huge;
       break;
     case FontSizeMode::Huge:
@@ -1009,6 +1017,13 @@ void cycleFontSizeMode() {
       gSettings.fontSizeMode = FontSizeMode::Medium;
       break;
   }
+}
+
+void resetTypographyDefaults() {
+  gSettings.fontStyleMode = FontStyleMode::HighContrast;
+  gSettings.fontSizeMode = FontSizeMode::XXL;
+  gSettings.contrastMode = ContrastMode::Max;
+  Serial.println("Typography reset: style=High Contrast size=XXL contrast=Max");
 }
 
 void cycleFontStyleMode() {
@@ -1092,9 +1107,11 @@ void loadSettings() {
   const uint8_t languageModeVersion = gPrefs.getUChar("langModeV", 0);
   const uint8_t badgeLanguage = gPrefs.getUChar("badgeLang", static_cast<uint8_t>(BadgeLanguage::English));
   const uint8_t autoRotateInterval = gPrefs.getUChar("autoInt", static_cast<uint8_t>(AutoRotateIntervalMode::Off));
-  const uint8_t fontSize = gPrefs.getUChar("font", static_cast<uint8_t>(FontSizeMode::XL));
-  const uint8_t fontStyle = gPrefs.getUChar("fontStyle", static_cast<uint8_t>(FontStyleMode::LargeReader));
-  const uint8_t contrast = gPrefs.getUChar("contrast", static_cast<uint8_t>(ContrastMode::Dark));
+  const bool hasFontSetting = gPrefs.isKey("font");
+  const uint8_t fontVersion = gPrefs.getUChar("fontV", 0);
+  const uint8_t fontSize = gPrefs.getUChar("font", static_cast<uint8_t>(FontSizeMode::XXL));
+  const uint8_t fontStyle = gPrefs.getUChar("fontStyle", static_cast<uint8_t>(FontStyleMode::HighContrast));
+  const uint8_t contrast = gPrefs.getUChar("contrast", static_cast<uint8_t>(ContrastMode::Max));
   const bool hasRefreshSetting = gPrefs.isKey("refresh");
   const uint8_t refreshVersion = gPrefs.getUChar("refreshV", 0);
   const uint8_t refreshMode = gPrefs.getUChar("refresh", static_cast<uint8_t>(RefreshMode::Balanced));
@@ -1128,12 +1145,18 @@ void loadSettings() {
     gSettings.autoRotateIntervalMode = AutoRotateIntervalMode::Off;
   }
 
-  if (fontSize == static_cast<uint8_t>(FontSizeMode::Medium)) {
+  if (fontVersion == 0 && hasFontSetting && fontSize == 3) {
+    gSettings.fontSizeMode = FontSizeMode::Huge;
+  } else if (fontSize == static_cast<uint8_t>(FontSizeMode::Medium)) {
     gSettings.fontSizeMode = FontSizeMode::Medium;
   } else if (fontSize == static_cast<uint8_t>(FontSizeMode::XL)) {
     gSettings.fontSizeMode = FontSizeMode::XL;
-  } else if (fontSize == static_cast<uint8_t>(FontSizeMode::Huge)) {
+  } else if (fontVersion > 0 && fontSize == static_cast<uint8_t>(FontSizeMode::XXL)) {
+    gSettings.fontSizeMode = FontSizeMode::XXL;
+  } else if (fontVersion > 0 && fontSize == static_cast<uint8_t>(FontSizeMode::Huge)) {
     gSettings.fontSizeMode = FontSizeMode::Huge;
+  } else if (!hasFontSetting) {
+    gSettings.fontSizeMode = FontSizeMode::XXL;
   } else {
     gSettings.fontSizeMode = FontSizeMode::Large;
   }
@@ -1191,6 +1214,7 @@ void saveSettings() {
   gPrefs.putUChar("badgeLang", static_cast<uint8_t>(gBadgeLanguage));
   gPrefs.putUChar("autoInt", static_cast<uint8_t>(gSettings.autoRotateIntervalMode));
   gPrefs.putUChar("font", static_cast<uint8_t>(gSettings.fontSizeMode));
+  gPrefs.putUChar("fontV", 1);
   gPrefs.putUChar("fontStyle", static_cast<uint8_t>(gSettings.fontStyleMode));
   gPrefs.putUChar("contrast", static_cast<uint8_t>(gSettings.contrastMode));
   gPrefs.putUChar("refresh", static_cast<uint8_t>(gSettings.refreshMode));
@@ -1987,7 +2011,7 @@ CoachTypography coachTypography() {
     case FontSizeMode::Medium:
       type.bodyPx = 24;
       type.buttonPx = 24;
-      type.bodyLineHeight = 34;
+      type.bodyLineHeight = 32;
       type.buttonHeight = 76;
       type.promptLines = 9;
       type.answerLines = 7;
@@ -1997,17 +2021,27 @@ CoachTypography coachTypography() {
     case FontSizeMode::Huge:
       type.bodyPx = 36;
       type.buttonPx = 32;
-      type.bodyLineHeight = 54;
+      type.bodyLineHeight = 48;
       type.buttonHeight = 100;
       type.promptLines = 5;
       type.answerLines = 4;
       type.rubricLines = 3;
       type.charsPerPage = 230;
       break;
+    case FontSizeMode::XXL:
+      type.bodyPx = 34;
+      type.buttonPx = 30;
+      type.bodyLineHeight = 44;
+      type.buttonHeight = 94;
+      type.promptLines = 6;
+      type.answerLines = 5;
+      type.rubricLines = 3;
+      type.charsPerPage = 280;
+      break;
     case FontSizeMode::XL:
       type.bodyPx = 32;
       type.buttonPx = 28;
-      type.bodyLineHeight = 46;
+      type.bodyLineHeight = 42;
       type.buttonHeight = 90;
       type.promptLines = 6;
       type.answerLines = 5;
@@ -2018,7 +2052,7 @@ CoachTypography coachTypography() {
     default:
       type.bodyPx = 28;
       type.buttonPx = 24;
-      type.bodyLineHeight = 40;
+      type.bodyLineHeight = 36;
       type.buttonHeight = 82;
       type.promptLines = 8;
       type.answerLines = 6;
@@ -2031,22 +2065,22 @@ CoachTypography coachTypography() {
     type.titlePx += 2;
     type.bodyPx += 2;
     type.buttonPx += 2;
-    type.bodyLineHeight += 8;
+    type.bodyLineHeight += 4;
     type.buttonHeight += 8;
     type.charsPerPage = (type.charsPerPage * 82) / 100;
   } else if (gSettings.fontStyleMode == FontStyleMode::SansBoldLike) {
-    type.bodyLineHeight += 7;
+    type.bodyLineHeight += 3;
     type.buttonHeight += 6;
     type.charsPerPage = (type.charsPerPage * 88) / 100;
   } else if (gSettings.fontStyleMode == FontStyleMode::HighContrast) {
     type.titlePx += 2;
     type.bodyPx += 2;
     type.buttonPx += 2;
-    type.bodyLineHeight += 9;
+    type.bodyLineHeight += 4;
     type.buttonHeight += 10;
     type.charsPerPage = (type.charsPerPage * 78) / 100;
   } else if (gSettings.fontStyleMode == FontStyleMode::DebugMono) {
-    type.bodyLineHeight += 8;
+    type.bodyLineHeight += 5;
     type.buttonHeight += 8;
     type.charsPerPage = (type.charsPerPage * 72) / 100;
   }
@@ -2143,6 +2177,16 @@ void applyCoachFooterFont() {
 
 int32_t coachLineHeight() {
   return coachTypography().bodyLineHeight;
+}
+
+void logTypographySettings(const char* reason) {
+  const CoachTypography type = coachTypography();
+  Serial.printf("Typography: reason=%s style=%s size=%s contrast=%s titlePx=%u bodyPx=%u buttonPx=%u lineHeight=%ld "
+                "buttonHeight=%ld\n",
+                reason && reason[0] != '\0' ? reason : "render", fontStyleModeName(), fontSizeModeName(),
+                contrastModeName(), static_cast<unsigned>(type.titlePx), static_cast<unsigned>(type.bodyPx),
+                static_cast<unsigned>(type.buttonPx), static_cast<long>(type.bodyLineHeight),
+                static_cast<long>(type.buttonHeight));
 }
 
 uint8_t coachPromptLineCount() {
@@ -2327,6 +2371,7 @@ TextLayoutResult drawWrappedText(const String& text, int32_t x, int32_t y, int32
 void drawCoachChrome(const char* title) {
   auto& display = M5.Display;
   const CoachTypography type = coachTypography();
+  logTypographySettings("practice screen");
   const uint16_t darkGray = metadataTextColor();
   display.setTextDatum(textdatum_t::top_left);
   applyCoachTitleFont();
@@ -2567,6 +2612,7 @@ void renderCoachScreen() {
 
   auto& display = M5.Display;
   const CoachTypography type = coachTypography();
+  logTypographySettings("coach screen");
   display.setTextDatum(textdatum_t::top_left);
   applyCoachContentFont();
   const int32_t lineHeight = coachLineHeight();
@@ -2839,51 +2885,54 @@ void renderSettings(const char* refreshReason = "mode switch") {
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.drawString("Settings", 32, 34);
   applyCoachMetadataFont();
-  display.drawString("Badge orientation", 36, 98);
+  display.drawString("Badge orientation", 36, 92);
 
   const int32_t width = display.width();
   const int32_t halfW = (width - 88) / 2;
-  gOrientationButton = {36, 136, width - 72, 66};
-  gLanguageAutoButton = {36, 268, width - 72, 58};
-  gLanguageEnglishButton = {36, 334, width - 72, 58};
+  gOrientationButton = {36, 126, width - 72, 60};
+  gLanguageAutoButton = {36, 238, width - 72, 52};
+  gLanguageEnglishButton = {36, 296, width - 72, 52};
   gLanguageJapaneseButton = {};
-  gFontMediumButton = {36, 466, halfW, 58};
-  gFontLargeButton = {52 + halfW, 466, halfW, 58};
-  gFontXlButton = {36, 536, halfW, 58};
-  gFontHugeButton = {52 + halfW, 536, halfW, 58};
-  gFontStyleButton = {36, 634, width - 72, 58};
-  gRefreshModeButton = {36, 734, width - 72, 58};
-  gPowerModeButton = {36, 828, width - 72, 54};
-  gHomeButton = {36, display.height() - 62, 178, 50};
+  gFontMediumButton = {36, 400, halfW, 50};
+  gFontLargeButton = {52 + halfW, 400, halfW, 50};
+  gFontXlButton = {36, 456, halfW, 50};
+  gFontXxlButton = {52 + halfW, 456, halfW, 50};
+  gFontHugeButton = {36, 512, width - 72, 50};
+  gFontStyleButton = {36, 614, width - 72, 54};
+  gRefreshModeButton = {36, 718, width - 72, 54};
+  gPowerModeButton = {36, 822, width - 72, 54};
+  gHomeButton = {36, display.height() - 60, 178, 50};
 
   drawButton(gOrientationButton, gSettings.orientationMode == OrientationMode::Strap ? "Strap 180" : "Handheld 0");
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
-  display.drawString("Badge language", 36, 226);
+  display.drawString("Badge language", 36, 206);
   drawButton(gLanguageAutoButton, String("Mode: ") + languageModeName());
   drawButton(gLanguageEnglishButton, String("Auto interval: ") + autoRotateIntervalName());
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
-  display.drawString("PaperCoach font", 36, 426);
+  display.drawString("PaperCoach font", 36, 370);
   drawButton(gFontMediumButton, gSettings.fontSizeMode == FontSizeMode::Medium ? "Medium *" : "Medium");
   drawButton(gFontLargeButton, gSettings.fontSizeMode == FontSizeMode::Large ? "Large *" : "Large");
   drawButton(gFontXlButton, gSettings.fontSizeMode == FontSizeMode::XL ? "XL *" : "XL");
+  drawButton(gFontXxlButton, gSettings.fontSizeMode == FontSizeMode::XXL ? "XXL *" : "XXL");
   drawButton(gFontHugeButton, gSettings.fontSizeMode == FontSizeMode::Huge ? "Huge *" : "Huge");
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
-  display.drawString("Font style", 36, 604);
+  display.drawString("Font style", 36, 584);
   drawButton(gFontStyleButton, fontStyleModeName());
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
-  display.drawString("Refresh mode", 36, 704);
+  display.drawString("Refresh mode", 36, 688);
   drawButton(gRefreshModeButton, String(refreshModeName()) + " *");
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
-  display.drawString("Power mode", 36, 798);
+  display.drawString("Power mode", 36, 792);
   drawButton(gPowerModeButton, powerModeName());
   drawButton(gHomeButton, "Home");
 
   finishDisplayRefresh();
+  logTypographySettings("settings screen");
   Serial.printf("Settings screen shown: font=%s style=%s contrast=%s refresh=%s power=%s\n", fontSizeModeName(),
                 fontStyleModeName(), contrastModeName(), refreshModeName(), powerModeName());
 }
@@ -2906,14 +2955,6 @@ void renderDebug(const char* refreshReason = "mode switch") {
   display.drawString(String("SD mounted: ") + (gSdMounted ? "yes" : "no"), 26, y);
   y += 26;
   display.drawString(String("badge.json: ") + (gBadgeJsonLoaded ? "loaded" : "missing/fail"), 26, y);
-  y += 26;
-  display.drawString(String("EN SD: ") + (gBadgeEnSd.found ? gBadgeEnSd.path : "missing"), 26, y);
-  y += 26;
-  display.drawString(String("JA SD: ") + (gBadgeJaSd.found ? gBadgeJaSd.path : "missing"), 26, y);
-  y += 26;
-  display.drawString(String("profile: ") + (gProfileSd.found ? gProfileSd.path : "embedded"), 26, y);
-  y += 26;
-  display.drawString(String("QR: ") + (gQrSd.found ? gQrSd.path : "embedded"), 26, y);
   y += 26;
   display.drawString(String("coach deck: ") + gCoachDeckSource + " " + static_cast<unsigned>(gCoachItemCount), 26, y);
   y += 26;
@@ -2952,17 +2993,42 @@ void renderDebug(const char* refreshReason = "mode switch") {
   y += 26;
   display.drawString(String("touch debug: ") + (gTouchDebugEnabled ? "on" : "off"), 26, y);
 
-  gFontLabButton = {26, display.height() - 286, display.width() - 52, 58};
-  gLayoutDebugButton = {26, display.height() - 220, display.width() - 52, 58};
-  gTouchDebugButton = {26, display.height() - 154, display.width() - 52, 58};
-  gHomeButton = {26, display.height() - 88, display.width() - 52, 58};
+  gFontLabButton = {26, display.height() - 336, display.width() - 52, 52};
+  gTypographyResetButton = {26, display.height() - 278, display.width() - 52, 52};
+  gLayoutDebugButton = {26, display.height() - 220, display.width() - 52, 52};
+  gTouchDebugButton = {26, display.height() - 162, display.width() - 52, 52};
+  gHomeButton = {26, display.height() - 94, display.width() - 52, 58};
   drawButton(gFontLabButton, "Font Lab");
+  drawButton(gTypographyResetButton, "Reset typography");
   drawButton(gLayoutDebugButton, "Layout log");
   drawButton(gTouchDebugButton, gTouchDebugEnabled ? "Touch debug off" : "Touch debug on");
   drawButton(gHomeButton, "Home");
 
   finishDisplayRefresh();
+  logTypographySettings("debug screen");
   Serial.println("Debug screen shown.");
+}
+
+void drawFontLabCandidate(FontStyleMode style, FontSizeMode size, const char* label, const char* sample, int32_t y) {
+  auto& display = M5.Display;
+  const FontStyleMode savedStyle = gSettings.fontStyleMode;
+  const FontSizeMode savedSize = gSettings.fontSizeMode;
+
+  applyGothicFont(20);
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.setTextDatum(textdatum_t::top_left);
+  display.drawString(label, kCoachMargin, y);
+
+  gSettings.fontStyleMode = style;
+  gSettings.fontSizeMode = size;
+  const CoachTypography sampleType = coachTypography();
+  applyCoachContentFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  drawWrappedText(sample, kCoachMargin, y + 24, display.width() - kCoachMargin * 2, sampleType.bodyLineHeight, 1,
+                  "font-lab-candidate", 1);
+
+  gSettings.fontStyleMode = savedStyle;
+  gSettings.fontSizeMode = savedSize;
 }
 
 void renderFontLab(const char* refreshReason = "mode switch") {
@@ -2989,32 +3055,35 @@ void renderFontLab(const char* refreshReason = "mode switch") {
   display.drawString(String("Style: ") + fontStyleModeName(), 30, 76);
   display.drawString(String("Size: ") + fontSizeModeName() + "  Contrast: " + contrastModeName(), 30, 104);
 
-  int32_t y = 148;
-  applyCoachTitleFont();
-  display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.drawString("Title sample", kCoachMargin, y);
-  y += type.bodyLineHeight + 6;
-
-  applyCoachContentFont();
-  drawWrappedText(english, kCoachMargin, y, display.width() - kCoachMargin * 2, type.bodyLineHeight,
-                  linesThatFit(type.bodyLineHeight * 2, type.bodyLineHeight, 1, 2), "font-lab-body", 1);
-  y += type.bodyLineHeight * 2 + 8;
+  const char* shortSample = "Define impact without overclaiming causality.";
+  int32_t y = 142;
+  drawFontLabCandidate(FontStyleMode::HighContrast, FontSizeMode::XL, "High Contrast XL", shortSample, y);
+  y += 60;
+  drawFontLabCandidate(FontStyleMode::HighContrast, FontSizeMode::XXL, "High Contrast XXL", shortSample, y);
+  y += 62;
+  drawFontLabCandidate(FontStyleMode::HighContrast, FontSizeMode::Huge, "High Contrast Huge", shortSample, y);
+  y += 64;
+  drawFontLabCandidate(FontStyleMode::SansBoldLike, FontSizeMode::XXL, "Sans Bold-like XXL", shortSample, y);
+  y += 62;
+  drawFontLabCandidate(FontStyleMode::LargeReader, FontSizeMode::XXL, "Large Reader XXL", shortSample, y);
+  y += 62;
 
   applyCoachMetadataFont();
   display.setTextColor(darkGray, TFT_WHITE);
-  display.drawString(metrics, kCoachMargin, y);
-  y += type.metadataLineHeight + 12;
+  drawWrappedText(metrics, kCoachMargin, y, display.width() - kCoachMargin * 2, type.metadataLineHeight, 1,
+                  "font-lab-metrics", 1);
+  y += type.metadataLineHeight + 8;
 
   applyGothicFont(type.bodyPx);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  drawWrappedText(japanese, kCoachMargin, y, display.width() - kCoachMargin * 2, type.bodyLineHeight, 2,
+  drawWrappedText(japanese, kCoachMargin, y, display.width() - kCoachMargin * 2, type.bodyLineHeight, 1,
                   "font-lab-japanese", 1);
-  y += type.bodyLineHeight * 2 + 12;
+  y += type.bodyLineHeight + 6;
 
   applyCoachContentFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   drawWrappedText(paragraph, kCoachMargin, y, display.width() - kCoachMargin * 2, type.bodyLineHeight,
-                  linesThatFit(220, type.bodyLineHeight, 3), "font-lab-paragraph", 1);
+                  linesThatFit(120, type.bodyLineHeight, 2), "font-lab-paragraph", 1);
 
   gFontLabStyleButton = {26, display.height() - 284, display.width() - 52, 58};
   gFontLabSizeButton = {26, display.height() - 218, display.width() - 52, 58};
@@ -3027,6 +3096,7 @@ void renderFontLab(const char* refreshReason = "mode switch") {
   drawButton(gHomeButton, "Home");
 
   finishDisplayRefresh();
+  logTypographySettings("font lab");
   Serial.printf("Font Lab shown: style=%s size=%s contrast=%s fonts=FreeSansBold/FreeMonoBold/JapanGothic\n",
                 fontStyleModeName(), fontSizeModeName(), contrastModeName());
 }
@@ -3194,6 +3264,10 @@ void handleTouch() {
   if (gScreen == Screen::Debug) {
     if (gFontLabButton.contains(tapX, tapY)) {
       renderFontLab();
+    } else if (gTypographyResetButton.contains(tapX, tapY)) {
+      resetTypographyDefaults();
+      saveSettings();
+      renderDebug("typography reset");
     } else if (gLayoutDebugButton.contains(tapX, tapY)) {
       logCurrentLayoutDiagnostics("debug button");
       renderDebug();
@@ -3325,6 +3399,10 @@ void handleTouch() {
       renderSettings();
     } else if (gFontXlButton.contains(tapX, tapY)) {
       gSettings.fontSizeMode = FontSizeMode::XL;
+      saveSettings();
+      renderSettings();
+    } else if (gFontXxlButton.contains(tapX, tapY)) {
+      gSettings.fontSizeMode = FontSizeMode::XXL;
       saveSettings();
       renderSettings();
     } else if (gFontHugeButton.contains(tapX, tapY)) {

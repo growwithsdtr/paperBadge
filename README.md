@@ -33,6 +33,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v2.5: make Badge mode static by default. Badge language defaults to Manual toggle, center tap switches English/Japanese, current language is persisted, and auto-rotate only runs when explicitly selected with a 15s/30s/60s interval.
 - v2.6: add persistent Power Mode settings, turn off unused Wi-Fi/Bluetooth/speaker behavior at boot, silence the boot buzzer, and add conservative idle logging for Battery Saver and Conference Badge modes. Deep/light sleep is documented but deferred until PaperS3 touch wake reliability is physically verified.
 - v2.7: add Fast/Balanced/Clean refresh modes with an adaptive e-paper policy. Badge/image/zoom transitions still get clean refreshes, normal text navigation can use faster updates, and a hard-clean counter forces a clean refresh after 14 non-clean transitions.
+- v2.8: make High Contrast + XXL the recommended typography default for new installs, add an XXL font size between XL and Huge, tighten PaperCoach line spacing, add Debug -> Reset typography, and expand Font Lab with direct candidate comparisons.
 
 ## Hardware
 
@@ -123,7 +124,7 @@ Long-press the center of the Badge screen to enter Home/Menu. If long press is h
 - Badge orientation: `strap` or `handheld`
 - Badge language: `Manual toggle`, `English`, `Japanese`, or `Auto rotate`
 - Badge auto-rotate interval: `Off`, `15s`, `30s`, or `60s`
-- PaperCoach font size: `Medium`, `Large`, `XL`, or `Huge`
+- PaperCoach font size: `Medium`, `Large`, `XL`, `XXL`, or `Huge`
 - Refresh mode: `Fast`, `Balanced`, or `Clean`
 - Power mode: `Normal`, `Battery Saver`, or `Conference Badge`
 
@@ -172,10 +173,10 @@ v2.0 uses real M5GFX `lgfxJapanGothic_*` fonts rather than offset-drawing fake b
 
 - Screen title: `lgfxJapanGothic_32`
 - Metadata/footer: `lgfxJapanGothic_20`
-- Body/question: Medium `24`, Large `28`, XL `32`, Huge `36`
-- Button text: Medium/Large `24`, XL `28`, Huge `32`
+- Body/question: Medium `24`, Large `28`, XL `32`, XXL `34`, Huge `36`
+- Button text: Medium/Large `24`, XL `28`, XXL `30`, Huge `32`
 
-New devices default PaperCoach font size to `XL`; existing NVS settings are preserved. Serial logs include the current screen, PaperCoach font size, refresh mode, and input lock/unlock state.
+New devices default PaperCoach typography to `High Contrast` + `XXL`; existing NVS settings are preserved. Serial logs include the current screen, PaperCoach font size, refresh mode, and input lock/unlock state.
 
 v2.3 adds typography presets:
 
@@ -186,6 +187,8 @@ v2.3 adds typography presets:
 - `Debug Mono`: real `FreeMonoBold`, intended for diagnostics only.
 
 Font Lab is available from Debug and cycles font style, font size, and contrast directly on-device. Japanese sample text uses `lgfxJapanGothic_*` because the FreeSans/FreeMono GFX fonts are ASCII/Latin-oriented.
+
+v2.8 changes the recommended new-device typography default to `High Contrast` + `XXL` + `Max` contrast. Existing Preferences/NVS values are preserved; use `Debug -> Reset typography` to force the new default. PaperCoach line spacing is tighter than v2.7, especially for Practice and Drills. Font Lab now shows direct comparison rows for High Contrast XL, High Contrast XXL, High Contrast Huge, Sans Bold-like XXL, and Large Reader XXL. Serial typography logs include font style, size, body/button pixels, line height, and button height.
 
 v2.1 adds serial layout diagnostics for physical debugging. Each PaperCoach render logs important bounding boxes, computed text height, available height, page count, and overflow warnings. The Debug screen has a `Layout log` action. Screenshot-to-SD is not enabled in this checkpoint because the public M5GFX/PaperS3 display API does not expose a simple, safe BMP/PNG save path for the active e-paper framebuffer in this firmware shape.
 
