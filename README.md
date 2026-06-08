@@ -32,6 +32,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v2.4: add simple monochrome line icons to top-level Home menu items and add a primitive house icon to Home buttons. Icons are drawn with display primitives rather than icon fonts, so text labels remain the fallback.
 - v2.5: make Badge mode static by default. Badge language defaults to Manual toggle, center tap switches English/Japanese, current language is persisted, and auto-rotate only runs when explicitly selected with a 15s/30s/60s interval.
 - v2.6: add persistent Power Mode settings, turn off unused Wi-Fi/Bluetooth/speaker behavior at boot, silence the boot buzzer, and add conservative idle logging for Battery Saver and Conference Badge modes. Deep/light sleep is documented but deferred until PaperS3 touch wake reliability is physically verified.
+- v2.7: add Fast/Balanced/Clean refresh modes with an adaptive e-paper policy. Badge/image/zoom transitions still get clean refreshes, normal text navigation can use faster updates, and a hard-clean counter forces a clean refresh after 14 non-clean transitions.
 
 ## Hardware
 
@@ -123,7 +124,7 @@ Long-press the center of the Badge screen to enter Home/Menu. If long press is h
 - Badge language: `Manual toggle`, `English`, `Japanese`, or `Auto rotate`
 - Badge auto-rotate interval: `Off`, `15s`, `30s`, or `60s`
 - PaperCoach font size: `Medium`, `Large`, `XL`, or `Huge`
-- Refresh mode: `Normal` or `Clean`
+- Refresh mode: `Fast`, `Balanced`, or `Clean`
 - Power mode: `Normal`, `Battery Saver`, or `Conference Badge`
 
 Settings are stored in ESP32 Preferences/NVS and survive SD card removal.
@@ -139,6 +140,16 @@ Power modes:
 - `Conference Badge`: intended for static badge use. After the badge is drawn and left untouched for about 10 seconds, firmware enters a logged idle state and slows the loop delay.
 
 The v2.6 idle state is not ESP32 deep sleep or light sleep. M5Unified exposes deep/light sleep APIs and the ESP32-S3 reports wake causes, but PaperS3 touch wake behavior must be verified on the physical device before enabling sleep that could make the badge difficult to wake. Serial logs report the selected power mode, idle entry/exit, and boot wake reason.
+
+## E-Ink Refresh Policy
+
+v2.7 adds case-by-case refresh control:
+
+- `Fast`: uses fast text refreshes where possible, but still performs clean refreshes for badge, image, language, orientation, and zoom transitions.
+- `Balanced`: default for new installs. It performs clean refreshes on mode changes and image-heavy transitions, then uses faster updates for normal PaperCoach text navigation.
+- `Clean`: prioritizes ghosting reduction and uses clean refreshes more often. Zoom exit still performs an explicit white clean refresh before returning to Badge.
+
+Firmware tracks consecutive non-clean transitions and forces a clean refresh after 14 transitions regardless of mode. Serial logs include refresh mode, refresh reason, actual refresh type, transition count, and whether the hard-clean counter fired.
 
 ## Home/Menu
 

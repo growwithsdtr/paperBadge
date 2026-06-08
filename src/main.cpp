@@ -15,7 +15,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v2.6";
+constexpr const char* kFirmwareVersion = "v2.7";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -25,6 +25,7 @@ constexpr uint32_t kInputDebounceMs = 450;
 constexpr uint32_t kInputCleanRefreshDebounceMs = 850;
 constexpr uint32_t kBatterySaverIdleMs = 180000;
 constexpr uint32_t kConferenceBadgeIdleMs = 10000;
+constexpr uint32_t kHardCleanTransitionLimit = 14;
 constexpr size_t kMaxCoachItems = 96;
 constexpr uint8_t kMaxOptions = 4;
 constexpr uint8_t kMaxWrappedLines = 18;
@@ -126,8 +127,9 @@ enum class FontSizeMode : uint8_t {
 };
 
 enum class RefreshMode : uint8_t {
-  Normal = 0,
-  Clean = 1,
+  Fast = 0,
+  Balanced = 1,
+  Clean = 2,
 };
 
 enum class PowerMode : uint8_t {
@@ -228,7 +230,7 @@ struct Settings {
   FontSizeMode fontSizeMode = FontSizeMode::XL;
   FontStyleMode fontStyleMode = FontStyleMode::LargeReader;
   ContrastMode contrastMode = ContrastMode::Dark;
-  RefreshMode refreshMode = RefreshMode::Normal;
+  RefreshMode refreshMode = RefreshMode::Balanced;
   PowerMode powerMode = PowerMode::Normal;
 };
 
@@ -384,6 +386,7 @@ DrillCategory gDrillCategory = DrillCategory::All;
 bool gInputLocked = false;
 bool gCurrentRefreshClean = false;
 uint32_t gInputUnlockAtMs = 0;
+uint32_t gRefreshTransitionCount = 0;
 uint32_t gLastUserActivityMs = 0;
 bool gIdleModeActive = false;
 uint32_t gIdleEntryCount = 0;
@@ -767,7 +770,68 @@ const char* fontSizeModeName() {
 }
 
 const char* refreshModeName() {
-  return gSettings.refreshMode == RefreshMode::Clean ? "Clean" : "Normal";
+  switch (gSettings.refreshMode) {
+    case RefreshMode::Fast:
+      return "Fast";
+    case RefreshMode::Clean:
+      return "Clean";
+    case RefreshMode::Balanced:
+    default:
+      return "Balanced";
+  }
+}
+
+void cycleRefreshMode() {
+  switch (gSettings.refreshMode) {
+    case RefreshMode::Fast:
+      gSettings.refreshMode = RefreshMode::Balanced;
+      break;
+    case RefreshMode::Balanced:
+      gSettings.refreshMode = RefreshMode::Clean;
+      break;
+    case RefreshMode::Clean:
+    default:
+      gSettings.refreshMode = RefreshMode::Fast;
+      break;
+  }
+}
+
+bool refreshReasonContains(const char* reason, const char* token) {
+  return reason != nullptr && token != nullptr && strstr(reason, token) != nullptr;
+}
+
+bool isImageOrZoomRefresh(const char* reason) {
+  return gScreen == Screen::Badge || gScreen == Screen::QrZoom || gScreen == Screen::PhotoZoom ||
+         refreshReasonContains(reason, "zoom") || refreshReasonContains(reason, "badge") ||
+         refreshReasonContains(reason, "language") || refreshReasonContains(reason, "orientation");
+}
+
+bool shouldUseCleanRefresh(const char* reason, bool highQuality, bool hardCleanTriggered) {
+  if (hardCleanTriggered || gSettings.refreshMode == RefreshMode::Clean) {
+    return true;
+  }
+  if (gSettings.refreshMode == RefreshMode::Balanced) {
+    return highQuality || isImageOrZoomRefresh(reason);
+  }
+  return isImageOrZoomRefresh(reason);
+}
+
+bool chooseRefreshClean(const char* reason, bool highQuality, bool& hardCleanTriggered) {
+  const uint32_t nextTransition = gRefreshTransitionCount + 1;
+  hardCleanTriggered = nextTransition >= kHardCleanTransitionLimit;
+  const bool cleanRefresh = shouldUseCleanRefresh(reason, highQuality, hardCleanTriggered);
+  gRefreshTransitionCount = cleanRefresh ? 0 : nextTransition;
+  Serial.printf("Refresh policy: mode=%s reason=%s highQuality=%s actual=%s transitionCount=%u hardClean=%s\n",
+                refreshModeName(), reason && reason[0] != '\0' ? reason : "render", highQuality ? "yes" : "no",
+                cleanRefresh ? "Clean" : "Fast", static_cast<unsigned>(gRefreshTransitionCount),
+                hardCleanTriggered ? "yes" : "no");
+  return cleanRefresh;
+}
+
+void noteForcedCleanRefresh(const char* reason) {
+  gRefreshTransitionCount = 0;
+  Serial.printf("Refresh policy: mode=%s reason=%s highQuality=yes actual=Clean transitionCount=0 hardClean=no\n",
+                refreshModeName(), reason && reason[0] != '\0' ? reason : "forced clean");
 }
 
 const char* powerModeName() {
@@ -1031,7 +1095,9 @@ void loadSettings() {
   const uint8_t fontSize = gPrefs.getUChar("font", static_cast<uint8_t>(FontSizeMode::XL));
   const uint8_t fontStyle = gPrefs.getUChar("fontStyle", static_cast<uint8_t>(FontStyleMode::LargeReader));
   const uint8_t contrast = gPrefs.getUChar("contrast", static_cast<uint8_t>(ContrastMode::Dark));
-  const uint8_t refreshMode = gPrefs.getUChar("refresh", static_cast<uint8_t>(RefreshMode::Normal));
+  const bool hasRefreshSetting = gPrefs.isKey("refresh");
+  const uint8_t refreshVersion = gPrefs.getUChar("refreshV", 0);
+  const uint8_t refreshMode = gPrefs.getUChar("refresh", static_cast<uint8_t>(RefreshMode::Balanced));
   const uint8_t powerMode = gPrefs.getUChar("power", static_cast<uint8_t>(PowerMode::Normal));
   gPrefs.end();
 
@@ -1092,8 +1158,16 @@ void loadSettings() {
     gSettings.contrastMode = ContrastMode::Dark;
   }
 
-  gSettings.refreshMode =
-      refreshMode == static_cast<uint8_t>(RefreshMode::Clean) ? RefreshMode::Clean : RefreshMode::Normal;
+  if (refreshVersion == 0) {
+    gSettings.refreshMode =
+        hasRefreshSetting && refreshMode == 1 ? RefreshMode::Clean : RefreshMode::Balanced;
+  } else if (refreshMode == static_cast<uint8_t>(RefreshMode::Fast)) {
+    gSettings.refreshMode = RefreshMode::Fast;
+  } else if (refreshMode == static_cast<uint8_t>(RefreshMode::Clean)) {
+    gSettings.refreshMode = RefreshMode::Clean;
+  } else {
+    gSettings.refreshMode = RefreshMode::Balanced;
+  }
 
   if (powerMode == static_cast<uint8_t>(PowerMode::BatterySaver)) {
     gSettings.powerMode = PowerMode::BatterySaver;
@@ -1120,6 +1194,7 @@ void saveSettings() {
   gPrefs.putUChar("fontStyle", static_cast<uint8_t>(gSettings.fontStyleMode));
   gPrefs.putUChar("contrast", static_cast<uint8_t>(gSettings.contrastMode));
   gPrefs.putUChar("refresh", static_cast<uint8_t>(gSettings.refreshMode));
+  gPrefs.putUChar("refreshV", 1);
   gPrefs.putUChar("power", static_cast<uint8_t>(gSettings.powerMode));
   gPrefs.end();
   Serial.printf("Settings saved: orientation=%s badgeLanguage=%s languageMode=%s autoInterval=%s font=%s style=%s "
@@ -1619,7 +1694,7 @@ void lockInputForRefresh(const char* reason, bool cleanRefresh) {
   Serial.printf("UI refresh start: screen=%s font=%s style=%s contrast=%s settingRefresh=%s actualRefresh=%s "
                 "input=locked reason=%s\n",
                 screenName(gScreen), fontSizeModeName(), fontStyleModeName(), contrastModeName(), refreshModeName(),
-                cleanRefresh ? "Clean" : "Normal", reason && reason[0] != '\0' ? reason : "render");
+                cleanRefresh ? "Clean" : "Fast", reason && reason[0] != '\0' ? reason : "render");
 }
 
 void finishDisplayRefresh() {
@@ -1642,9 +1717,10 @@ void updateInputLock() {
 void prepareFullRefresh(const char* reason = nullptr, bool highQuality = false) {
   auto& display = M5.Display;
   if (reason && reason[0] != '\0') {
-    Serial.printf("Full refresh: %s\n", reason);
+    Serial.printf("Refresh requested: %s\n", reason);
   }
-  const bool cleanRefresh = highQuality || gSettings.refreshMode == RefreshMode::Clean;
+  bool hardCleanTriggered = false;
+  const bool cleanRefresh = chooseRefreshClean(reason, highQuality, hardCleanTriggered);
   lockInputForRefresh(reason, cleanRefresh);
   display.setEpdMode(cleanRefresh ? m5gfx::epd_quality : m5gfx::epd_fastest);
   display.fillScreen(TFT_WHITE);
@@ -1654,7 +1730,8 @@ void prepareFullRefresh(const char* reason = nullptr, bool highQuality = false) 
 
 void cleanWhiteRefresh(const char* reason) {
   auto& display = M5.Display;
-  Serial.printf("Full refresh: %s\n", reason);
+  Serial.printf("Clean white refresh: %s\n", reason);
+  noteForcedCleanRefresh(reason);
   lockInputForRefresh(reason, true);
   display.setEpdMode(m5gfx::epd_quality);
   display.fillScreen(TFT_WHITE);
@@ -2799,7 +2876,7 @@ void renderSettings(const char* refreshReason = "mode switch") {
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
   display.drawString("Refresh mode", 36, 704);
-  drawButton(gRefreshModeButton, gSettings.refreshMode == RefreshMode::Clean ? "Clean *" : "Normal *");
+  drawButton(gRefreshModeButton, String(refreshModeName()) + " *");
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
   display.drawString("Power mode", 36, 798);
@@ -2855,6 +2932,10 @@ void renderDebug(const char* refreshReason = "mode switch") {
   display.drawString(String("contrast: ") + contrastModeName(), 26, y);
   y += 26;
   display.drawString(String("refresh mode: ") + refreshModeName(), 26, y);
+  y += 26;
+  display.drawString(String("refresh count: ") + static_cast<unsigned>(gRefreshTransitionCount) + "/" +
+                         static_cast<unsigned>(kHardCleanTransitionLimit),
+                     26, y);
   y += 26;
   display.drawString(String("power mode: ") + powerModeName(), 26, y);
   y += 26;
@@ -3255,7 +3336,7 @@ void handleTouch() {
       saveSettings();
       renderSettings("font style switch");
     } else if (gRefreshModeButton.contains(tapX, tapY)) {
-      gSettings.refreshMode = gSettings.refreshMode == RefreshMode::Clean ? RefreshMode::Normal : RefreshMode::Clean;
+      cycleRefreshMode();
       saveSettings();
       renderSettings("refresh mode switch");
     } else if (gPowerModeButton.contains(tapX, tapY)) {
