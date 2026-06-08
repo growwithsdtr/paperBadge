@@ -26,6 +26,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v1.8: make Interview Practice useful with real deck cards, question/spoken/anchor/watch pages, long-answer pagination, All vs Must-master filter, left/right page zones, and PaperCoach font-size support.
 - v1.9: add objective PaperCoach drills generated offline from the real deck: Blitz Quiz MCQs, Weak Answer Detector options, Metric Precision phrasing drills, and Hostile Follow-up prompts. The embedded fallback includes 149 drills.
 - v2.0: add a PaperCoach typography/layout foundation for physical readability using M5GFX Gothic fonts, default new installs to XL PaperCoach text, add larger touch targets, persist Normal/Clean refresh mode, and lock touch input during e-ink refresh/debounce windows.
+- v2.1: add reusable text wrapping and layout diagnostics, wrap MCQ option buttons inside their bounds, grow option buttons for multi-line labels, split drill result/explanation onto a separate page, shorten Metric Precision option labels, and log vertical budget/overflow warnings over Serial.
 
 ## Hardware
 
@@ -147,6 +148,8 @@ v2.0 uses real M5GFX `lgfxJapanGothic_*` fonts rather than offset-drawing fake b
 - Button text: Medium/Large `24`, XL `28`, Huge `32`
 
 New devices default PaperCoach font size to `XL`; existing NVS settings are preserved. Serial logs include the current screen, PaperCoach font size, refresh mode, and input lock/unlock state.
+
+v2.1 adds serial layout diagnostics for physical debugging. Each PaperCoach render logs important bounding boxes, computed text height, available height, page count, and overflow warnings. The Debug screen has a `Layout log` action. Screenshot-to-SD is not enabled in this checkpoint because the public M5GFX/PaperS3 display API does not expose a simple, safe BMP/PNG save path for the active e-paper framebuffer in this firmware shape.
 
 ## PaperCoach Decks
 

@@ -12,7 +12,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v2.0";
+constexpr const char* kFirmwareVersion = "v2.1";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -22,6 +22,9 @@ constexpr uint32_t kInputDebounceMs = 450;
 constexpr uint32_t kInputCleanRefreshDebounceMs = 850;
 constexpr size_t kMaxCoachItems = 96;
 constexpr uint8_t kMaxOptions = 4;
+constexpr uint8_t kMaxWrappedLines = 18;
+constexpr int32_t kCoachMargin = 34;
+constexpr int32_t kCoachHeaderBottom = 132;
 
 constexpr const char* kBadgeEnCandidates[] = {
     "/paperbadge/badge_en.png",
@@ -181,6 +184,12 @@ struct CoachTypography {
   size_t charsPerPage = 320;
 };
 
+struct TextLayoutResult {
+  uint8_t lineCount = 0;
+  int32_t height = 0;
+  bool overflow = false;
+};
+
 struct CoachItem {
   CoachItemType type = CoachItemType::Qa;
   String id;
@@ -267,6 +276,7 @@ Rect gHomeButton;
 Rect gNextButton;
 Rect gFilterButton;
 Rect gTouchDebugButton;
+Rect gLayoutDebugButton;
 Rect gOptionButtons[kMaxOptions];
 bool gSdMounted = false;
 bool gBadgeJsonLoaded = false;
@@ -300,6 +310,12 @@ const char* screenName(Screen screen);
 const char* fontSizeModeName();
 const char* refreshModeName();
 void applyCoachButtonFont();
+CoachTypography coachTypography();
+TextLayoutResult wrapTextToLines(const String& text, int32_t width, int32_t lineHeight, uint8_t maxLines,
+                                 String* lines);
+void logLayoutBox(const char* field, const Rect& box, int32_t usedHeight, uint8_t pageCount, bool overflow);
+int32_t coachFooterTop();
+void logCurrentLayoutDiagnostics(const char* reason);
 
 struct EmbeddedCoachItem {
   CoachItemType type;
@@ -1262,10 +1278,22 @@ void renderBadge(bool highQualityRefresh = false, const char* refreshReason = nu
 void drawButton(const Rect& rect, const char* label) {
   auto& display = M5.Display;
   display.drawRoundRect(rect.x, rect.y, rect.w, rect.h, 8, TFT_BLACK);
-  display.setTextDatum(textdatum_t::middle_center);
   applyCoachButtonFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.drawString(label, rect.x + rect.w / 2, rect.y + rect.h / 2);
+  display.setTextDatum(textdatum_t::top_left);
+
+  const int32_t innerX = rect.x + 12;
+  const int32_t innerW = rect.w - 24;
+  const int32_t lineHeight = static_cast<int32_t>(coachTypography().buttonPx) + 8;
+  String lines[2];
+  TextLayoutResult result = wrapTextToLines(label ? String(label) : String(""), innerW, lineHeight, 2, lines);
+  const int32_t centeredOffset = (rect.h - result.height) / 2;
+  const int32_t textY = rect.y + (centeredOffset > 6 ? centeredOffset : 6);
+  for (uint8_t line = 0; line < result.lineCount; ++line) {
+    const int32_t textW = display.textWidth(lines[line]);
+    display.drawString(lines[line], rect.x + (rect.w - textW) / 2, textY + line * lineHeight);
+  }
+  logLayoutBox("button", Rect(innerX, rect.y + 4, innerW, rect.h - 8), result.height, 1, result.overflow);
 }
 
 void drawButton(const Rect& rect, const String& label) {
@@ -1423,6 +1451,21 @@ uint8_t coachRubricLineCount() {
   return coachTypography().rubricLines;
 }
 
+uint8_t linesThatFit(int32_t availableHeight, int32_t lineHeight, uint8_t minLines = 1,
+                     uint8_t maxLines = kMaxWrappedLines) {
+  if (lineHeight <= 0) {
+    return minLines;
+  }
+  int32_t lines = availableHeight / lineHeight;
+  if (lines < minLines) {
+    lines = minLines;
+  }
+  if (lines > maxLines) {
+    lines = maxLines;
+  }
+  return static_cast<uint8_t>(lines);
+}
+
 bool isBottomLeftTap(int32_t x, int32_t y) {
   return x < M5.Display.width() / 3 && y > (M5.Display.height() * 2) / 3;
 }
@@ -1447,15 +1490,51 @@ bool recordBottomLeftTripleTap(int32_t x, int32_t y) {
   return false;
 }
 
-void drawWrappedText(const String& text, int32_t x, int32_t y, int32_t width, int32_t lineHeight, uint8_t maxLines) {
+bool appendWrappedLine(String* lines, uint8_t& lineCount, uint8_t maxLines, const String& line) {
+  if (line.length() == 0) {
+    return false;
+  }
+  if (lineCount >= maxLines) {
+    return true;
+  }
+  lines[lineCount++] = line;
+  return false;
+}
+
+bool appendWrappedWord(String* lines, uint8_t& lineCount, uint8_t maxLines, const String& word, int32_t width) {
   auto& display = M5.Display;
+  if (display.textWidth(word) <= width) {
+    return appendWrappedLine(lines, lineCount, maxLines, word);
+  }
+
+  size_t start = 0;
+  while (start < word.length()) {
+    size_t end = start + 1;
+    while (end <= word.length() && display.textWidth(word.substring(start, end)) <= width) {
+      ++end;
+    }
+    if (end > start + 1) {
+      --end;
+    }
+    if (appendWrappedLine(lines, lineCount, maxLines, word.substring(start, end))) {
+      return true;
+    }
+    start = end;
+  }
+  return false;
+}
+
+TextLayoutResult wrapTextToLines(const String& text, int32_t width, int32_t lineHeight, uint8_t maxLines,
+                                 String* lines) {
+  auto& display = M5.Display;
+  TextLayoutResult result;
   String line;
   String word;
-  uint8_t lines = 0;
 
   for (size_t index = 0; index <= text.length(); ++index) {
     const char ch = index < text.length() ? text[index] : ' ';
-    if (ch != ' ' && ch != '\n') {
+    const bool isBreak = ch == ' ' || ch == '\n' || ch == '\t';
+    if (!isBreak) {
       word += ch;
       continue;
     }
@@ -1463,31 +1542,73 @@ void drawWrappedText(const String& text, int32_t x, int32_t y, int32_t width, in
     if (word.length() > 0) {
       const String candidate = line.length() == 0 ? word : line + " " + word;
       if (line.length() > 0 && display.textWidth(candidate) > width) {
-        display.drawString(line, x, y + lines * lineHeight);
-        ++lines;
-        if (lines >= maxLines) {
-          return;
+        result.overflow = appendWrappedLine(lines, result.lineCount, maxLines, line) || result.overflow;
+        line = "";
+        if (display.textWidth(word) > width) {
+          result.overflow = appendWrappedWord(lines, result.lineCount, maxLines, word, width) || result.overflow;
+        } else {
+          line = word;
         }
-        line = word;
+      } else if (line.length() == 0 && display.textWidth(word) > width) {
+        result.overflow = appendWrappedWord(lines, result.lineCount, maxLines, word, width) || result.overflow;
       } else {
         line = candidate;
       }
       word = "";
     }
 
-    if (ch == '\n' && line.length() > 0) {
-      display.drawString(line, x, y + lines * lineHeight);
-      ++lines;
-      if (lines >= maxLines) {
-        return;
-      }
+    if (ch == '\n') {
+      result.overflow = appendWrappedLine(lines, result.lineCount, maxLines, line) || result.overflow;
       line = "";
     }
   }
 
-  if (line.length() > 0 && lines < maxLines) {
-    display.drawString(line, x, y + lines * lineHeight);
+  result.overflow = appendWrappedLine(lines, result.lineCount, maxLines, line) || result.overflow;
+  result.height = static_cast<int32_t>(result.lineCount) * lineHeight;
+  return result;
+}
+
+void logLayoutBox(const char* field, const Rect& box, int32_t usedHeight, uint8_t pageCount, bool overflow) {
+  Serial.printf("Layout box: screen=%s field=%s font=%s bodyPx=%u box=%ld,%ld,%ld,%ld used=%ld available=%ld "
+                "pageCount=%u overflow=%s\n",
+                screenName(gScreen), field, fontSizeModeName(), coachTypography().bodyPx, static_cast<long>(box.x),
+                static_cast<long>(box.y), static_cast<long>(box.w), static_cast<long>(box.h),
+                static_cast<long>(usedHeight), static_cast<long>(box.h), pageCount, overflow ? "yes" : "no");
+  if (overflow || usedHeight > box.h) {
+    Serial.printf("Overflow warning: screen=%s field=%s computedHeight=%ld availableHeight=%ld\n", screenName(gScreen),
+                  field, static_cast<long>(usedHeight), static_cast<long>(box.h));
   }
+}
+
+void logCurrentLayoutDiagnostics(const char* reason) {
+  auto& display = M5.Display;
+  const CoachTypography type = coachTypography();
+  const int32_t footerTop = coachFooterTop();
+  Serial.printf("Layout diagnostics: reason=%s screen=%s font=%s bodyPx=%u buttonPx=%u refresh=%s size=%dx%d\n",
+                reason && reason[0] != '\0' ? reason : "manual", screenName(gScreen), fontSizeModeName(), type.bodyPx,
+                type.buttonPx, refreshModeName(), display.width(), display.height());
+  logLayoutBox("header", Rect(0, 0, display.width(), kCoachHeaderBottom), kCoachHeaderBottom, 1, false);
+  logLayoutBox("content", Rect(kCoachMargin, kCoachHeaderBottom + 18, display.width() - kCoachMargin * 2,
+                               footerTop - (kCoachHeaderBottom + 18) - 42),
+               0, 1, false);
+  logLayoutBox("footer", Rect(0, footerTop, display.width(), display.height() - footerTop), display.height() - footerTop,
+               1, false);
+  Serial.println("Screenshot-to-SD unavailable: using serial layout diagnostics for this build.");
+}
+
+TextLayoutResult drawWrappedText(const String& text, int32_t x, int32_t y, int32_t width, int32_t lineHeight,
+                                 uint8_t maxLines, const char* field = nullptr, uint8_t pageCount = 1) {
+  auto& display = M5.Display;
+  String lines[kMaxWrappedLines];
+  const uint8_t lineLimit = maxLines > kMaxWrappedLines ? kMaxWrappedLines : maxLines;
+  TextLayoutResult result = wrapTextToLines(text, width, lineHeight, lineLimit, lines);
+  for (uint8_t line = 0; line < result.lineCount; ++line) {
+    display.drawString(lines[line], x, y + line * lineHeight);
+  }
+  if (field != nullptr && field[0] != '\0') {
+    logLayoutBox(field, Rect(x, y, width, lineHeight * lineLimit), result.height, pageCount, result.overflow);
+  }
+  return result;
 }
 
 void drawCoachChrome(const char* title) {
@@ -1507,6 +1628,20 @@ void drawCoachChrome(const char* title) {
   gNextButton = {display.width() - 192, display.height() - type.buttonHeight - 28, 164, type.buttonHeight};
   drawButton(gHomeButton, "Home");
   drawButton(gNextButton, "Next");
+}
+
+int32_t coachFooterTop() {
+  return M5.Display.height() - coachTypography().buttonHeight - 56;
+}
+
+void drawCoachPageNumber(uint8_t currentPage, uint8_t pageCount) {
+  auto& display = M5.Display;
+  const uint16_t darkGray = display.color565(55, 55, 55);
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachFooterFont();
+  display.setTextColor(darkGray, TFT_WHITE);
+  display.drawString(String("Page ") + currentPage + "/" + pageCount, kCoachMargin, coachFooterTop() - 34);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
 }
 
 String coachPromptFor(const CoachItemView& item) {
@@ -1547,6 +1682,33 @@ String coachRubricFor(const CoachItemView& item) {
     rubric += item.watch;
   }
   return rubric;
+}
+
+String coachOptionLabelFor(const CoachItemView& item, uint8_t option) {
+  if (item.type == CoachItemType::MetricPrecision) {
+    switch (option) {
+      case 0:
+        return "Define cohort + period";
+      case 1:
+        return "Claim clean causality";
+      case 2:
+        return "Use biggest number";
+      case 3:
+        return "Skip baseline";
+      default:
+        break;
+    }
+  }
+  return option < item.optionCount ? String(item.options[option]) : String("");
+}
+
+int32_t wrappedButtonHeightFor(const String& label, int32_t buttonWidth) {
+  applyCoachButtonFont();
+  String lines[2];
+  const int32_t lineHeight = static_cast<int32_t>(coachTypography().buttonPx) + 8;
+  TextLayoutResult result = wrapTextToLines(label, buttonWidth - 24, lineHeight, 2, lines);
+  const int32_t desiredHeight = result.height + 24;
+  return desiredHeight > coachTypography().buttonHeight ? desiredHeight : coachTypography().buttonHeight;
 }
 
 size_t interviewCharsPerPage() {
@@ -1620,31 +1782,43 @@ void renderInterviewPracticeScreen() {
   const int32_t lineHeight = coachLineHeight();
   const int32_t bodyY = 162;
   const int32_t bodyW = display.width() - 68;
+  const int32_t footerTop = display.height() - type.buttonHeight - 56;
+  const int32_t contentBottom = footerTop - 46;
 
   if (gCoachStage == 0) {
     display.setTextColor(darkGray, TFT_WHITE);
     display.drawString(String(item.theme) + (item.mustMaster ? "  *" : ""), 34, bodyY);
     display.setTextColor(TFT_BLACK, TFT_WHITE);
-    drawWrappedText(item.title, 34, bodyY + lineHeight + 12, bodyW, lineHeight, coachPromptLineCount());
+    const int32_t questionY = bodyY + lineHeight + 12;
+    const uint8_t questionLines = linesThatFit(contentBottom - questionY - 90, lineHeight, 2);
+    const TextLayoutResult questionLayout =
+        drawWrappedText(item.title, 34, questionY, bodyW, lineHeight, questionLines, "question", stageCount);
     display.setTextColor(darkGray, TFT_WHITE);
-    drawWrappedText(String("Confidence: ") + item.confidence, 34, 650, bodyW, 24, 3);
+    applyCoachMetadataFont();
+    drawWrappedText(String("Confidence: ") + item.confidence, 34, questionY + questionLayout.height + 24, bodyW,
+                    type.metadataLineHeight, 3, "confidence", stageCount);
   } else if (gCoachStage <= spokenPages) {
     const uint8_t spokenPage = gCoachStage - 1;
     display.setTextColor(darkGray, TFT_WHITE);
     display.drawString(String("Spoken answer ") + (spokenPage + 1) + "/" + spokenPages, 34, bodyY);
     display.setTextColor(TFT_BLACK, TFT_WHITE);
+    applyCoachContentFont();
     drawWrappedText(textPageSlice(item.spoken, spokenPage), 34, bodyY + lineHeight + 10, bodyW, lineHeight,
-                    coachPromptLineCount() + 2);
+                    linesThatFit(contentBottom - bodyY - lineHeight - 10, lineHeight, 2), "spoken", stageCount);
   } else if (gCoachStage == spokenPages + 1) {
     display.setTextColor(darkGray, TFT_WHITE);
     display.drawString("Anchor", 34, bodyY);
     display.setTextColor(TFT_BLACK, TFT_WHITE);
-    drawWrappedText(item.anchor, 34, bodyY + lineHeight + 10, bodyW, lineHeight, coachPromptLineCount() + 2);
+    applyCoachContentFont();
+    drawWrappedText(item.anchor, 34, bodyY + lineHeight + 10, bodyW, lineHeight,
+                    linesThatFit(contentBottom - bodyY - lineHeight - 10, lineHeight, 2), "anchor", stageCount);
   } else {
     display.setTextColor(darkGray, TFT_WHITE);
     display.drawString("Watch", 34, bodyY);
     display.setTextColor(TFT_BLACK, TFT_WHITE);
-    drawWrappedText(item.watch, 34, bodyY + lineHeight + 10, bodyW, lineHeight, coachPromptLineCount() + 2);
+    applyCoachContentFont();
+    drawWrappedText(item.watch, 34, bodyY + lineHeight + 10, bodyW, lineHeight,
+                    linesThatFit(contentBottom - bodyY - lineHeight - 10, lineHeight, 2), "watch", stageCount);
   }
 
   display.setTextColor(TFT_BLACK, TFT_WHITE);
@@ -1702,41 +1876,105 @@ void renderCoachScreen() {
                             gScreen == Screen::MetricPrecision) &&
                            item.optionCount > 0;
   if (optionDrill) {
-    drawWrappedText(item.prompt, 34, 124, display.width() - 68, lineHeight, promptLines < 5 ? promptLines : 5);
-    int32_t y = 320;
-    for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
-      gOptionButtons[option] = {34, y, display.width() - 68, type.buttonHeight};
-      String label = String(static_cast<char>('A' + option)) + ". " + item.options[option];
-      if (gSelectedOption >= 0) {
-        if (option == item.correctIndex) {
-          label = String("* ") + label;
-        } else if (option == static_cast<uint8_t>(gSelectedOption)) {
-          label = String("x ") + label;
-        }
-      }
-      drawButton(gOptionButtons[option], label);
-      y += type.buttonHeight + 14;
-    }
+    const uint8_t optionCount = item.optionCount < kMaxOptions ? item.optionCount : kMaxOptions;
+    const int32_t contentX = kCoachMargin;
+    const int32_t contentW = display.width() - kCoachMargin * 2;
+    const int32_t contentY = kCoachHeaderBottom + 18;
+    const int32_t footerTop = coachFooterTop();
+    const int32_t contentH = footerTop - contentY - 42;
+
     if (gSelectedOption >= 0) {
-      display.setTextDatum(textdatum_t::top_left);
+      String result = String("Correct: ") + static_cast<char>('A' + item.correctIndex) + ". " +
+                      coachOptionLabelFor(item, item.correctIndex);
+      if (gSelectedOption != static_cast<int8_t>(item.correctIndex)) {
+        result += "\nYou chose: ";
+        result += static_cast<char>('A' + gSelectedOption);
+        result += ". ";
+        result += coachOptionLabelFor(item, static_cast<uint8_t>(gSelectedOption));
+      }
+      result += "\n";
+      result += item.explanation;
       applyCoachContentFont();
-      drawWrappedText(item.explanation, 34, 682, display.width() - 68, lineHeight, rubricLines);
+      drawWrappedText(result, contentX, contentY, contentW, lineHeight, linesThatFit(contentH, lineHeight, 2),
+                      "explanation", 2);
+      drawCoachPageNumber(2, 2);
+      finishDisplayRefresh();
+      return;
     }
+
+    String optionLabels[kMaxOptions];
+    int32_t optionHeights[kMaxOptions] = {};
+    int32_t optionTotal = 0;
+    const int32_t optionGap = 12;
+    for (uint8_t option = 0; option < optionCount; ++option) {
+      optionLabels[option] = String(static_cast<char>('A' + option)) + ". " + coachOptionLabelFor(item, option);
+      optionHeights[option] = wrappedButtonHeightFor(optionLabels[option], contentW);
+      optionTotal += optionHeights[option];
+    }
+    if (optionCount > 1) {
+      optionTotal += optionGap * (optionCount - 1);
+    }
+
+    const int32_t promptAvailable = contentH - optionTotal - 24;
+    const uint8_t promptMaxLines = linesThatFit(promptAvailable, lineHeight, 2, promptLines < 5 ? promptLines : 5);
+    applyCoachContentFont();
+    const TextLayoutResult promptLayout =
+        drawWrappedText(item.prompt, contentX, contentY, contentW, lineHeight, promptMaxLines, "prompt", 2);
+
+    int32_t y = contentY + promptLayout.height + 22;
+    const int32_t usedHeight = promptLayout.height + 22 + optionTotal;
+    Serial.printf("Layout vertical budget: screen=%s header=%ld prompt=%ld options=%ld footer=%ld total=%ld "
+                  "available=%ld pageCount=2\n",
+                  screenName(gScreen), static_cast<long>(kCoachHeaderBottom), static_cast<long>(promptLayout.height),
+                  static_cast<long>(optionTotal), static_cast<long>(display.height() - footerTop),
+                  static_cast<long>(kCoachHeaderBottom + promptLayout.height + 22 + optionTotal +
+                                    (display.height() - footerTop)),
+                  static_cast<long>(display.height()));
+    logLayoutBox("drill-vertical-budget", Rect(contentX, contentY, contentW, contentH), usedHeight, 2,
+                 usedHeight > contentH);
+    for (uint8_t option = 0; option < optionCount; ++option) {
+      int32_t buttonH = optionHeights[option];
+      if (y + buttonH > footerTop - 8) {
+        buttonH = footerTop - 8 - y;
+      }
+      if (buttonH < 56) {
+        logLayoutBox("option-clipped", Rect(contentX, y, contentW, buttonH), optionHeights[option], 2, true);
+        break;
+      }
+      gOptionButtons[option] = {contentX, y, contentW, buttonH};
+      drawButton(gOptionButtons[option], optionLabels[option]);
+      y += buttonH + optionGap;
+    }
+    drawCoachPageNumber(1, 2);
     finishDisplayRefresh();
     return;
   }
 
-  drawWrappedText(coachPromptFor(item), 34, 132, display.width() - 68, lineHeight, promptLines);
-
-  if (gCoachStage >= 1) {
-    display.drawLine(34, 430, display.width() - 34, 430, TFT_BLACK);
-    drawWrappedText(coachAnswerFor(item), 34, 456, display.width() - 68, lineHeight, answerLines);
+  const bool hasRubric = coachRubricFor(item).length() > 0;
+  const uint8_t pageCount = hasRubric ? 3 : 2;
+  if (gCoachStage >= pageCount) {
+    gCoachStage = pageCount - 1;
+  }
+  String body;
+  const char* field = "prompt";
+  if (gCoachStage == 0) {
+    body = coachPromptFor(item);
+    field = "prompt";
+  } else if (gCoachStage == 1) {
+    body = coachAnswerFor(item);
+    field = item.type == CoachItemType::Glossary ? "definition" : "answer";
+  } else {
+    body = coachRubricFor(item);
+    field = "rubric";
   }
 
-  if (gCoachStage >= 2) {
-    display.drawLine(34, 674, display.width() - 34, 674, TFT_BLACK);
-    drawWrappedText(coachRubricFor(item), 34, 700, display.width() - 68, lineHeight, rubricLines);
-  }
+  const int32_t contentX = kCoachMargin;
+  const int32_t contentY = kCoachHeaderBottom + 18;
+  const int32_t contentW = display.width() - kCoachMargin * 2;
+  const int32_t contentH = coachFooterTop() - contentY - 42;
+  drawWrappedText(body, contentX, contentY, contentW, lineHeight, linesThatFit(contentH, lineHeight, 2), field,
+                  pageCount);
+  drawCoachPageNumber(gCoachStage + 1, pageCount);
 
   finishDisplayRefresh();
   Serial.printf("%s shown: type=%s index=%u stage=%u source=%s\n", coachScreenTitle(gScreen), coachTypeName(item.type),
@@ -1901,8 +2139,10 @@ void renderDebug(const char* refreshReason = "mode switch") {
   y += 26;
   display.drawString(String("touch up: ") + gLastTouchUpX + "," + gLastTouchUpY, 26, y);
 
+  gLayoutDebugButton = {26, display.height() - 246, display.width() - 52, 58};
   gTouchDebugButton = {26, display.height() - 178, display.width() - 52, 58};
   gHomeButton = {26, display.height() - 100, display.width() - 52, 58};
+  drawButton(gLayoutDebugButton, "Layout log");
   drawButton(gTouchDebugButton, gTouchDebugEnabled ? "Touch debug off" : "Touch debug on");
   drawButton(gHomeButton, "Home");
 
@@ -2064,7 +2304,10 @@ void handleTouch() {
   }
 
   if (gScreen == Screen::Debug) {
-    if (gTouchDebugButton.contains(tapX, tapY)) {
+    if (gLayoutDebugButton.contains(tapX, tapY)) {
+      logCurrentLayoutDiagnostics("debug button");
+      renderDebug();
+    } else if (gTouchDebugButton.contains(tapX, tapY)) {
       gTouchDebugEnabled = !gTouchDebugEnabled;
       renderDebug();
     } else if (gHomeButton.contains(tapX, tapY)) {
