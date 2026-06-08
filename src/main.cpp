@@ -8,6 +8,7 @@
 #include <cstring>
 #include <esp32-hal-bt.h>
 #include <esp_sleep.h>
+#include <esp_system.h>
 #include <vector>
 
 #include "embedded_assets.h"
@@ -16,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v4.4";
+constexpr const char* kFirmwareVersion = "v4.5";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -26,6 +27,8 @@ constexpr const char* kReaderVlwPath = "/paperbadge/fonts/reader.vlw";
 constexpr const char* kReaderMidVlwPath = "/paperbadge/fonts/reader_mid.vlw";
 constexpr const char* kRenderTracePath = "/papercoach/debug/render_trace.txt";
 constexpr const char* kEmbeddedDeckDumpPath = "/papercoach/debug/embedded_deck_dump.md";
+constexpr const char* kResultsPath = "/papercoach/progress/session_results.json";
+constexpr const char* kResultsTempPath = "/papercoach/progress/session_results.tmp";
 constexpr uint32_t kDefaultLanguageIntervalSeconds = 15;
 constexpr uint32_t kInputDebounceMs = 250;
 constexpr uint32_t kInputCleanRefreshDebounceMs = 600;
@@ -36,6 +39,7 @@ constexpr uint32_t kHardCleanTransitionLimit = 14;
 constexpr int32_t kHitboxPadding = 10;
 constexpr size_t kMaxCoachItems = 180;
 constexpr size_t kMaxSdGlossaryTerms = 56;
+constexpr size_t kMaxSessionResults = 160;
 constexpr uint8_t kMaxOptions = 4;
 constexpr uint8_t kMaxWrappedLines = 18;
 constexpr uint8_t kMaxReaderPageCount = 32;
@@ -398,6 +402,27 @@ struct CoachItemView {
   uint8_t correctIndex = 0;
 };
 
+struct SessionResult {
+  uint32_t millisAt = 0;
+  uint32_t sessionId = 0;
+  char itemId[32] = {};
+  char cardId[16] = {};
+  char mode[18] = {};
+  char type[22] = {};
+  char category[28] = {};
+  uint8_t selectedOption = 0;
+  uint8_t bestOption = 0;
+  bool correct = false;
+  bool firstAttempt = true;
+  char reader[16] = {};
+};
+
+struct CategoryStat {
+  char name[28] = {};
+  uint16_t total = 0;
+  uint16_t correct = 0;
+};
+
 uint8_t interviewStageCount(const CoachItemView& item);
 PracticeLayout practiceLayoutFor(FontSizeMode renderSize);
 
@@ -525,6 +550,10 @@ String gLastRenderTrace;
 String gLastRenderTraceStatus = "not dumped";
 String gLastDeckExportStatus = "not exported";
 String gLastRefreshReason = "boot";
+SessionResult gSessionResults[kMaxSessionResults];
+size_t gSessionResultCount = 0;
+uint32_t gSessionId = 0;
+String gResultsStorageStatus = "RAM session only";
 
 const char* screenName(Screen screen);
 const char* fontSizeModeName();
@@ -3138,6 +3167,36 @@ bool appendWrappedLine(String* lines, uint8_t& lineCount, uint8_t maxLines, cons
   return false;
 }
 
+void copyToBuffer(char* dest, size_t destSize, const char* source) {
+  if (dest == nullptr || destSize == 0) {
+    return;
+  }
+  const char* safeSource = source != nullptr ? source : "";
+  strncpy(dest, safeSource, destSize - 1);
+  dest[destSize - 1] = '\0';
+}
+
+void printJsonEscaped(File& file, const char* text) {
+  file.print('"');
+  const char* safeText = text != nullptr ? text : "";
+  for (const char* cursor = safeText; *cursor != '\0'; ++cursor) {
+    const char ch = *cursor;
+    if (ch == '"' || ch == '\\') {
+      file.print('\\');
+      file.print(ch);
+    } else if (ch == '\n') {
+      file.print("\\n");
+    } else if (ch == '\r') {
+      file.print("\\r");
+    } else if (ch == '\t') {
+      file.print("\\t");
+    } else {
+      file.print(ch);
+    }
+  }
+  file.print('"');
+}
+
 bool appendWrappedWord(String* lines, uint8_t& lineCount, uint8_t maxLines, const String& word, int32_t width) {
   auto& display = M5.Display;
   if (display.textWidth(word) <= width) {
@@ -4044,6 +4103,196 @@ String selectedOptionExplanationText(const CoachItemView& item) {
   return result;
 }
 
+bool resultHasPriorAttempt(const char* itemId, const char* mode) {
+  for (size_t index = 0; index < gSessionResultCount; ++index) {
+    if (strcmp(gSessionResults[index].itemId, itemId) == 0 && strcmp(gSessionResults[index].mode, mode) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void persistSessionResults() {
+  if (!gSdMounted) {
+    gResultsStorageStatus = "RAM session only";
+    return;
+  }
+
+  SD.mkdir("/papercoach");
+  SD.mkdir("/papercoach/progress");
+  if (SD.exists(kResultsTempPath)) {
+    SD.remove(kResultsTempPath);
+  }
+  File file = SD.open(kResultsTempPath, FILE_WRITE);
+  if (!file) {
+    gResultsStorageStatus = "SD write open failed";
+    Serial.printf("Results persist failed: open temp path=%s\n", kResultsTempPath);
+    return;
+  }
+
+  file.print("{\"schema_version\":1,\"session_id\":");
+  file.print(gSessionId);
+  file.print(",\"result_count\":");
+  file.print(static_cast<unsigned>(gSessionResultCount));
+  file.print(",\"results\":[");
+  for (size_t index = 0; index < gSessionResultCount; ++index) {
+    const SessionResult& result = gSessionResults[index];
+    if (index > 0) {
+      file.print(',');
+    }
+    file.print("{\"millis\":");
+    file.print(result.millisAt);
+    file.print(",\"session_id\":");
+    file.print(result.sessionId);
+    file.print(",\"item_id\":");
+    printJsonEscaped(file, result.itemId);
+    file.print(",\"card_id\":");
+    printJsonEscaped(file, result.cardId);
+    file.print(",\"mode\":");
+    printJsonEscaped(file, result.mode);
+    file.print(",\"type\":");
+    printJsonEscaped(file, result.type);
+    file.print(",\"category\":");
+    printJsonEscaped(file, result.category);
+    file.print(",\"selected_option\":");
+    printJsonEscaped(file, String(static_cast<char>('A' + result.selectedOption)).c_str());
+    file.print(",\"best_option\":");
+    printJsonEscaped(file, String(static_cast<char>('A' + result.bestOption)).c_str());
+    file.print(",\"correct\":");
+    file.print(result.correct ? "true" : "false");
+    file.print(",\"first_attempt\":");
+    file.print(result.firstAttempt ? "true" : "false");
+    file.print(",\"reader\":");
+    printJsonEscaped(file, result.reader);
+    file.print('}');
+  }
+  file.print("]}");
+  file.close();
+
+  if (SD.exists(kResultsPath)) {
+    SD.remove(kResultsPath);
+  }
+  if (!SD.rename(kResultsTempPath, kResultsPath)) {
+    gResultsStorageStatus = "SD rename failed";
+    Serial.printf("Results persist failed: rename %s -> %s\n", kResultsTempPath, kResultsPath);
+    return;
+  }
+  gResultsStorageStatus = "SD-backed session";
+  Serial.printf("Results persisted: path=%s count=%u session=%u\n", kResultsPath,
+                static_cast<unsigned>(gSessionResultCount), static_cast<unsigned>(gSessionId));
+}
+
+void recordDrillAnswer(const CoachItemView& item, uint8_t selectedOption) {
+  const char* mode = screenName(gScreen);
+  const bool firstAttempt = !resultHasPriorAttempt(item.id, mode);
+  if (gSessionResultCount >= kMaxSessionResults) {
+    for (size_t index = 1; index < gSessionResultCount; ++index) {
+      gSessionResults[index - 1] = gSessionResults[index];
+    }
+    gSessionResultCount = kMaxSessionResults - 1;
+    Serial.printf("Results buffer full: dropped oldest max=%u\n", static_cast<unsigned>(kMaxSessionResults));
+  }
+
+  SessionResult& result = gSessionResults[gSessionResultCount++];
+  result.millisAt = millis();
+  result.sessionId = gSessionId;
+  copyToBuffer(result.itemId, sizeof(result.itemId), item.id);
+  copyToBuffer(result.cardId, sizeof(result.cardId), item.cardId);
+  copyToBuffer(result.mode, sizeof(result.mode), mode);
+  copyToBuffer(result.type, sizeof(result.type), coachTypeName(item.type));
+  copyToBuffer(result.category, sizeof(result.category), drillHeaderLabel(item));
+  result.selectedOption = selectedOption;
+  result.bestOption = item.correctIndex;
+  result.correct = selectedOption == item.correctIndex;
+  result.firstAttempt = firstAttempt;
+  copyToBuffer(result.reader, sizeof(result.reader), fontSizeModeName());
+
+  Serial.printf("Result recorded: session=%u item=%s mode=%s category=%s selected=%c best=%c correct=%s first=%s count=%u\n",
+                static_cast<unsigned>(gSessionId), result.itemId, result.mode, result.category,
+                static_cast<char>('A' + result.selectedOption), static_cast<char>('A' + result.bestOption),
+                result.correct ? "true" : "false", result.firstAttempt ? "true" : "false",
+                static_cast<unsigned>(gSessionResultCount));
+  persistSessionResults();
+}
+
+uint16_t resultCorrectCount() {
+  uint16_t correct = 0;
+  for (size_t index = 0; index < gSessionResultCount; ++index) {
+    if (gSessionResults[index].correct) {
+      ++correct;
+    }
+  }
+  return correct;
+}
+
+uint8_t resultAccuracyPercent(uint16_t correct, uint16_t total) {
+  if (total == 0) {
+    return 0;
+  }
+  return static_cast<uint8_t>((static_cast<uint32_t>(correct) * 100U + total / 2U) / total);
+}
+
+uint8_t buildCategoryStats(CategoryStat* stats, uint8_t maxStats) {
+  uint8_t statCount = 0;
+  for (size_t resultIndex = 0; resultIndex < gSessionResultCount; ++resultIndex) {
+    const SessionResult& result = gSessionResults[resultIndex];
+    uint8_t statIndex = 0;
+    for (; statIndex < statCount; ++statIndex) {
+      if (strcmp(stats[statIndex].name, result.category) == 0) {
+        break;
+      }
+    }
+    if (statIndex == statCount) {
+      if (statCount >= maxStats) {
+        continue;
+      }
+      copyToBuffer(stats[statCount].name, sizeof(stats[statCount].name), result.category);
+      ++statCount;
+    }
+    ++stats[statIndex].total;
+    if (result.correct) {
+      ++stats[statIndex].correct;
+    }
+  }
+  return statCount;
+}
+
+bool isMustCardId(const char* cardId) {
+  if (cardId == nullptr || cardId[0] == '\0') {
+    return false;
+  }
+  for (size_t index = 0; index < gCoachCardCount; ++index) {
+    const CoachItemView item = coachItemAt(index);
+    if (item.type == CoachItemType::Qa && item.mustMaster && strcmp(item.cardId, cardId) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+String recommendedNextPractice() {
+  if (gSessionResultCount == 0) {
+    return "Complete a drill or exam to generate results.";
+  }
+
+  CategoryStat stats[8];
+  const uint8_t statCount = buildCategoryStats(stats, countOf(stats));
+  for (uint8_t index = 0; index < statCount; ++index) {
+    const uint8_t accuracy = resultAccuracyPercent(stats[index].correct, stats[index].total);
+    if (stats[index].total > 0 && accuracy < 70) {
+      return String("Review ") + stats[index].name + " drills next.";
+    }
+  }
+
+  for (size_t index = 0; index < gSessionResultCount; ++index) {
+    const SessionResult& result = gSessionResults[index];
+    if (!result.correct && isMustCardId(result.cardId)) {
+      return "Review Must practice cards tied to recent misses.";
+    }
+  }
+  return "Run a mixed drill set to keep coverage broad.";
+}
+
 uint8_t buildCoachReaderStages(const CoachItemView& item, const PracticeLayout& layout, CoachReaderStage* stages,
                                uint8_t maxStages) {
   uint8_t count = 0;
@@ -4773,6 +5022,122 @@ void renderPlaceholderScreen(Screen screen, const char* title, const char* body,
 
   finishDisplayRefresh();
   Serial.printf("%s placeholder shown.\n", title);
+}
+
+void drawResultBar(int32_t x, int32_t y, int32_t w, int32_t h, uint8_t percent) {
+  auto& display = M5.Display;
+  const int32_t fillW = (w - 4) * constrain(static_cast<int32_t>(percent), 0, 100) / 100;
+  display.drawRect(x, y, w, h, TFT_BLACK);
+  if (fillW > 0) {
+    display.fillRect(x + 2, y + 2, fillW, h - 4, TFT_BLACK);
+  }
+}
+
+void renderResultsScreen(const char* refreshReason = "mode switch") {
+  gScreen = Screen::Results;
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachTitleFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Results", 32, 34);
+
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString(gResultsStorageStatus, 34, 92);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+
+  int32_t y = 134;
+  if (gSessionResultCount == 0) {
+    applyCoachContentFont();
+    drawWrappedText("No results yet. Answer Drills or Exam questions to build a session summary.", kCoachMargin, y,
+                    display.width() - kCoachMargin * 2, coachLineHeight(), 5, "results-empty", 1);
+    gHomeButton = {34, display.height() - 110, display.width() - 68, 76};
+    drawButton(gHomeButton, "", IconType::Home);
+    finishDisplayRefresh();
+    Serial.println("Results screen shown: empty state.");
+    return;
+  }
+
+  const uint16_t total = static_cast<uint16_t>(gSessionResultCount);
+  const uint16_t correct = resultCorrectCount();
+  const uint8_t accuracy = resultAccuracyPercent(correct, total);
+  applyCoachContentFont();
+  display.drawString(String("Answered: ") + total, 34, y);
+  display.drawString(String("Correct: ") + accuracy + "%", 282, y);
+  y += 54;
+
+  CategoryStat stats[8];
+  const uint8_t statCount = buildCategoryStats(stats, countOf(stats));
+  applyCoachMetadataFont();
+  display.drawString("By category", 34, y);
+  y += 32;
+  const uint8_t visibleStats = statCount < 4 ? statCount : 4;
+  for (uint8_t index = 0; index < visibleStats; ++index) {
+    const uint8_t statAccuracy = resultAccuracyPercent(stats[index].correct, stats[index].total);
+    display.drawString(String(stats[index].name) + " " + statAccuracy + "%", 34, y);
+    drawResultBar(276, y + 4, 220, 18, statAccuracy);
+    y += 34;
+  }
+
+  y += 8;
+  display.drawString("Weakest areas", 34, y);
+  y += 30;
+  bool pickedStats[8] = {};
+  for (uint8_t rank = 0; rank < 3; ++rank) {
+    int8_t weakestIndex = -1;
+    uint8_t weakestAccuracy = 101;
+    for (uint8_t index = 0; index < statCount; ++index) {
+      if (pickedStats[index] || stats[index].total == 0) {
+        continue;
+      }
+      const uint8_t statAccuracy = resultAccuracyPercent(stats[index].correct, stats[index].total);
+      if (statAccuracy < weakestAccuracy) {
+        weakestAccuracy = statAccuracy;
+        weakestIndex = static_cast<int8_t>(index);
+      }
+    }
+    if (weakestIndex < 0 || weakestIndex >= static_cast<int8_t>(statCount)) {
+      break;
+    }
+    display.drawString(String(rank + 1) + ". " + stats[weakestIndex].name + " " + weakestAccuracy + "%", 48, y);
+    pickedStats[weakestIndex] = true;
+    y += 28;
+  }
+
+  y += 8;
+  display.drawString("Recent misses", 34, y);
+  y += 30;
+  uint8_t shownMisses = 0;
+  for (size_t offset = 0; offset < gSessionResultCount && shownMisses < 3; ++offset) {
+    const size_t index = gSessionResultCount - 1 - offset;
+    const SessionResult& result = gSessionResults[index];
+    if (result.correct) {
+      continue;
+    }
+    String line = String(result.itemId) + " " + result.category + " -> " + static_cast<char>('A' + result.bestOption);
+    drawWrappedText(line, 48, y, display.width() - 96, coachTypography().metadataLineHeight, 1, "recent-miss", 1);
+    y += 28;
+    ++shownMisses;
+  }
+  if (shownMisses == 0) {
+    display.drawString("No misses in this session.", 48, y);
+    y += 28;
+  }
+
+  y += 8;
+  display.drawString("Next", 34, y);
+  y += 30;
+  drawWrappedText(recommendedNextPractice(), 48, y, display.width() - 96, coachTypography().metadataLineHeight, 2,
+                  "recommendation", 1);
+
+  gHomeButton = {34, display.height() - 110, display.width() - 68, 76};
+  drawButton(gHomeButton, "", IconType::Home);
+  finishDisplayRefresh();
+  Serial.printf("Results screen shown: total=%u correct=%u accuracy=%u storage=%s\n", total, correct, accuracy,
+                gResultsStorageStatus.c_str());
 }
 
 void renderSettings(const char* refreshReason = "mode switch") {
@@ -5570,6 +5935,7 @@ void handleTouch() {
       for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
         const String optionTarget = String("option ") + static_cast<char>('A' + option);
         if (hitTarget(gOptionButtons[option], optionTarget.c_str(), tapX, tapY)) {
+          recordDrillAnswer(item, option);
           gSelectedOption = option;
           gCoachStage = 0;
           gCoachNeedsCleanEntryRefresh = true;
@@ -5670,7 +6036,7 @@ void handleTouch() {
     } else if (hitTarget(gGlossaryButton, "glossary", tapX, tapY)) {
       renderGlossaryMenu();
     } else if (hitTarget(gResultsButton, "results", tapX, tapY)) {
-      renderPlaceholderScreen(Screen::Results, "Results", "No session results yet.");
+      renderResultsScreen();
     } else if (hitTarget(gSettingsButton, "settings", tapX, tapY)) {
       renderSettings();
     } else if (hitTarget(gDebugButton, "debug", tapX, tapY)) {
@@ -5715,12 +6081,14 @@ void setup() {
   M5.begin(cfg);
   waitForSerial();
   captureNormalPortraitRotation();
+  gSessionId = static_cast<uint32_t>(ESP.getEfuseMac()) ^ esp_random() ^ millis();
   loadSettings();
   gLastUserActivityMs = millis();
   applyPowerPolicy("boot");
 
   Serial.println();
   Serial.printf("PaperBadge+ %s boot\n", kFirmwareVersion);
+  Serial.printf("PaperCoach session id: %u\n", static_cast<unsigned>(gSessionId));
   const esp_sleep_wakeup_cause_t wakeReason = esp_sleep_get_wakeup_cause();
   Serial.printf("Wake reason: %s (%d)\n", wakeReasonName(wakeReason), static_cast<int>(wakeReason));
   Serial.println("Power sleep policy: deep/light sleep deferred until PaperS3 touch wake is physically verified.");
