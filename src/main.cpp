@@ -15,7 +15,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v2.9";
+constexpr const char* kFirmwareVersion = "v3.0";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -1848,69 +1848,87 @@ void renderBadge(bool highQualityRefresh = false, const char* refreshReason = nu
 
 void drawCheckMark(int32_t x, int32_t y, int32_t size) {
   auto& display = M5.Display;
-  display.drawLine(x, y + size / 2, x + size / 3, y + size - 2, TFT_BLACK);
-  display.drawLine(x + size / 3, y + size - 2, x + size, y, TFT_BLACK);
+  const int32_t t = size >= 28 ? 3 : 2;
+  for (int32_t offset = 0; offset < t; ++offset) {
+    display.drawLine(x, y + size / 2 + offset, x + size / 3, y + size - 2 + offset, TFT_BLACK);
+    display.drawLine(x + size / 3, y + size - 2 + offset, x + size, y + offset, TFT_BLACK);
+  }
+}
+
+void drawThickLine(int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t thickness) {
+  auto& display = M5.Display;
+  const int32_t half = thickness / 2;
+  for (int32_t offset = -half; offset <= half; ++offset) {
+    display.drawLine(x0 + offset, y0, x1 + offset, y1, TFT_BLACK);
+    display.drawLine(x0, y0 + offset, x1, y1 + offset, TFT_BLACK);
+  }
 }
 
 void drawIcon(IconType icon, int32_t x, int32_t y, int32_t size) {
   auto& display = M5.Display;
   const int32_t s = size;
+  const int32_t t = s >= 36 ? 4 : 3;
   switch (icon) {
     case IconType::Home:
-      display.drawLine(x + s / 2, y, x, y + s / 2, TFT_BLACK);
-      display.drawLine(x + s / 2, y, x + s, y + s / 2, TFT_BLACK);
-      display.drawRect(x + s / 5, y + s / 2, (s * 3) / 5, s / 2, TFT_BLACK);
-      display.drawLine(x + s / 2, y + s / 2, x + s / 2, y + s, TFT_BLACK);
+      display.fillTriangle(x + s / 2, y + 1, x + 2, y + s / 2, x + s - 2, y + s / 2, TFT_BLACK);
+      display.fillRect(x + s / 5, y + s / 2, (s * 3) / 5, s / 2 - 2, TFT_BLACK);
+      display.fillRect(x + s / 2 - s / 10, y + (s * 2) / 3, s / 5, s / 3 - 2, TFT_WHITE);
       break;
     case IconType::Badge:
-      display.drawRoundRect(x + 2, y + 4, s - 4, s - 8, 4, TFT_BLACK);
-      display.drawCircle(x + s / 2, y + s / 3, s / 7, TFT_BLACK);
-      display.drawLine(x + s / 4, y + (s * 2) / 3, x + (s * 3) / 4, y + (s * 2) / 3, TFT_BLACK);
-      display.drawLine(x + s / 4, y + (s * 3) / 4, x + (s * 3) / 4, y + (s * 3) / 4, TFT_BLACK);
+      display.drawRoundRect(x + 2, y + 5, s - 4, s - 10, 4, TFT_BLACK);
+      display.drawRoundRect(x + 3, y + 6, s - 6, s - 12, 4, TFT_BLACK);
+      display.fillCircle(x + s / 3, y + s / 2, s / 8, TFT_BLACK);
+      display.fillRect(x + s / 2, y + s / 3, s / 3, t, TFT_BLACK);
+      display.fillRect(x + s / 2, y + s / 2, s / 3, t, TFT_BLACK);
       break;
     case IconType::Practice:
-      display.drawRect(x + 2, y + 5, s / 2 - 2, s - 10, TFT_BLACK);
-      display.drawRect(x + s / 2, y + 5, s / 2 - 2, s - 10, TFT_BLACK);
-      display.drawLine(x + s / 2, y + 5, x + s / 2, y + s - 5, TFT_BLACK);
-      display.drawLine(x + 7, y + 14, x + s / 2 - 7, y + 14, TFT_BLACK);
-      display.drawLine(x + s / 2 + 7, y + 14, x + s - 9, y + 14, TFT_BLACK);
+      display.drawRect(x + 3, y + 6, s / 2 - 3, s - 12, TFT_BLACK);
+      display.drawRect(x + s / 2, y + 6, s / 2 - 4, s - 12, TFT_BLACK);
+      display.fillRect(x + s / 2 - 1, y + 6, 3, s - 12, TFT_BLACK);
+      display.fillRect(x + 8, y + 15, s / 2 - 13, t, TFT_BLACK);
+      display.fillRect(x + s / 2 + 7, y + 15, s / 2 - 14, t, TFT_BLACK);
+      display.fillRect(x + 8, y + 24, s / 2 - 13, t, TFT_BLACK);
       break;
     case IconType::Drills:
-      display.drawLine(x + s / 2, y + 2, x + s / 4, y + s / 2, TFT_BLACK);
-      display.drawLine(x + s / 4, y + s / 2, x + s / 2, y + s / 2, TFT_BLACK);
-      display.drawLine(x + s / 2, y + s / 2, x + s / 3, y + s - 2, TFT_BLACK);
+      display.fillTriangle(x + s / 2, y + 2, x + s / 4, y + s / 2, x + s / 2, y + s / 2, TFT_BLACK);
+      display.fillTriangle(x + s / 2, y + s / 2, x + s / 3, y + s - 2, x + (s * 3) / 4, y + s / 3, TFT_BLACK);
       drawCheckMark(x + s / 2, y + s / 2, s / 2);
       break;
     case IconType::Exam:
-      display.drawRoundRect(x + 5, y + 4, s - 10, s - 8, 4, TFT_BLACK);
-      display.drawRect(x + s / 3, y + 1, s / 3, s / 6, TFT_BLACK);
+      display.drawRoundRect(x + 5, y + 5, s - 10, s - 8, 4, TFT_BLACK);
+      display.drawRoundRect(x + 6, y + 6, s - 12, s - 10, 4, TFT_BLACK);
+      display.fillRect(x + s / 3, y + 2, s / 3, s / 7, TFT_BLACK);
+      display.fillRect(x + s / 4, y + s / 3, s / 2, t, TFT_BLACK);
       drawCheckMark(x + s / 4, y + s / 2, s / 2);
       break;
     case IconType::Glossary:
-      display.drawRect(x + 3, y + 5, s - 12, s - 10, TFT_BLACK);
-      display.drawLine(x + s / 2, y + 5, x + s / 2, y + s - 5, TFT_BLACK);
-      display.drawCircle(x + s - 10, y + s - 10, s / 6, TFT_BLACK);
-      display.drawLine(x + s - 5, y + s - 5, x + s, y + s, TFT_BLACK);
+      display.drawRect(x + 3, y + 6, s - 14, s - 12, TFT_BLACK);
+      display.fillRect(x + s / 2 - 1, y + 6, 3, s - 12, TFT_BLACK);
+      display.fillRect(x + 8, y + 15, s / 3, t, TFT_BLACK);
+      display.drawCircle(x + s - 10, y + s - 10, s / 5, TFT_BLACK);
+      display.drawCircle(x + s - 10, y + s - 10, s / 5 - 1, TFT_BLACK);
+      drawThickLine(x + s - 5, y + s - 5, x + s, y + s, t);
       break;
     case IconType::Results:
       display.drawLine(x + 3, y + s - 4, x + s - 3, y + s - 4, TFT_BLACK);
-      display.fillRect(x + 8, y + s / 2, s / 6, s / 2 - 4, TFT_BLACK);
-      display.fillRect(x + s / 2 - s / 12, y + s / 3, s / 6, (s * 2) / 3 - 4, TFT_BLACK);
-      display.fillRect(x + s - s / 4, y + s / 5, s / 6, (s * 4) / 5 - 4, TFT_BLACK);
+      display.fillRect(x + 8, y + s / 2, s / 5, s / 2 - 4, TFT_BLACK);
+      display.fillRect(x + s / 2 - s / 10, y + s / 3, s / 5, (s * 2) / 3 - 4, TFT_BLACK);
+      display.fillRect(x + s - s / 4, y + s / 5, s / 5, (s * 4) / 5 - 4, TFT_BLACK);
       break;
     case IconType::Settings:
-      display.drawCircle(x + s / 2, y + s / 2, s / 4, TFT_BLACK);
-      display.drawCircle(x + s / 2, y + s / 2, s / 10, TFT_BLACK);
-      display.drawLine(x + s / 2, y + 2, x + s / 2, y + s / 5, TFT_BLACK);
-      display.drawLine(x + s / 2, y + s - 2, x + s / 2, y + (s * 4) / 5, TFT_BLACK);
-      display.drawLine(x + 2, y + s / 2, x + s / 5, y + s / 2, TFT_BLACK);
-      display.drawLine(x + s - 2, y + s / 2, x + (s * 4) / 5, y + s / 2, TFT_BLACK);
+      display.fillCircle(x + s / 2, y + s / 2, s / 4, TFT_BLACK);
+      display.fillCircle(x + s / 2, y + s / 2, s / 10, TFT_WHITE);
+      display.fillRect(x + s / 2 - t / 2, y + 2, t, s / 5, TFT_BLACK);
+      display.fillRect(x + s / 2 - t / 2, y + (s * 4) / 5, t, s / 5 - 2, TFT_BLACK);
+      display.fillRect(x + 2, y + s / 2 - t / 2, s / 5, t, TFT_BLACK);
+      display.fillRect(x + (s * 4) / 5, y + s / 2 - t / 2, s / 5 - 2, t, TFT_BLACK);
       break;
     case IconType::Debug:
-      display.drawLine(x + s / 5, y + (s * 4) / 5, x + (s * 4) / 5, y + s / 5, TFT_BLACK);
-      display.drawCircle(x + (s * 4) / 5, y + s / 5, s / 6, TFT_BLACK);
-      display.drawLine(x + s / 5, y + (s * 4) / 5, x + s / 10, y + s - 2, TFT_BLACK);
-      display.drawLine(x + s / 5, y + (s * 4) / 5, x + s / 3, y + s - 2, TFT_BLACK);
+      drawThickLine(x + s / 5, y + (s * 4) / 5, x + (s * 4) / 5, y + s / 5, t);
+      display.fillCircle(x + (s * 4) / 5, y + s / 5, s / 7, TFT_BLACK);
+      display.fillCircle(x + (s * 4) / 5, y + s / 5, s / 14, TFT_WHITE);
+      drawThickLine(x + s / 5, y + (s * 4) / 5, x + s / 10, y + s - 2, t);
+      drawThickLine(x + s / 5, y + (s * 4) / 5, x + s / 3, y + s - 2, t);
       break;
     case IconType::None:
     default:
@@ -1921,6 +1939,7 @@ void drawIcon(IconType icon, int32_t x, int32_t y, int32_t size) {
 void drawButton(const Rect& rect, const char* label, IconType icon = IconType::None) {
   auto& display = M5.Display;
   display.drawRoundRect(rect.x, rect.y, rect.w, rect.h, 8, TFT_BLACK);
+  display.drawRoundRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 7, TFT_BLACK);
   applyCoachButtonFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.setTextDatum(textdatum_t::top_left);
@@ -1930,25 +1949,41 @@ void drawButton(const Rect& rect, const char* label, IconType icon = IconType::N
     icon = IconType::Home;
   }
   const bool hasIcon = icon != IconType::None;
-  if (hasIcon) {
-    const int32_t iconSize = rect.w < 160 ? 28 : (rect.h > 74 ? 42 : 34);
-    drawIcon(icon, rect.x + (rect.w < 160 ? 12 : 18), rect.y + (rect.h - iconSize) / 2, iconSize);
+  const bool iconOnly = hasIcon && labelText.length() == 0;
+  const int32_t iconSize = rect.w < 160 ? 30 : (rect.h > 74 ? 42 : 34);
+  if (iconOnly) {
+    drawIcon(icon, rect.x + (rect.w - iconSize) / 2, rect.y + (rect.h - iconSize) / 2, iconSize);
+    logLayoutBox("button", Rect(rect.x, rect.y, rect.w, rect.h), iconSize, 1, false);
+    return;
   }
 
-  const int32_t iconTextOffset = rect.w < 160 ? 48 : 72;
-  const int32_t iconReserved = rect.w < 160 ? 56 : 84;
-  const int32_t innerX = rect.x + (hasIcon ? iconTextOffset : 12);
-  const int32_t innerW = rect.w - (hasIcon ? iconReserved : 24);
+  const int32_t iconGap = hasIcon ? (rect.w < 180 ? 12 : 16) : 0;
+  const int32_t maxTextW = rect.w - 28 - (hasIcon ? iconSize + iconGap : 0);
+  const int32_t innerW = maxTextW > 24 ? maxTextW : rect.w - 24;
   const int32_t lineHeight = static_cast<int32_t>(coachTypography().buttonPx) + 8;
   String lines[2];
   TextLayoutResult result = wrapTextToLines(labelText, innerW, lineHeight, 2, lines);
   const int32_t centeredOffset = (rect.h - result.height) / 2;
   const int32_t textY = rect.y + (centeredOffset > 6 ? centeredOffset : 6);
+  int32_t maxLineW = 0;
   for (uint8_t line = 0; line < result.lineCount; ++line) {
     const int32_t textW = display.textWidth(lines[line]);
-    display.drawString(lines[line], innerX + (innerW - textW) / 2, textY + line * lineHeight);
+    if (textW > maxLineW) {
+      maxLineW = textW;
+    }
   }
-  logLayoutBox("button", Rect(innerX, rect.y + 4, innerW, rect.h - 8), result.height, 1, result.overflow);
+
+  const int32_t groupW = maxLineW + (hasIcon ? iconSize + iconGap : 0);
+  const int32_t groupX = rect.x + (rect.w - groupW) / 2;
+  const int32_t innerX = hasIcon ? groupX + iconSize + iconGap : rect.x + (rect.w - maxLineW) / 2;
+  if (hasIcon) {
+    drawIcon(icon, groupX, rect.y + (rect.h - iconSize) / 2, iconSize);
+  }
+  for (uint8_t line = 0; line < result.lineCount; ++line) {
+    const int32_t textW = display.textWidth(lines[line]);
+    display.drawString(lines[line], innerX + (maxLineW - textW) / 2, textY + line * lineHeight);
+  }
+  logLayoutBox("button", Rect(groupX, rect.y + 4, groupW, rect.h - 8), result.height, 1, result.overflow);
 }
 
 void drawButton(const Rect& rect, const String& label, IconType icon = IconType::None) {
@@ -2434,7 +2469,7 @@ void drawCoachChrome(const char* title) {
 
   gHomeButton = {28, display.height() - type.buttonHeight - 28, 164, type.buttonHeight};
   gNextButton = {display.width() - 192, display.height() - type.buttonHeight - 28, 164, type.buttonHeight};
-  drawButton(gHomeButton, "Home");
+  drawButton(gHomeButton, "", IconType::Home);
   drawButton(gNextButton, "Next");
 }
 
@@ -2635,7 +2670,7 @@ void renderInterviewPracticeScreen() {
   gHomeButton = {26, display.height() - type.buttonHeight - 28, 126, type.buttonHeight};
   gFilterButton = {168, display.height() - type.buttonHeight - 28, 158, type.buttonHeight};
   gNextButton = {display.width() - 196, display.height() - type.buttonHeight - 28, 170, type.buttonHeight};
-  drawButton(gHomeButton, "Home");
+  drawButton(gHomeButton, "", IconType::Home);
   drawButton(gFilterButton, gInterviewMustMasterOnly ? "Must *" : "All");
   drawButton(gNextButton, "Next");
 
@@ -2918,7 +2953,7 @@ void renderPlaceholderScreen(Screen screen, const char* title, const char* body,
                  coachTypography().buttonHeight};
   display.setTextColor(darkGray, TFT_WHITE);
   drawCoachPageNumber(1, 1);
-  drawButton(gHomeButton, "Home");
+  drawButton(gHomeButton, "", IconType::Home);
 
   finishDisplayRefresh();
   Serial.printf("%s placeholder shown.\n", title);
