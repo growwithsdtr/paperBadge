@@ -25,6 +25,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v1.7: embed the full 71-card PaperCoach interview deck in firmware as a flash-resident C++ fallback. Runtime first tries SD override `/papercoach/decks/interview_cards.json`; if SD is missing or parsing fails, PaperCoach still has the full embedded deck.
 - v1.8: make Interview Practice useful with real deck cards, question/spoken/anchor/watch pages, long-answer pagination, All vs Must-master filter, left/right page zones, and PaperCoach font-size support.
 - v1.9: add objective PaperCoach drills generated offline from the real deck: Blitz Quiz MCQs, Weak Answer Detector options, Metric Precision phrasing drills, and Hostile Follow-up prompts. The embedded fallback includes 149 drills.
+- v2.0: add a PaperCoach typography/layout foundation for physical readability using M5GFX Gothic fonts, default new installs to XL PaperCoach text, add larger touch targets, persist Normal/Clean refresh mode, and lock touch input during e-ink refresh/debounce windows.
 
 ## Hardware
 
@@ -115,6 +116,7 @@ Long-press the center of the Badge screen to enter Home/Menu. If long press is h
 - Badge orientation: `strap` or `handheld`
 - Badge language: `auto`, `English`, or `Japanese`
 - PaperCoach font size: `Medium`, `Large`, `XL`, or `Huge`
+- Refresh mode: `Normal` or `Clean`
 
 Settings are stored in ESP32 Preferences/NVS and survive SD card removal.
 
@@ -134,6 +136,17 @@ v1.5 Home/Menu entries:
 - Debug
 
 PaperCoach screens are read-only in v1.8. Interview Practice uses the real embedded or SD deck and supports page-based study; there is no progress writing, spaced repetition, RTC scheduling, Wi-Fi, Bluetooth, or AI/API call behavior.
+
+## PaperCoach Typography
+
+v2.0 uses real M5GFX `lgfxJapanGothic_*` fonts rather than offset-drawing fake bold text. Main content is black; metadata is dark gray.
+
+- Screen title: `lgfxJapanGothic_32`
+- Metadata/footer: `lgfxJapanGothic_20`
+- Body/question: Medium `24`, Large `28`, XL `32`, Huge `36`
+- Button text: Medium/Large `24`, XL `28`, Huge `32`
+
+New devices default PaperCoach font size to `XL`; existing NVS settings are preserved. Serial logs include the current screen, PaperCoach font size, refresh mode, and input lock/unlock state.
 
 ## PaperCoach Decks
 
