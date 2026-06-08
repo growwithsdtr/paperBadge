@@ -36,6 +36,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v2.8: make High Contrast + XXL the recommended typography default for new installs, add an XXL font size between XL and Huge, tighten PaperCoach line spacing, add Debug -> Reset typography, and expand Font Lab with direct candidate comparisons.
 - v2.9: improve touch responsiveness by reducing input debounce windows, using padded invisible hitboxes around buttons, logging matched hit targets and ignored-touch reasons, and preventing power idle while touch is active or immediately after interaction.
 - v3.0: polish button alignment and icon affordances. Buttons now center text or icon+label groups vertically and horizontally, compact PaperCoach Home controls are icon-only, and top-level menu icons use stronger primitive-drawn monochrome shapes instead of thin line icons.
+- v3.1: regenerate embedded English/Japanese badge images from one high-contrast 3-line template, remove rendered location/footer text, move the QR upward, and preprocess the portrait offline for sharper 16-level grayscale e-ink output.
 
 ## Hardware
 
@@ -107,6 +108,8 @@ Build embedded fallback assets from the repo sample data:
 ```
 
 The script inspects `sample-data/paperbadge`, chooses the most likely full badge for reporting, detects the profile photo, QR code, and `badge.json`, normalizes generated copies under `generated-assets/embedded`, and writes `src/embedded_assets.h`. It never deletes or overwrites the original sample files. In v1.3 both `badge_en.png` and `badge_ja.png` are rendered from one shared Pillow template so English and Japanese keep identical element positions and contrast hierarchy.
+
+v3.1 keeps that shared template but renders only three text lines on the public badge: name, role, and `0→1 AI, SaaS & FinTech`. Location and footer text remain in `badge.json` for source compatibility but are no longer rendered into the embedded fallback badge. The QR is moved upward, and the profile image is preprocessed offline with autocontrast, mild contrast/sharpening, and 16-level grayscale quantization preview. No runtime photo processing is done on the ESP32.
 
 Current selected repo assets:
 

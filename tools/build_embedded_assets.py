@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 try:
-    from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+    from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 except ImportError as exc:  # pragma: no cover - user-facing setup guard
     raise SystemExit(
         "Pillow is required for bilingual badge generation. Install it in your active Python environment:\n"
@@ -263,6 +263,15 @@ def paste_contained(canvas: Image.Image, source: Image.Image, box: tuple[int, in
     canvas.alpha_composite(image, (x, y))
 
 
+def prepare_profile_grayscale(image: Image.Image) -> Image.Image:
+    """Preview the profile near the PaperS3 16-level grayscale output."""
+    gray = ImageOps.grayscale(image)
+    gray = ImageOps.autocontrast(gray, cutoff=0.8)
+    gray = ImageEnhance.Contrast(gray).enhance(1.22)
+    gray = ImageEnhance.Sharpness(gray).enhance(1.25)
+    return gray.point(lambda value: max(0, min(255, int(round(value / 17) * 17))))
+
+
 def load_badge_json(path: Path | None) -> dict:
     if not path:
         return {}
@@ -293,7 +302,7 @@ def badge_text(badge_json: dict, language: str) -> dict[str, str]:
 def circle_profile(source: ImageInfo, size: int) -> Image.Image:
     with Image.open(source.path) as image:
         crop = ImageOps.fit(image.convert("RGB"), (size, size), method=Image.Resampling.LANCZOS, centering=(0.5, 0.42))
-    crop = ImageOps.grayscale(crop).convert("RGBA")
+    crop = prepare_profile_grayscale(crop).convert("RGBA")
     mask = Image.new("L", (size, size), 0)
     mask_draw = ImageDraw.Draw(mask)
     mask_draw.ellipse((2, 2, size - 3, size - 3), fill=255)
@@ -325,26 +334,22 @@ def generate_shared_badge(
     profile_image = circle_profile(profile, 274)
     canvas.alpha_composite(profile_image, ((SCREEN_SIZE[0] - profile_image.width) // 2, 44))
 
-    line_color = (140, 140, 140)
-    dark_gray = (45, 45, 45)
-    draw.line((66, 356, SCREEN_SIZE[0] - 66, 356), fill=line_color, width=2)
+    line_color = (90, 90, 90)
+    text_black = (0, 0, 0)
+    text_dark = (12, 12, 12)
+    draw.line((62, 366, SCREEN_SIZE[0] - 62, 366), fill=line_color, width=3)
 
-    name_font = fit_font(draw, text["name"], bold_candidates, 46 if is_japanese else 50, 30, 468)
-    title_font = fit_font(draw, text["title"], bold_candidates, 31, 23, 468)
-    subtitle_font = fit_font(draw, text["subtitle"], regular_candidates, 27, 21, 468)
-    location_font = fit_font(draw, text["location"], regular_candidates, 25, 20, 468)
-    footer_font = fit_font(draw, text["footer"], regular_candidates, 24, 19, 468)
+    name_font = fit_font(draw, text["name"], bold_candidates, 50 if is_japanese else 58, 34, 484)
+    title_font = fit_font(draw, text["title"], bold_candidates, 35 if is_japanese else 39, 25, 484)
+    subtitle_font = fit_font(draw, text["subtitle"], bold_candidates, 29 if is_japanese else 31, 22, 484)
 
-    draw_centered(draw, 414, text["name"], name_font, fill=(0, 0, 0))
-    draw_centered(draw, 474, text["title"], title_font, fill=(0, 0, 0))
-    draw_centered(draw, 522, text["subtitle"], subtitle_font, fill=dark_gray)
-    draw_centered(draw, 563, text["location"], location_font, fill=dark_gray)
+    draw_centered(draw, 424, text["name"], name_font, fill=text_black)
+    draw_centered(draw, 488, text["title"], title_font, fill=text_black)
+    draw_centered(draw, 540, text["subtitle"], subtitle_font, fill=text_dark)
 
-    draw.line((66, 604, SCREEN_SIZE[0] - 66, 604), fill=line_color, width=2)
-    qr_ready = prepared_qr(qr, 300)
-    canvas.paste(qr_ready, ((SCREEN_SIZE[0] - qr_ready.width) // 2, 624))
-
-    draw_centered(draw, 946, text["footer"], footer_font, fill=dark_gray)
+    draw.line((62, 584, SCREEN_SIZE[0] - 62, 584), fill=line_color, width=3)
+    qr_ready = prepared_qr(qr, 318)
+    canvas.paste(qr_ready, ((SCREEN_SIZE[0] - qr_ready.width) // 2, 600))
 
     canvas.convert("RGB").save(output, format="PNG", optimize=True)
     info = inspect_image(output)
@@ -359,6 +364,7 @@ def normalize_profile(source: ImageInfo, output: Path) -> GeneratedAsset:
         profile = ImageOps.contain(image.convert("RGB"), (220, 262), Image.Resampling.LANCZOS)
         canvas = Image.new("RGB", (220, 262), (255, 255, 255))
         canvas.paste(profile, ((220 - profile.width) // 2, (262 - profile.height) // 2))
+        canvas = prepare_profile_grayscale(canvas).convert("RGB")
         canvas.save(output, format="PNG", optimize=True)
     info = inspect_image(output)
     assert info is not None
