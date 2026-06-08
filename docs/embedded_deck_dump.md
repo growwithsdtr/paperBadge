@@ -1,9 +1,10 @@
 # PaperCoach Embedded Deck Dump
 
-Generated from `generated/papercoach/interview_cards.json` and `generated/papercoach/drills.json`.
+Generated from `generated/papercoach/interview_cards.json`, `generated/papercoach/drills.json`, and `generated/papercoach/glossary.json`.
 
 Cards: 71
 Drills: 149
+Glossary terms: 44
 
 ## A01 - Card
 Section: Background, Motivation & Fit
@@ -3744,3 +3745,531 @@ Best: A
 
 Explanation:
 baseline cycle time; came from cutting rework and decision latency, not cutting QA
+
+## RAG - Glossary
+Category: AI/RAG
+
+Definition:
+Retrieval-augmented generation: fetching relevant source material before asking a model to answer.
+
+Why it matters:
+Shows you can improve factuality without pretending the model itself knows private data.
+
+Example:
+I would use RAG when answers must be grounded in current hotel policies.
+
+## retrieval - Glossary
+Category: AI/RAG
+
+Definition:
+The step that finds candidate documents, chunks, records, or tool outputs for an AI system.
+
+Why it matters:
+Many AI failures are retrieval failures, so senior PMs should diagnose this layer first.
+
+Example:
+If the answer is wrong, I check whether retrieval brought back the right context.
+
+## embedding - Glossary
+Category: AI/RAG
+
+Definition:
+A numeric representation of text, images, or other data used to compare semantic similarity.
+
+Why it matters:
+Helps explain semantic search, clustering, deduplication, and RAG trade-offs.
+
+Example:
+We embedded support articles so similar questions map to nearby content.
+
+## vector database - Glossary
+Category: AI/RAG
+
+Definition:
+A storage and search system optimized for nearest-neighbor lookup over embeddings.
+
+Why it matters:
+Useful when discussing retrieval scale, latency, freshness, and filtering.
+
+Example:
+The vector database retrieves the closest policy chunks before generation.
+
+## reranking - Glossary
+Category: AI/RAG
+
+Definition:
+A second scoring pass that reorders retrieved candidates for relevance or quality.
+
+Why it matters:
+Shows you know retrieval quality often improves after the first broad search.
+
+Example:
+I would retrieve 50 chunks, then rerank down to the best 5.
+
+## hybrid search - Glossary
+Category: AI/RAG
+
+Definition:
+Search that combines keyword matching with semantic/vector similarity.
+
+Why it matters:
+Good answer when exact terms, IDs, names, or semantic paraphrases all matter.
+
+Example:
+Hybrid search catches both 'refund' and exact policy code references.
+
+## semantic search - Glossary
+Category: AI/RAG
+
+Definition:
+Search based on meaning rather than only exact keyword overlap.
+
+Why it matters:
+Lets you explain AI discovery and support workflows in non-technical language.
+
+Example:
+A guest can ask 'late checkout' and still retrieve 'extended stay policy'.
+
+## hallucination - Glossary
+Category: AI/RAG
+
+Definition:
+A plausible model output that is unsupported, false, or fabricated.
+
+Why it matters:
+Interviewers expect concrete mitigation: grounding, evals, escalation, and monitoring.
+
+Example:
+We route high-risk answers to fallback if grounding evidence is missing.
+
+## grounding - Glossary
+Category: AI/RAG
+
+Definition:
+Tying model output to trusted source material, citations, tool results, or business rules.
+
+Why it matters:
+A strong AI PM answer distinguishes grounded answers from fluent guesses.
+
+Example:
+The answer must cite the retrieved cancellation policy.
+
+## guardrails - Glossary
+Category: AI/RAG
+
+Definition:
+Rules, checks, UX constraints, or fallback paths that bound model behavior.
+
+Why it matters:
+Shows product ownership of risk instead of relying on prompts alone.
+
+Example:
+A payment dispute bot needs escalation guardrails for high-value cases.
+
+## MCP - Glossary
+Category: AI/RAG
+
+Definition:
+Model Context Protocol: a standard way for AI apps to expose tools and context to models.
+
+Why it matters:
+Mention only when relevant; it is an integration pattern, not a product strategy.
+
+Example:
+MCP could expose CRM lookup as a controlled tool.
+
+## agent - Glossary
+Category: AI/RAG
+
+Definition:
+A system that can plan steps, call tools, observe results, and continue toward a goal.
+
+Why it matters:
+Good answers define autonomy level, tool scope, rollback, and human review.
+
+Example:
+An agent may draft a refund response, but approval stays with support.
+
+## workflow automation - Glossary
+Category: AI/RAG
+
+Definition:
+Using software or AI to complete repeated multi-step tasks with less manual effort.
+
+Why it matters:
+Frames AI value around time saved, quality, and operational throughput.
+
+Example:
+Automating invoice triage matters if it reduces cycle time without raising errors.
+
+## eval set - Glossary
+Category: Evals
+
+Definition:
+A curated set of test cases used to measure model or system behavior.
+
+Why it matters:
+Shows you can make probabilistic quality measurable before launch.
+
+Example:
+I would build an eval set from real support intents and edge cases.
+
+## golden set - Glossary
+Category: Evals
+
+Definition:
+A high-quality labeled evaluation set treated as the reference answer source.
+
+Why it matters:
+Useful for explaining release gates, regression tests, and quality thresholds.
+
+Example:
+The golden set includes the expected answer and the source policy.
+
+## LLM-as-judge - Glossary
+Category: Evals
+
+Definition:
+Using a model to score or compare outputs against a rubric.
+
+Why it matters:
+Strong answers mention calibration against human labels and known judge bias.
+
+Example:
+I would use an LLM judge for scale, then audit it against human review.
+
+## confidence calibration - Glossary
+Category: Evals
+
+Definition:
+The match between a system's confidence signal and the true likelihood it is correct.
+
+Why it matters:
+Important for deciding when to answer, defer, escalate, or ask clarification.
+
+Example:
+High confidence should mean the answer is actually right most of the time.
+
+## HITL - Glossary
+Category: Evals
+
+Definition:
+Human-in-the-loop: a person reviews, approves, corrects, or handles uncertain cases.
+
+Why it matters:
+Shows realistic deployment thinking for high-risk workflows.
+
+Example:
+HITL review handles refunds above a threshold until quality is proven.
+
+## baseline - Glossary
+Category: Evals
+
+Definition:
+The existing system, metric, or process used as the comparison point.
+
+Why it matters:
+Prevents overclaiming impact; every launch answer needs a before state.
+
+Example:
+We compare the AI flow against the current support macro baseline.
+
+## p95 latency - Glossary
+Category: Evals
+
+Definition:
+The response time under which 95 percent of requests complete.
+
+Why it matters:
+Better than average latency when discussing real user experience and SLAs.
+
+Example:
+The chatbot must keep p95 latency under the partner SLA.
+
+## token cost - Glossary
+Category: Evals
+
+Definition:
+The variable cost of model input and output tokens for each interaction.
+
+Why it matters:
+Shows AI PM maturity by tying quality decisions to unit economics.
+
+Example:
+I would route easy intents to cheaper models to control token cost.
+
+## A/B test - Glossary
+Category: Metrics
+
+Definition:
+An experiment that compares variants across randomized user groups.
+
+Why it matters:
+Use when causality matters and the sample/risk profile supports experimentation.
+
+Example:
+We A/B test checkout copy to measure conversion impact.
+
+## cohort - Glossary
+Category: Metrics
+
+Definition:
+A group of users sharing a start time, behavior, plan, source, or other trait.
+
+Why it matters:
+Cohorts prevent blended averages from hiding retention or activation problems.
+
+Example:
+Compare retained versus churned cohorts after first value.
+
+## retention - Glossary
+Category: Metrics
+
+Definition:
+The share of users or accounts that keep using the product over time.
+
+Why it matters:
+Often stronger than trial or demo usage for proving durable value.
+
+Example:
+Weekly retained teams is better than one-off AI demo clicks.
+
+## conversion - Glossary
+Category: Metrics
+
+Definition:
+The percentage of users who complete a desired action in a funnel.
+
+Why it matters:
+Useful for framing checkout, signup, onboarding, and activation problems.
+
+Example:
+Direct booking conversion is the key hotel funnel metric.
+
+## north-star metric - Glossary
+Category: Metrics
+
+Definition:
+A single primary metric intended to reflect delivered customer value and business growth.
+
+Why it matters:
+Strong PMs choose one but still protect against gaming with guardrails.
+
+Example:
+Completed practice sessions with improved score could be a north-star metric.
+
+## guardrail metric - Glossary
+Category: Metrics
+
+Definition:
+A metric that must not worsen while optimizing the primary metric.
+
+Why it matters:
+Shows balanced product judgment around quality, trust, cost, and latency.
+
+Example:
+Increase conversion while keeping refund rate and p95 latency within bounds.
+
+## CAC - Glossary
+Category: Metrics
+
+Definition:
+Customer acquisition cost: the cost to acquire a customer or account.
+
+Why it matters:
+Critical for marketplace, SaaS, and direct-booking unit economics.
+
+Example:
+AI must lift conversion enough to justify the hotel's CAC.
+
+## LTV - Glossary
+Category: Metrics
+
+Definition:
+Lifetime value: expected gross profit or value from a customer over time.
+
+Why it matters:
+Pairs with CAC to judge whether growth is economically healthy.
+
+Example:
+A direct guest relationship matters if it raises repeat booking LTV.
+
+## PMF - Glossary
+Category: Product
+
+Definition:
+Product-market fit: strong evidence that a product solves an important market need.
+
+Why it matters:
+Avoid vague enthusiasm; cite retention, pull, expansion, or willingness to pay.
+
+Example:
+PMF is not demo excitement; it is repeated use in a real workflow.
+
+## discovery - Glossary
+Category: Product
+
+Definition:
+Learning work that clarifies user needs, risks, constraints, and opportunity size.
+
+Why it matters:
+Senior PM interviews reward evidence-seeking before solution commitment.
+
+Example:
+I would interview operators before committing to an AI concierge.
+
+## PRD - Glossary
+Category: Product
+
+Definition:
+Product requirements document describing problem, goals, scope, constraints, and acceptance criteria.
+
+Why it matters:
+For AI, a PRD should include evals, fallback, risk, and observability.
+
+Example:
+The PRD defines acceptable factual error rate and escalation rules.
+
+## MVP - Glossary
+Category: Product
+
+Definition:
+The smallest useful product version that tests the riskiest assumption.
+
+Why it matters:
+Shows you can reduce scope without losing the learning goal.
+
+Example:
+Use a concierge MVP before building a full agent.
+
+## ROI - Glossary
+Category: Product
+
+Definition:
+Return on investment: value gained compared with investment required.
+
+Why it matters:
+Tie AI work to revenue, cost reduction, risk reduction, or speed.
+
+Example:
+The feature needs a credible ROI after inference and support costs.
+
+## trade-off - Glossary
+Category: Product
+
+Definition:
+A decision where improving one dimension costs another, such as quality versus latency.
+
+Why it matters:
+Senior answers name the trade-off and the decision rule.
+
+Example:
+Use a slower model only for high-stakes intents.
+
+## activation - Glossary
+Category: Product
+
+Definition:
+The first moment a user experiences meaningful product value.
+
+Why it matters:
+Useful for diagnosing high signup but low retention.
+
+Example:
+For PaperCoach, activation is completing a useful practice session.
+
+## segmentation - Glossary
+Category: Product
+
+Definition:
+Dividing users or accounts into meaningful groups for analysis or targeting.
+
+Why it matters:
+Prevents one-size-fits-all conclusions from weak data.
+
+Example:
+Hotels may segment by property size, inbound mix, and direct-booking maturity.
+
+## STAR - Glossary
+Category: Interview
+
+Definition:
+Situation, Task, Action, Result: a structure for behavioral interview answers.
+
+Why it matters:
+Keeps examples concrete and prevents rambling.
+
+Example:
+Use STAR for 'tell me about a time' questions.
+
+## structured answer - Glossary
+Category: Interview
+
+Definition:
+An answer with a clear frame, ordered points, evidence, and a concise close.
+
+Why it matters:
+Signals senior communication under pressure.
+
+Example:
+I would answer in three parts: risk, rollout, and metric.
+
+## MECE - Glossary
+Category: Interview
+
+Definition:
+Mutually exclusive, collectively exhaustive: categories that avoid overlap and gaps.
+
+Why it matters:
+Helpful for case-style structuring, but do not sound robotic.
+
+Example:
+Split launch risk into quality, latency, cost, and trust.
+
+## clarifying question - Glossary
+Category: Interview
+
+Definition:
+A short question asked before answering to pin down scope or assumptions.
+
+Why it matters:
+Shows judgment, but too many can look evasive.
+
+Example:
+Before sizing ROI, I would ask whether we optimize revenue or cost.
+
+## executive summary - Glossary
+Category: Interview
+
+Definition:
+The brief top-line answer before details.
+
+Why it matters:
+Useful with senior interviewers who want the point first.
+
+Example:
+My short answer is build a narrow RAG pilot, not a broad agent.
+
+## defense - Glossary
+Category: Interview
+
+Definition:
+A principled response to an interviewer pushback or objection.
+
+Why it matters:
+Turns challenge questions into evidence of judgment instead of defensiveness.
+
+Example:
+If challenged on wrappers, defend workflow fit, data loop, and trust.
+
+## caveat - Glossary
+Category: Interview
+
+Definition:
+A constraint or uncertainty stated clearly so the answer does not overclaim.
+
+Why it matters:
+Especially important when using directional metrics or estimates.
+
+Example:
+I would caveat that the retention lift is directional, not causal proof.

@@ -11,6 +11,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_PATH = REPO_ROOT / "generated" / "papercoach" / "interview_cards.json"
 DRILLS_PATH = REPO_ROOT / "generated" / "papercoach" / "drills.json"
+GLOSSARY_PATH = REPO_ROOT / "generated" / "papercoach" / "glossary.json"
 HEADER_PATH = REPO_ROOT / "src" / "embedded_papercoach_deck.h"
 
 
@@ -28,11 +29,15 @@ def main() -> None:
         raise SystemExit(f"Missing generated deck: {SOURCE_PATH}. Run tools/convert_prep_sheet.py first.")
     if not DRILLS_PATH.exists():
         raise SystemExit(f"Missing generated drills: {DRILLS_PATH}. Run tools/convert_prep_sheet.py first.")
+    if not GLOSSARY_PATH.exists():
+        raise SystemExit(f"Missing generated glossary: {GLOSSARY_PATH}.")
 
     payload = json.loads(SOURCE_PATH.read_text(encoding="utf-8"))
     drills_payload = json.loads(DRILLS_PATH.read_text(encoding="utf-8"))
+    glossary_payload = json.loads(GLOSSARY_PATH.read_text(encoding="utf-8"))
     cards = payload.get("cards", [])
     drills = drills_payload.get("drills", [])
+    glossary = glossary_payload.get("terms", [])
     if len(cards) < 50:
         raise SystemExit(f"Refusing to embed only {len(cards)} cards; expected at least 50.")
 
@@ -68,11 +73,21 @@ def main() -> None:
         "  const char* explanation;",
         "};",
         "",
+        "struct GlossaryTerm {",
+        "  const char* category;",
+        "  const char* term;",
+        "  const char* definition;",
+        "  const char* interviewImportance;",
+        "  const char* example;",
+        "};",
+        "",
         f"constexpr size_t kCardCount = {len(cards)};",
         f"constexpr size_t kMustMasterCount = {payload.get('must_master_count', 0)};",
         f"constexpr size_t kDrillCount = {len(drills)};",
+        f"constexpr size_t kGlossaryCount = {len(glossary)};",
         f"constexpr size_t kSourceJsonBytes = {SOURCE_PATH.stat().st_size};",
         f"constexpr size_t kDrillsJsonBytes = {DRILLS_PATH.stat().st_size};",
+        f"constexpr size_t kGlossaryJsonBytes = {GLOSSARY_PATH.stat().st_size};",
         f'constexpr const char* kSourcePath = "{payload.get("source_path", "")}";',
         "",
         "const Card kCards[] PROGMEM = {",
@@ -133,6 +148,27 @@ def main() -> None:
         [
             "};",
             "",
+            "const GlossaryTerm kGlossaryTerms[] PROGMEM = {",
+        ]
+    )
+
+    for term in glossary:
+        lines.extend(
+            [
+                "  {",
+                f"    {raw_string(term.get('category'))},",
+                f"    {raw_string(term.get('term'))},",
+                f"    {raw_string(term.get('definition'))},",
+                f"    {raw_string(term.get('interview_importance') or term.get('why_it_matters') or term.get('why'))},",
+                f"    {raw_string(term.get('example'))},",
+                "  },",
+            ]
+        )
+
+    lines.extend(
+        [
+            "};",
+            "",
             "}  // namespace embedded_papercoach",
             "",
         ]
@@ -142,8 +178,10 @@ def main() -> None:
     print(f"Embedded PaperCoach cards: {len(cards)}")
     print(f"Must-master cards: {payload.get('must_master_count', 0)}")
     print(f"Embedded PaperCoach drills: {len(drills)}")
+    print(f"Embedded PaperCoach glossary terms: {len(glossary)}")
     print(f"Source JSON bytes: {SOURCE_PATH.stat().st_size}")
     print(f"Drills JSON bytes: {DRILLS_PATH.stat().st_size}")
+    print(f"Glossary JSON bytes: {GLOSSARY_PATH.stat().st_size}")
     print(f"Header: {HEADER_PATH.relative_to(REPO_ROOT)} ({HEADER_PATH.stat().st_size} bytes)")
 
 

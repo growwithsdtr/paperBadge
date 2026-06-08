@@ -29,11 +29,21 @@ struct Drill {
   const char* explanation;
 };
 
+struct GlossaryTerm {
+  const char* category;
+  const char* term;
+  const char* definition;
+  const char* interviewImportance;
+  const char* example;
+};
+
 constexpr size_t kCardCount = 71;
 constexpr size_t kMustMasterCount = 17;
 constexpr size_t kDrillCount = 149;
+constexpr size_t kGlossaryCount = 44;
 constexpr size_t kSourceJsonBytes = 199783;
 constexpr size_t kDrillsJsonBytes = 80353;
+constexpr size_t kGlossaryJsonBytes = 15797;
 constexpr const char* kSourcePath = "sample-data/papercoach/interview_prep_sheet3.md";
 
 const Card kCards[] PROGMEM = {
@@ -3197,6 +3207,317 @@ const Drill kDrills[] PROGMEM = {
     4,
     0,
     R"PB0(baseline cycle time; came from cutting rework and decision latency, not cutting QA)PB0",
+  },
+};
+
+const GlossaryTerm kGlossaryTerms[] PROGMEM = {
+  {
+    R"PB0(AI/RAG)PB0",
+    R"PB0(RAG)PB0",
+    R"PB0(Retrieval-augmented generation: fetching relevant source material before asking a model to answer.)PB0",
+    R"PB0(Shows you can improve factuality without pretending the model itself knows private data.)PB0",
+    R"PB0(I would use RAG when answers must be grounded in current hotel policies.)PB0",
+  },
+  {
+    R"PB0(AI/RAG)PB0",
+    R"PB0(retrieval)PB0",
+    R"PB0(The step that finds candidate documents, chunks, records, or tool outputs for an AI system.)PB0",
+    R"PB0(Many AI failures are retrieval failures, so senior PMs should diagnose this layer first.)PB0",
+    R"PB0(If the answer is wrong, I check whether retrieval brought back the right context.)PB0",
+  },
+  {
+    R"PB0(AI/RAG)PB0",
+    R"PB0(embedding)PB0",
+    R"PB0(A numeric representation of text, images, or other data used to compare semantic similarity.)PB0",
+    R"PB0(Helps explain semantic search, clustering, deduplication, and RAG trade-offs.)PB0",
+    R"PB0(We embedded support articles so similar questions map to nearby content.)PB0",
+  },
+  {
+    R"PB0(AI/RAG)PB0",
+    R"PB0(vector database)PB0",
+    R"PB0(A storage and search system optimized for nearest-neighbor lookup over embeddings.)PB0",
+    R"PB0(Useful when discussing retrieval scale, latency, freshness, and filtering.)PB0",
+    R"PB0(The vector database retrieves the closest policy chunks before generation.)PB0",
+  },
+  {
+    R"PB0(AI/RAG)PB0",
+    R"PB0(reranking)PB0",
+    R"PB0(A second scoring pass that reorders retrieved candidates for relevance or quality.)PB0",
+    R"PB0(Shows you know retrieval quality often improves after the first broad search.)PB0",
+    R"PB0(I would retrieve 50 chunks, then rerank down to the best 5.)PB0",
+  },
+  {
+    R"PB0(AI/RAG)PB0",
+    R"PB0(hybrid search)PB0",
+    R"PB0(Search that combines keyword matching with semantic/vector similarity.)PB0",
+    R"PB0(Good answer when exact terms, IDs, names, or semantic paraphrases all matter.)PB0",
+    R"PB0(Hybrid search catches both 'refund' and exact policy code references.)PB0",
+  },
+  {
+    R"PB0(AI/RAG)PB0",
+    R"PB0(semantic search)PB0",
+    R"PB0(Search based on meaning rather than only exact keyword overlap.)PB0",
+    R"PB0(Lets you explain AI discovery and support workflows in non-technical language.)PB0",
+    R"PB0(A guest can ask 'late checkout' and still retrieve 'extended stay policy'.)PB0",
+  },
+  {
+    R"PB0(AI/RAG)PB0",
+    R"PB0(hallucination)PB0",
+    R"PB0(A plausible model output that is unsupported, false, or fabricated.)PB0",
+    R"PB0(Interviewers expect concrete mitigation: grounding, evals, escalation, and monitoring.)PB0",
+    R"PB0(We route high-risk answers to fallback if grounding evidence is missing.)PB0",
+  },
+  {
+    R"PB0(AI/RAG)PB0",
+    R"PB0(grounding)PB0",
+    R"PB0(Tying model output to trusted source material, citations, tool results, or business rules.)PB0",
+    R"PB0(A strong AI PM answer distinguishes grounded answers from fluent guesses.)PB0",
+    R"PB0(The answer must cite the retrieved cancellation policy.)PB0",
+  },
+  {
+    R"PB0(AI/RAG)PB0",
+    R"PB0(guardrails)PB0",
+    R"PB0(Rules, checks, UX constraints, or fallback paths that bound model behavior.)PB0",
+    R"PB0(Shows product ownership of risk instead of relying on prompts alone.)PB0",
+    R"PB0(A payment dispute bot needs escalation guardrails for high-value cases.)PB0",
+  },
+  {
+    R"PB0(AI/RAG)PB0",
+    R"PB0(MCP)PB0",
+    R"PB0(Model Context Protocol: a standard way for AI apps to expose tools and context to models.)PB0",
+    R"PB0(Mention only when relevant; it is an integration pattern, not a product strategy.)PB0",
+    R"PB0(MCP could expose CRM lookup as a controlled tool.)PB0",
+  },
+  {
+    R"PB0(AI/RAG)PB0",
+    R"PB0(agent)PB0",
+    R"PB0(A system that can plan steps, call tools, observe results, and continue toward a goal.)PB0",
+    R"PB0(Good answers define autonomy level, tool scope, rollback, and human review.)PB0",
+    R"PB0(An agent may draft a refund response, but approval stays with support.)PB0",
+  },
+  {
+    R"PB0(AI/RAG)PB0",
+    R"PB0(workflow automation)PB0",
+    R"PB0(Using software or AI to complete repeated multi-step tasks with less manual effort.)PB0",
+    R"PB0(Frames AI value around time saved, quality, and operational throughput.)PB0",
+    R"PB0(Automating invoice triage matters if it reduces cycle time without raising errors.)PB0",
+  },
+  {
+    R"PB0(Evals)PB0",
+    R"PB0(eval set)PB0",
+    R"PB0(A curated set of test cases used to measure model or system behavior.)PB0",
+    R"PB0(Shows you can make probabilistic quality measurable before launch.)PB0",
+    R"PB0(I would build an eval set from real support intents and edge cases.)PB0",
+  },
+  {
+    R"PB0(Evals)PB0",
+    R"PB0(golden set)PB0",
+    R"PB0(A high-quality labeled evaluation set treated as the reference answer source.)PB0",
+    R"PB0(Useful for explaining release gates, regression tests, and quality thresholds.)PB0",
+    R"PB0(The golden set includes the expected answer and the source policy.)PB0",
+  },
+  {
+    R"PB0(Evals)PB0",
+    R"PB0(LLM-as-judge)PB0",
+    R"PB0(Using a model to score or compare outputs against a rubric.)PB0",
+    R"PB0(Strong answers mention calibration against human labels and known judge bias.)PB0",
+    R"PB0(I would use an LLM judge for scale, then audit it against human review.)PB0",
+  },
+  {
+    R"PB0(Evals)PB0",
+    R"PB0(confidence calibration)PB0",
+    R"PB0(The match between a system's confidence signal and the true likelihood it is correct.)PB0",
+    R"PB0(Important for deciding when to answer, defer, escalate, or ask clarification.)PB0",
+    R"PB0(High confidence should mean the answer is actually right most of the time.)PB0",
+  },
+  {
+    R"PB0(Evals)PB0",
+    R"PB0(HITL)PB0",
+    R"PB0(Human-in-the-loop: a person reviews, approves, corrects, or handles uncertain cases.)PB0",
+    R"PB0(Shows realistic deployment thinking for high-risk workflows.)PB0",
+    R"PB0(HITL review handles refunds above a threshold until quality is proven.)PB0",
+  },
+  {
+    R"PB0(Evals)PB0",
+    R"PB0(baseline)PB0",
+    R"PB0(The existing system, metric, or process used as the comparison point.)PB0",
+    R"PB0(Prevents overclaiming impact; every launch answer needs a before state.)PB0",
+    R"PB0(We compare the AI flow against the current support macro baseline.)PB0",
+  },
+  {
+    R"PB0(Evals)PB0",
+    R"PB0(p95 latency)PB0",
+    R"PB0(The response time under which 95 percent of requests complete.)PB0",
+    R"PB0(Better than average latency when discussing real user experience and SLAs.)PB0",
+    R"PB0(The chatbot must keep p95 latency under the partner SLA.)PB0",
+  },
+  {
+    R"PB0(Evals)PB0",
+    R"PB0(token cost)PB0",
+    R"PB0(The variable cost of model input and output tokens for each interaction.)PB0",
+    R"PB0(Shows AI PM maturity by tying quality decisions to unit economics.)PB0",
+    R"PB0(I would route easy intents to cheaper models to control token cost.)PB0",
+  },
+  {
+    R"PB0(Metrics)PB0",
+    R"PB0(A/B test)PB0",
+    R"PB0(An experiment that compares variants across randomized user groups.)PB0",
+    R"PB0(Use when causality matters and the sample/risk profile supports experimentation.)PB0",
+    R"PB0(We A/B test checkout copy to measure conversion impact.)PB0",
+  },
+  {
+    R"PB0(Metrics)PB0",
+    R"PB0(cohort)PB0",
+    R"PB0(A group of users sharing a start time, behavior, plan, source, or other trait.)PB0",
+    R"PB0(Cohorts prevent blended averages from hiding retention or activation problems.)PB0",
+    R"PB0(Compare retained versus churned cohorts after first value.)PB0",
+  },
+  {
+    R"PB0(Metrics)PB0",
+    R"PB0(retention)PB0",
+    R"PB0(The share of users or accounts that keep using the product over time.)PB0",
+    R"PB0(Often stronger than trial or demo usage for proving durable value.)PB0",
+    R"PB0(Weekly retained teams is better than one-off AI demo clicks.)PB0",
+  },
+  {
+    R"PB0(Metrics)PB0",
+    R"PB0(conversion)PB0",
+    R"PB0(The percentage of users who complete a desired action in a funnel.)PB0",
+    R"PB0(Useful for framing checkout, signup, onboarding, and activation problems.)PB0",
+    R"PB0(Direct booking conversion is the key hotel funnel metric.)PB0",
+  },
+  {
+    R"PB0(Metrics)PB0",
+    R"PB0(north-star metric)PB0",
+    R"PB0(A single primary metric intended to reflect delivered customer value and business growth.)PB0",
+    R"PB0(Strong PMs choose one but still protect against gaming with guardrails.)PB0",
+    R"PB0(Completed practice sessions with improved score could be a north-star metric.)PB0",
+  },
+  {
+    R"PB0(Metrics)PB0",
+    R"PB0(guardrail metric)PB0",
+    R"PB0(A metric that must not worsen while optimizing the primary metric.)PB0",
+    R"PB0(Shows balanced product judgment around quality, trust, cost, and latency.)PB0",
+    R"PB0(Increase conversion while keeping refund rate and p95 latency within bounds.)PB0",
+  },
+  {
+    R"PB0(Metrics)PB0",
+    R"PB0(CAC)PB0",
+    R"PB0(Customer acquisition cost: the cost to acquire a customer or account.)PB0",
+    R"PB0(Critical for marketplace, SaaS, and direct-booking unit economics.)PB0",
+    R"PB0(AI must lift conversion enough to justify the hotel's CAC.)PB0",
+  },
+  {
+    R"PB0(Metrics)PB0",
+    R"PB0(LTV)PB0",
+    R"PB0(Lifetime value: expected gross profit or value from a customer over time.)PB0",
+    R"PB0(Pairs with CAC to judge whether growth is economically healthy.)PB0",
+    R"PB0(A direct guest relationship matters if it raises repeat booking LTV.)PB0",
+  },
+  {
+    R"PB0(Product)PB0",
+    R"PB0(PMF)PB0",
+    R"PB0(Product-market fit: strong evidence that a product solves an important market need.)PB0",
+    R"PB0(Avoid vague enthusiasm; cite retention, pull, expansion, or willingness to pay.)PB0",
+    R"PB0(PMF is not demo excitement; it is repeated use in a real workflow.)PB0",
+  },
+  {
+    R"PB0(Product)PB0",
+    R"PB0(discovery)PB0",
+    R"PB0(Learning work that clarifies user needs, risks, constraints, and opportunity size.)PB0",
+    R"PB0(Senior PM interviews reward evidence-seeking before solution commitment.)PB0",
+    R"PB0(I would interview operators before committing to an AI concierge.)PB0",
+  },
+  {
+    R"PB0(Product)PB0",
+    R"PB0(PRD)PB0",
+    R"PB0(Product requirements document describing problem, goals, scope, constraints, and acceptance criteria.)PB0",
+    R"PB0(For AI, a PRD should include evals, fallback, risk, and observability.)PB0",
+    R"PB0(The PRD defines acceptable factual error rate and escalation rules.)PB0",
+  },
+  {
+    R"PB0(Product)PB0",
+    R"PB0(MVP)PB0",
+    R"PB0(The smallest useful product version that tests the riskiest assumption.)PB0",
+    R"PB0(Shows you can reduce scope without losing the learning goal.)PB0",
+    R"PB0(Use a concierge MVP before building a full agent.)PB0",
+  },
+  {
+    R"PB0(Product)PB0",
+    R"PB0(ROI)PB0",
+    R"PB0(Return on investment: value gained compared with investment required.)PB0",
+    R"PB0(Tie AI work to revenue, cost reduction, risk reduction, or speed.)PB0",
+    R"PB0(The feature needs a credible ROI after inference and support costs.)PB0",
+  },
+  {
+    R"PB0(Product)PB0",
+    R"PB0(trade-off)PB0",
+    R"PB0(A decision where improving one dimension costs another, such as quality versus latency.)PB0",
+    R"PB0(Senior answers name the trade-off and the decision rule.)PB0",
+    R"PB0(Use a slower model only for high-stakes intents.)PB0",
+  },
+  {
+    R"PB0(Product)PB0",
+    R"PB0(activation)PB0",
+    R"PB0(The first moment a user experiences meaningful product value.)PB0",
+    R"PB0(Useful for diagnosing high signup but low retention.)PB0",
+    R"PB0(For PaperCoach, activation is completing a useful practice session.)PB0",
+  },
+  {
+    R"PB0(Product)PB0",
+    R"PB0(segmentation)PB0",
+    R"PB0(Dividing users or accounts into meaningful groups for analysis or targeting.)PB0",
+    R"PB0(Prevents one-size-fits-all conclusions from weak data.)PB0",
+    R"PB0(Hotels may segment by property size, inbound mix, and direct-booking maturity.)PB0",
+  },
+  {
+    R"PB0(Interview)PB0",
+    R"PB0(STAR)PB0",
+    R"PB0(Situation, Task, Action, Result: a structure for behavioral interview answers.)PB0",
+    R"PB0(Keeps examples concrete and prevents rambling.)PB0",
+    R"PB0(Use STAR for 'tell me about a time' questions.)PB0",
+  },
+  {
+    R"PB0(Interview)PB0",
+    R"PB0(structured answer)PB0",
+    R"PB0(An answer with a clear frame, ordered points, evidence, and a concise close.)PB0",
+    R"PB0(Signals senior communication under pressure.)PB0",
+    R"PB0(I would answer in three parts: risk, rollout, and metric.)PB0",
+  },
+  {
+    R"PB0(Interview)PB0",
+    R"PB0(MECE)PB0",
+    R"PB0(Mutually exclusive, collectively exhaustive: categories that avoid overlap and gaps.)PB0",
+    R"PB0(Helpful for case-style structuring, but do not sound robotic.)PB0",
+    R"PB0(Split launch risk into quality, latency, cost, and trust.)PB0",
+  },
+  {
+    R"PB0(Interview)PB0",
+    R"PB0(clarifying question)PB0",
+    R"PB0(A short question asked before answering to pin down scope or assumptions.)PB0",
+    R"PB0(Shows judgment, but too many can look evasive.)PB0",
+    R"PB0(Before sizing ROI, I would ask whether we optimize revenue or cost.)PB0",
+  },
+  {
+    R"PB0(Interview)PB0",
+    R"PB0(executive summary)PB0",
+    R"PB0(The brief top-line answer before details.)PB0",
+    R"PB0(Useful with senior interviewers who want the point first.)PB0",
+    R"PB0(My short answer is build a narrow RAG pilot, not a broad agent.)PB0",
+  },
+  {
+    R"PB0(Interview)PB0",
+    R"PB0(defense)PB0",
+    R"PB0(A principled response to an interviewer pushback or objection.)PB0",
+    R"PB0(Turns challenge questions into evidence of judgment instead of defensiveness.)PB0",
+    R"PB0(If challenged on wrappers, defend workflow fit, data loop, and trust.)PB0",
+  },
+  {
+    R"PB0(Interview)PB0",
+    R"PB0(caveat)PB0",
+    R"PB0(A constraint or uncertainty stated clearly so the answer does not overclaim.)PB0",
+    R"PB0(Especially important when using directional metrics or estimates.)PB0",
+    R"PB0(I would caveat that the retention lift is directional, not causal proof.)PB0",
   },
 };
 

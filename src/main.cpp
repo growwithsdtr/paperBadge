@@ -16,10 +16,11 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v4.3";
+constexpr const char* kFirmwareVersion = "v4.4";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
+constexpr const char* kCoachGlossaryPath = "/papercoach/glossary.json";
 constexpr const char* kPrefsNamespace = "paperbadge";
 constexpr const char* kReaderVlwPath = "/paperbadge/fonts/reader.vlw";
 constexpr const char* kReaderMidVlwPath = "/paperbadge/fonts/reader_mid.vlw";
@@ -33,7 +34,8 @@ constexpr uint32_t kConferenceBadgeIdleMs = 30000;
 constexpr uint32_t kPostTouchIdleGuardMs = 5000;
 constexpr uint32_t kHardCleanTransitionLimit = 14;
 constexpr int32_t kHitboxPadding = 10;
-constexpr size_t kMaxCoachItems = 96;
+constexpr size_t kMaxCoachItems = 180;
+constexpr size_t kMaxSdGlossaryTerms = 56;
 constexpr uint8_t kMaxOptions = 4;
 constexpr uint8_t kMaxWrappedLines = 18;
 constexpr uint8_t kMaxReaderPageCount = 32;
@@ -109,6 +111,7 @@ enum class Screen {
   WeakAnswerDetector,
   MetricPrecision,
   HostileFollowup,
+  GlossaryMenu,
   Glossary,
   MockInterview,
 };
@@ -204,6 +207,14 @@ enum class DrillCategory : uint8_t {
   FollowupDefense = 3,
   FrameworkChoice = 4,
   MaturityClaim = 5,
+};
+
+enum class GlossaryCategory : uint8_t {
+  AiRag = 0,
+  Evals = 1,
+  Metrics = 2,
+  Product = 3,
+  Interview = 4,
 };
 
 enum class CoachItemType : uint8_t {
@@ -406,6 +417,11 @@ Rect gPracticeButton;
 Rect gDrillsButton;
 Rect gExamButton;
 Rect gResultsButton;
+Rect gGlossaryAiButton;
+Rect gGlossaryEvalsButton;
+Rect gGlossaryMetricsButton;
+Rect gGlossaryProductButton;
+Rect gGlossaryInterviewButton;
 Rect gPracticeMustButton;
 Rect gPracticeAllButton;
 Rect gPracticeContinueButton;
@@ -458,16 +474,20 @@ Rect gReaderContentRect;
 bool gSdMounted = false;
 bool gBadgeJsonLoaded = false;
 bool gCoachDeckLoadedFromSd = false;
+bool gGlossaryLoadedFromSd = false;
 bool gReaderMidVlwAvailable = false;
 size_t gCoachMustMasterCount = 0;
 size_t gCoachCardCount = 0;
 size_t gCoachDrillCount = 0;
+size_t gCoachGlossaryCount = 0;
 String gCoachDeckSource = "embedded";
+String gGlossarySource = "embedded";
 uint8_t gNormalPortraitRotation = 0;
 uint32_t gLastLanguageSwitchMs = 0;
 String gLastBadgeSource = "embedded";
 uint32_t gBadgeRedrawCount = 0;
 CoachItem gCoachItems[kMaxCoachItems];
+CoachItem gSdGlossaryItems[kMaxSdGlossaryTerms];
 size_t gCoachItemCount = 0;
 size_t gCoachIndex = 0;
 size_t gLastPracticeIndex = 0;
@@ -480,6 +500,7 @@ bool gTouchDebugEnabled = false;
 bool gInterviewMustMasterOnly = false;
 bool gHasPracticeLastIndex = false;
 DrillCategory gDrillCategory = DrillCategory::All;
+GlossaryCategory gGlossaryCategory = GlossaryCategory::AiRag;
 bool gInputLocked = false;
 bool gCurrentRefreshClean = false;
 uint32_t gInputUnlockAtMs = 0;
@@ -1314,6 +1335,29 @@ const char* drillCategoryName(DrillCategory category) {
   }
 }
 
+const char* glossaryCategoryName(GlossaryCategory category) {
+  switch (category) {
+    case GlossaryCategory::Evals:
+      return "Evals";
+    case GlossaryCategory::Metrics:
+      return "Metrics";
+    case GlossaryCategory::Product:
+      return "Product";
+    case GlossaryCategory::Interview:
+      return "Interview";
+    case GlossaryCategory::AiRag:
+    default:
+      return "AI/RAG";
+  }
+}
+
+bool glossaryCategoryMatches(const char* category) {
+  if (category == nullptr || category[0] == '\0') {
+    return false;
+  }
+  return String(category) == glossaryCategoryName(gGlossaryCategory);
+}
+
 void cycleFontSizeMode() {
   switch (canonicalFontSizeMode(gSettings.fontSizeMode)) {
     case FontSizeMode::Medium:
@@ -1671,6 +1715,7 @@ void clearCoachDeck() {
   gCoachMustMasterCount = 0;
   gCoachCardCount = 0;
   gCoachDrillCount = 0;
+  gCoachGlossaryCount = 0;
   gCoachIndex = 0;
   gCoachStage = 0;
   gSelectedOption = -1;
@@ -1689,13 +1734,17 @@ void loadEmbeddedCoachDeck() {
   clearCoachDeck();
   gCoachCardCount = embedded_papercoach::kCardCount;
   gCoachDrillCount = embedded_papercoach::kDrillCount;
-  gCoachItemCount = gCoachCardCount + gCoachDrillCount;
+  gCoachGlossaryCount = embedded_papercoach::kGlossaryCount;
+  gCoachItemCount = gCoachCardCount + gCoachDrillCount + gCoachGlossaryCount;
   gCoachMustMasterCount = embedded_papercoach::kMustMasterCount;
   gCoachDeckLoadedFromSd = false;
   gCoachDeckSource = "embedded";
+  gGlossaryLoadedFromSd = false;
+  gGlossarySource = "embedded";
   Serial.println("PaperCoach deck source: embedded");
   Serial.printf("PaperCoach card count: %u\n", static_cast<unsigned>(gCoachCardCount));
   Serial.printf("PaperCoach drill count: %u\n", static_cast<unsigned>(gCoachDrillCount));
+  Serial.printf("PaperCoach glossary count: %u\n", static_cast<unsigned>(gCoachGlossaryCount));
   Serial.printf("PaperCoach must-master count: %u\n", static_cast<unsigned>(gCoachMustMasterCount));
 }
 
@@ -1796,6 +1845,7 @@ bool loadCoachDeckFromSd() {
   gCoachDeckSource = "SD";
   gCoachCardCount = gCoachItemCount;
   gCoachDrillCount = 0;
+  gCoachGlossaryCount = 0;
   Serial.printf("PaperCoach deck source: SD (%s)\n", path);
   Serial.printf("PaperCoach card count: %u\n", static_cast<unsigned>(gCoachItemCount));
   Serial.printf("PaperCoach drill count: %u\n", static_cast<unsigned>(gCoachDrillCount));
@@ -1803,15 +1853,107 @@ bool loadCoachDeckFromSd() {
   return true;
 }
 
+bool loadGlossaryFromSd() {
+  for (size_t index = 0; index < kMaxSdGlossaryTerms; ++index) {
+    gSdGlossaryItems[index] = CoachItem{};
+  }
+  gGlossaryLoadedFromSd = false;
+  if (!gSdMounted || !SD.exists(kCoachGlossaryPath)) {
+    gGlossarySource = "embedded";
+    gCoachGlossaryCount = embedded_papercoach::kGlossaryCount;
+    gCoachItemCount = gCoachCardCount + gCoachDrillCount + gCoachGlossaryCount;
+    Serial.printf("PaperCoach glossary SD missing: %s; using embedded count=%u\n", kCoachGlossaryPath,
+                  static_cast<unsigned>(gCoachGlossaryCount));
+    return false;
+  }
+
+  File file = SD.open(kCoachGlossaryPath, FILE_READ);
+  if (!file) {
+    gGlossarySource = "embedded";
+    gCoachGlossaryCount = embedded_papercoach::kGlossaryCount;
+    gCoachItemCount = gCoachCardCount + gCoachDrillCount + gCoachGlossaryCount;
+    Serial.println("PaperCoach glossary SD open failed; using embedded.");
+    return false;
+  }
+
+  JsonDocument doc;
+  const DeserializationError error = deserializeJson(doc, file);
+  file.close();
+  if (error) {
+    gGlossarySource = "embedded";
+    gCoachGlossaryCount = embedded_papercoach::kGlossaryCount;
+    gCoachItemCount = gCoachCardCount + gCoachDrillCount + gCoachGlossaryCount;
+    Serial.printf("PaperCoach glossary SD parse failed: %s; using embedded.\n", error.c_str());
+    return false;
+  }
+
+  JsonArray terms = doc["terms"].as<JsonArray>();
+  if (terms.isNull() || terms.size() == 0) {
+    gGlossarySource = "embedded";
+    gCoachGlossaryCount = embedded_papercoach::kGlossaryCount;
+    gCoachItemCount = gCoachCardCount + gCoachDrillCount + gCoachGlossaryCount;
+    Serial.println("PaperCoach glossary SD empty; using embedded.");
+    return false;
+  }
+
+  size_t count = 0;
+  for (JsonObject object : terms) {
+    if (count >= kMaxSdGlossaryTerms) {
+      Serial.printf("PaperCoach glossary SD cap reached: max=%u\n", static_cast<unsigned>(kMaxSdGlossaryTerms));
+      break;
+    }
+    CoachItem item;
+    item.type = CoachItemType::Glossary;
+    item.category = object["category"] | "";
+    item.term = object["term"] | "";
+    item.definition = object["definition"] | "";
+    const char* why = object["interview_importance"] | "";
+    if (why[0] == '\0') {
+      why = object["why_it_matters"] | "";
+    }
+    if (why[0] == '\0') {
+      why = object["why"] | "";
+    }
+    item.explanation = why;
+    item.answer = object["example"] | "";
+    item.id = item.term;
+    item.section = item.category;
+    item.title = item.term;
+    item.prompt = item.term;
+    if (item.term.length() == 0 || item.definition.length() == 0 || item.category.length() == 0) {
+      Serial.println("PaperCoach glossary SD term skipped: missing term/category/definition.");
+      continue;
+    }
+    gSdGlossaryItems[count++] = item;
+  }
+
+  if (count == 0) {
+    gGlossarySource = "embedded";
+    gCoachGlossaryCount = embedded_papercoach::kGlossaryCount;
+    gCoachItemCount = gCoachCardCount + gCoachDrillCount + gCoachGlossaryCount;
+    Serial.println("PaperCoach glossary SD had no usable terms; using embedded.");
+    return false;
+  }
+
+  gGlossaryLoadedFromSd = true;
+  gGlossarySource = "SD";
+  gCoachGlossaryCount = count;
+  gCoachItemCount = gCoachCardCount + gCoachDrillCount + gCoachGlossaryCount;
+  Serial.printf("PaperCoach glossary source: SD (%s) count=%u\n", kCoachGlossaryPath,
+                static_cast<unsigned>(gCoachGlossaryCount));
+  return true;
+}
+
 void loadCoachDeck() {
   if (!loadCoachDeckFromSd()) {
     loadEmbeddedCoachDeck();
   }
+  loadGlossaryFromSd();
 }
 
 CoachItemView coachItemAt(size_t index) {
   CoachItemView view;
-  if (gCoachDeckLoadedFromSd && index < gCoachItemCount) {
+  if (gCoachDeckLoadedFromSd && index < gCoachCardCount) {
     const CoachItem& item = gCoachItems[index];
     view.type = item.type;
     view.id = item.id.c_str();
@@ -1840,6 +1982,44 @@ CoachItemView coachItemAt(size_t index) {
       view.options[option] = item.options[option].c_str();
     }
     return view;
+  }
+
+  const size_t glossaryStart = gCoachCardCount + gCoachDrillCount;
+  if (index >= glossaryStart && index < glossaryStart + gCoachGlossaryCount) {
+    const size_t glossaryIndex = index - glossaryStart;
+    if (gGlossaryLoadedFromSd && glossaryIndex < gCoachGlossaryCount && glossaryIndex < kMaxSdGlossaryTerms) {
+      const CoachItem& item = gSdGlossaryItems[glossaryIndex];
+      view.type = CoachItemType::Glossary;
+      view.id = item.id.c_str();
+      view.cardId = item.id.c_str();
+      view.sectionId = "G";
+      view.section = item.category.c_str();
+      view.title = item.term.c_str();
+      view.prompt = item.term.c_str();
+      view.answer = item.answer.c_str();
+      view.category = item.category.c_str();
+      view.term = item.term.c_str();
+      view.definition = item.definition.c_str();
+      view.explanation = item.explanation.c_str();
+      return view;
+    }
+
+    if (glossaryIndex < embedded_papercoach::kGlossaryCount) {
+      const auto& term = embedded_papercoach::kGlossaryTerms[glossaryIndex];
+      view.type = CoachItemType::Glossary;
+      view.id = term.term;
+      view.cardId = term.term;
+      view.sectionId = "G";
+      view.section = term.category;
+      view.title = term.term;
+      view.prompt = term.term;
+      view.answer = term.example;
+      view.category = term.category;
+      view.term = term.term;
+      view.definition = term.definition;
+      view.explanation = term.interviewImportance;
+      return view;
+    }
   }
 
   if (index < embedded_papercoach::kCardCount) {
@@ -1932,7 +2112,7 @@ bool itemMatchesScreen(const CoachItemView& item, Screen screen) {
     return item.type == CoachItemType::HostileFollowup;
   }
   if (screen == Screen::Glossary) {
-    return item.type == CoachItemType::Glossary;
+    return item.type == CoachItemType::Glossary && glossaryCategoryMatches(item.category);
   }
   if (screen == Screen::MockInterview) {
     return item.type == CoachItemType::Qa || item.type == CoachItemType::HostileFollowup ||
@@ -2476,6 +2656,7 @@ const char* coachScreenTitle(Screen screen) {
       return "Metric Precision";
     case Screen::HostileFollowup:
       return "Hostile Follow-up";
+    case Screen::GlossaryMenu:
     case Screen::Glossary:
       return "Glossary";
     case Screen::MockInterview:
@@ -2508,6 +2689,8 @@ const char* screenName(Screen screen) {
       return "Practice";
     case Screen::DrillsMenu:
       return "Drills";
+    case Screen::GlossaryMenu:
+      return "Glossary";
     case Screen::Exam:
       return "Exam";
     case Screen::Results:
@@ -3617,7 +3800,16 @@ String coachPromptFor(const CoachItemView& item) {
 
 String coachAnswerFor(const CoachItemView& item) {
   if (item.type == CoachItemType::Glossary) {
-    return item.definition;
+    String body = String("Definition: ") + item.definition;
+    if (item.explanation && item.explanation[0] != '\0') {
+      body += "\nWhy it matters: ";
+      body += item.explanation;
+    }
+    if (item.answer && item.answer[0] != '\0') {
+      body += "\nExample: ";
+      body += item.answer;
+    }
+    return body;
   }
   if (item.type == CoachItemType::WeakAnswer) {
     if (strlen(item.category) == 0) {
@@ -3875,8 +4067,7 @@ uint8_t buildCoachReaderStages(const CoachItemView& item, const PracticeLayout& 
     addStage("Defense", coachAnswerFor(item));
     addStage("Anchor", coachRubricFor(item));
   } else if (item.type == CoachItemType::Glossary) {
-    addStage("Question", coachPromptFor(item));
-    addStage("Answer", coachAnswerFor(item));
+    addStage("Term", String(item.term) + "\n" + coachAnswerFor(item));
   } else if (item.type == CoachItemType::WeakAnswer) {
     addStage("Question", coachPromptFor(item));
     addStage("Explanation", coachAnswerFor(item));
@@ -3943,7 +4134,9 @@ void drawCompactReaderHeader(const CoachItemView& item, const char* stageName, u
   display.setTextColor(darkGray, TFT_WHITE);
   String line = sanitizeCoachText(coachDisplayId(item), "reader-id");
   line += " · ";
-  if (gScreen == Screen::InterviewPractice || item.type == CoachItemType::Qa || item.type == CoachItemType::Glossary) {
+  if (item.type == CoachItemType::Glossary) {
+    line += "Glossary";
+  } else if (gScreen == Screen::InterviewPractice || item.type == CoachItemType::Qa) {
     line += (item.mustMaster ? "Must" : "Card");
   } else {
     line += drillHeaderLabel(item);
@@ -4445,6 +4638,66 @@ void renderPracticeMenu(const char* refreshReason = "mode switch") {
   finishDisplayRefresh();
   Serial.printf("Practice menu shown: last=%s index=%u mustCount=%u\n", gHasPracticeLastIndex ? "yes" : "no",
                 static_cast<unsigned>(gLastPracticeIndex), static_cast<unsigned>(gCoachMustMasterCount));
+}
+
+uint16_t glossaryTermCountFor(GlossaryCategory category) {
+  uint16_t count = 0;
+  const GlossaryCategory saved = gGlossaryCategory;
+  gGlossaryCategory = category;
+  for (size_t index = 0; index < gCoachItemCount; ++index) {
+    const CoachItemView item = coachItemAt(index);
+    if (item.type == CoachItemType::Glossary && glossaryCategoryMatches(item.category)) {
+      ++count;
+    }
+  }
+  gGlossaryCategory = saved;
+  return count;
+}
+
+String glossaryButtonLabel(GlossaryCategory category) {
+  return String(glossaryCategoryName(category)) + " (" + static_cast<unsigned>(glossaryTermCountFor(category)) + ")";
+}
+
+void renderGlossaryMenu(const char* refreshReason = "mode switch") {
+  gScreen = Screen::GlossaryMenu;
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachTitleFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Glossary", 32, 34);
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString(String("Source: ") + gGlossarySource + "  Terms: " + static_cast<unsigned>(gCoachGlossaryCount), 34,
+                     92);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+
+  const int32_t margin = 34;
+  const int32_t gap = 14;
+  const int32_t colW = (display.width() - margin * 2 - gap) / 2;
+  const int32_t rowH = 112;
+  int32_t y = 150;
+  gGlossaryAiButton = {margin, y, colW, rowH};
+  gGlossaryEvalsButton = {margin + colW + gap, y, colW, rowH};
+  y += rowH + gap;
+  gGlossaryMetricsButton = {margin, y, colW, rowH};
+  gGlossaryProductButton = {margin + colW + gap, y, colW, rowH};
+  y += rowH + gap;
+  gGlossaryInterviewButton = {margin, y, display.width() - margin * 2, rowH};
+  gHomeButton = {margin, display.height() - 110, display.width() - margin * 2, 76};
+
+  drawButton(gGlossaryAiButton, glossaryButtonLabel(GlossaryCategory::AiRag), IconType::Glossary);
+  drawButton(gGlossaryEvalsButton, glossaryButtonLabel(GlossaryCategory::Evals), IconType::Glossary);
+  drawButton(gGlossaryMetricsButton, glossaryButtonLabel(GlossaryCategory::Metrics), IconType::Results);
+  drawButton(gGlossaryProductButton, glossaryButtonLabel(GlossaryCategory::Product), IconType::Practice);
+  drawButton(gGlossaryInterviewButton, glossaryButtonLabel(GlossaryCategory::Interview), IconType::Exam);
+  drawButton(gHomeButton, "", IconType::Home);
+
+  finishDisplayRefresh();
+  Serial.printf("Glossary menu shown: source=%s terms=%u\n", gGlossarySource.c_str(),
+                static_cast<unsigned>(gCoachGlossaryCount));
 }
 
 void renderDrillsMenu(const char* refreshReason = "mode switch") {
@@ -5211,6 +5464,35 @@ void handleTouch() {
     return;
   }
 
+  if (gScreen == Screen::GlossaryMenu) {
+    if (hitTarget(gHomeButton, "home", tapX, tapY)) {
+      Serial.println("entering Home");
+      renderHome();
+    } else if (hitTarget(gGlossaryAiButton, "glossary ai rag", tapX, tapY)) {
+      gGlossaryCategory = GlossaryCategory::AiRag;
+      startCoachMode(Screen::Glossary);
+      renderCoachScreen();
+    } else if (hitTarget(gGlossaryEvalsButton, "glossary evals", tapX, tapY)) {
+      gGlossaryCategory = GlossaryCategory::Evals;
+      startCoachMode(Screen::Glossary);
+      renderCoachScreen();
+    } else if (hitTarget(gGlossaryMetricsButton, "glossary metrics", tapX, tapY)) {
+      gGlossaryCategory = GlossaryCategory::Metrics;
+      startCoachMode(Screen::Glossary);
+      renderCoachScreen();
+    } else if (hitTarget(gGlossaryProductButton, "glossary product", tapX, tapY)) {
+      gGlossaryCategory = GlossaryCategory::Product;
+      startCoachMode(Screen::Glossary);
+      renderCoachScreen();
+    } else if (hitTarget(gGlossaryInterviewButton, "glossary interview", tapX, tapY)) {
+      gGlossaryCategory = GlossaryCategory::Interview;
+      startCoachMode(Screen::Glossary);
+      renderCoachScreen();
+    }
+    noteIgnoredIfNoHit(tapX, tapY);
+    return;
+  }
+
   if (gScreen == Screen::DrillsMenu) {
     if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
@@ -5386,8 +5668,7 @@ void handleTouch() {
     } else if (hitTarget(gExamButton, "exam", tapX, tapY)) {
       renderPlaceholderScreen(Screen::Exam, "Exam", "10-question readiness test later.");
     } else if (hitTarget(gGlossaryButton, "glossary", tapX, tapY)) {
-      startCoachMode(Screen::Glossary);
-      renderCoachScreen();
+      renderGlossaryMenu();
     } else if (hitTarget(gResultsButton, "results", tapX, tapY)) {
       renderPlaceholderScreen(Screen::Results, "Results", "No session results yet.");
     } else if (hitTarget(gSettingsButton, "settings", tapX, tapY)) {

@@ -1,85 +1,313 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "terms": [
     {
-      "term": "\"vibe-code\"",
-      "definition": "Prefer: \"AI-assisted prototyping in Python/Next.js, then productionize with engineering\"",
-      "source": "phrases_to_retire"
+      "category": "AI/RAG",
+      "term": "RAG",
+      "definition": "Retrieval-augmented generation: fetching relevant source material before asking a model to answer.",
+      "interview_importance": "Shows you can improve factuality without pretending the model itself knows private data.",
+      "example": "I would use RAG when answers must be grounded in current hotel policies."
     },
     {
-      "term": "\"call BS on an estimate\"",
-      "definition": "Prefer: \"pressure-test an estimate / ask the right questions about it\"",
-      "source": "phrases_to_retire"
+      "category": "AI/RAG",
+      "term": "retrieval",
+      "definition": "The step that finds candidate documents, chunks, records, or tool outputs for an AI system.",
+      "interview_importance": "Many AI failures are retrieval failures, so senior PMs should diagnose this layer first.",
+      "example": "If the answer is wrong, I check whether retrieval brought back the right context."
     },
     {
-      "term": "\"CEO's messy ideas\"",
-      "definition": "Prefer: \"ambiguous, high-level ideas\"",
-      "source": "phrases_to_retire"
+      "category": "AI/RAG",
+      "term": "embedding",
+      "definition": "A numeric representation of text, images, or other data used to compare semantic similarity.",
+      "interview_importance": "Helps explain semantic search, clustering, deduplication, and RAG trade-offs.",
+      "example": "We embedded support articles so similar questions map to nearby content."
     },
     {
-      "term": "\"own technical architecture\"",
-      "definition": "Prefer: \"own the technical trade-off decisions with engineering\"",
-      "source": "phrases_to_retire"
+      "category": "AI/RAG",
+      "term": "vector database",
+      "definition": "A storage and search system optimized for nearest-neighbor lookup over embeddings.",
+      "interview_importance": "Useful when discussing retrieval scale, latency, freshness, and filtering.",
+      "example": "The vector database retrieves the closest policy chunks before generation."
     },
     {
-      "term": "\"Local Champion,\" \"data moat,\" \"AI wrapper,\" \"failure-friendly,\" \"burning issue,\" \"medicine vs vitamin\"",
-      "definition": "Prefer: use once each; prefer \"high-frequency, high-severity problem,\" \"proprietary data advantage,\" \"ships controlled experiments safely\"",
-      "source": "phrases_to_retire"
+      "category": "AI/RAG",
+      "term": "reranking",
+      "definition": "A second scoring pass that reorders retrieved candidates for relevance or quality.",
+      "interview_importance": "Shows you know retrieval quality often improves after the first broad search.",
+      "example": "I would retrieve 50 chunks, then rerank down to the best 5."
     },
     {
-      "term": "\"eval-set → regression-gate → monitoring → fallback\" (repeated)",
-      "definition": "Prefer: state once, then refer to \"the eval and release system\"",
-      "source": "phrases_to_retire"
+      "category": "AI/RAG",
+      "term": "hybrid search",
+      "definition": "Search that combines keyword matching with semantic/vector similarity.",
+      "interview_importance": "Good answer when exact terms, IDs, names, or semantic paraphrases all matter.",
+      "example": "Hybrid search catches both 'refund' and exact policy code references."
     },
     {
-      "term": "Tripla take rate",
-      "definition": "1.42% vs ~25% OTA commission | Different business models, not a smaller commission — frame accordingly. Corrects the 1.67% draft.",
-      "source": "locked_figures"
+      "category": "AI/RAG",
+      "term": "semantic search",
+      "definition": "Search based on meaning rather than only exact keyword overlap.",
+      "interview_importance": "Lets you explain AI discovery and support workflows in non-technical language.",
+      "example": "A guest can ask 'late checkout' and still retrieve 'extended stay policy'."
     },
     {
-      "term": "Conversational agent (Cotomo)",
-      "definition": "~3× retention uplift (matched cohort) + ~50% longer sessions; sub-3% baseline | Corrects \"70% Day-7.\"",
-      "source": "locked_figures"
+      "category": "AI/RAG",
+      "term": "hallucination",
+      "definition": "A plausible model output that is unsupported, false, or fabricated.",
+      "interview_importance": "Interviewers expect concrete mitigation: grounding, evals, escalation, and monitoring.",
+      "example": "We route high-risk answers to fallback if grounding evidence is missing."
     },
     {
-      "term": "Digital Senpai",
-      "definition": "~20% fewer mentor queries / ~65% faster time-to-answer; PoC→pilot | Consistent across docs.",
-      "source": "locked_figures"
+      "category": "AI/RAG",
+      "term": "grounding",
+      "definition": "Tying model output to trusted source material, citations, tool results, or business rules.",
+      "interview_importance": "A strong AI PM answer distinguishes grounded answers from fluent guesses.",
+      "example": "The answer must cite the retrieved cancellation policy."
     },
     {
-      "term": "Safed K.K.",
-      "definition": "2.5× users / 2× revenue / +55% engagement / −40% TTM; team of 8 + 30-person Vietnam dev team | Operating role. Corrects \"70 at Safed.\" Spelling Safed.",
-      "source": "locked_figures"
+      "category": "AI/RAG",
+      "term": "guardrails",
+      "definition": "Rules, checks, UX constraints, or fallback paths that bound model behavior.",
+      "interview_importance": "Shows product ownership of risk instead of relying on prompts alone.",
+      "example": "A payment dispute bot needs escalation guardrails for high-value cases."
     },
     {
-      "term": "Pita Barcelona",
-      "definition": "profitability Yr1; 250% ROI Yr2 (initial investment); NYT/WSJ/Bloomberg | Verified.",
-      "source": "locked_figures"
+      "category": "AI/RAG",
+      "term": "MCP",
+      "definition": "Model Context Protocol: a standard way for AI apps to expose tools and context to models.",
+      "interview_importance": "Mention only when relevant; it is an integration pattern, not a product strategy.",
+      "example": "MCP could expose CRM lookup as a controlled tool."
     },
     {
-      "term": "Hackathon",
-      "definition": "Winner, AI Voice Agents Hackathon Tokyo 2026 (Google Japan / DeepLearning.AI); smartyPants | It's a hackathon — use as recency signal, not as your only proof.",
-      "source": "locked_figures"
+      "category": "AI/RAG",
+      "term": "agent",
+      "definition": "A system that can plan steps, call tools, observe results, and continue toward a goal.",
+      "interview_importance": "Good answers define autonomy level, tool scope, rollback, and human review.",
+      "example": "An agent may draft a refund response, but approval stays with support."
     },
     {
-      "term": "ETHGlobal Tokyo 2023",
-      "definition": "4 awards (1,500+ participants), blockchain payroll tool | Hackathon.",
-      "source": "locked_figures"
+      "category": "AI/RAG",
+      "term": "workflow automation",
+      "definition": "Using software or AI to complete repeated multi-step tasks with less manual effort.",
+      "interview_importance": "Frames AI value around time saved, quality, and operational throughput.",
+      "example": "Automating invoice triage matters if it reduces cycle time without raising errors."
     },
     {
-      "term": "Moneytree",
-      "definition": "+40% retention (consulting; directional) | Corrects \"80% usage.\"",
-      "source": "locked_figures"
+      "category": "Evals",
+      "term": "eval set",
+      "definition": "A curated set of test cases used to measure model or system behavior.",
+      "interview_importance": "Shows you can make probabilistic quality measurable before launch.",
+      "example": "I would build an eval set from real support intents and edge cases."
     },
     {
-      "term": "triplaNeo",
-      "definition": "AEO \"truth layer\": JSON-LD/schema.org + governed APIs | Prototype, not production.",
-      "source": "locked_figures"
+      "category": "Evals",
+      "term": "golden set",
+      "definition": "A high-quality labeled evaluation set treated as the reference answer source.",
+      "interview_importance": "Useful for explaining release gates, regression tests, and quality thresholds.",
+      "example": "The golden set includes the expected answer and the source policy."
     },
     {
-      "term": "PhD",
-      "definition": "research in multi-agent systems & semantic web; 2 papers, 256 citations | State your exact status if asked.",
-      "source": "locked_figures"
+      "category": "Evals",
+      "term": "LLM-as-judge",
+      "definition": "Using a model to score or compare outputs against a rubric.",
+      "interview_importance": "Strong answers mention calibration against human labels and known judge bias.",
+      "example": "I would use an LLM judge for scale, then audit it against human review."
+    },
+    {
+      "category": "Evals",
+      "term": "confidence calibration",
+      "definition": "The match between a system's confidence signal and the true likelihood it is correct.",
+      "interview_importance": "Important for deciding when to answer, defer, escalate, or ask clarification.",
+      "example": "High confidence should mean the answer is actually right most of the time."
+    },
+    {
+      "category": "Evals",
+      "term": "HITL",
+      "definition": "Human-in-the-loop: a person reviews, approves, corrects, or handles uncertain cases.",
+      "interview_importance": "Shows realistic deployment thinking for high-risk workflows.",
+      "example": "HITL review handles refunds above a threshold until quality is proven."
+    },
+    {
+      "category": "Evals",
+      "term": "baseline",
+      "definition": "The existing system, metric, or process used as the comparison point.",
+      "interview_importance": "Prevents overclaiming impact; every launch answer needs a before state.",
+      "example": "We compare the AI flow against the current support macro baseline."
+    },
+    {
+      "category": "Evals",
+      "term": "p95 latency",
+      "definition": "The response time under which 95 percent of requests complete.",
+      "interview_importance": "Better than average latency when discussing real user experience and SLAs.",
+      "example": "The chatbot must keep p95 latency under the partner SLA."
+    },
+    {
+      "category": "Evals",
+      "term": "token cost",
+      "definition": "The variable cost of model input and output tokens for each interaction.",
+      "interview_importance": "Shows AI PM maturity by tying quality decisions to unit economics.",
+      "example": "I would route easy intents to cheaper models to control token cost."
+    },
+    {
+      "category": "Metrics",
+      "term": "A/B test",
+      "definition": "An experiment that compares variants across randomized user groups.",
+      "interview_importance": "Use when causality matters and the sample/risk profile supports experimentation.",
+      "example": "We A/B test checkout copy to measure conversion impact."
+    },
+    {
+      "category": "Metrics",
+      "term": "cohort",
+      "definition": "A group of users sharing a start time, behavior, plan, source, or other trait.",
+      "interview_importance": "Cohorts prevent blended averages from hiding retention or activation problems.",
+      "example": "Compare retained versus churned cohorts after first value."
+    },
+    {
+      "category": "Metrics",
+      "term": "retention",
+      "definition": "The share of users or accounts that keep using the product over time.",
+      "interview_importance": "Often stronger than trial or demo usage for proving durable value.",
+      "example": "Weekly retained teams is better than one-off AI demo clicks."
+    },
+    {
+      "category": "Metrics",
+      "term": "conversion",
+      "definition": "The percentage of users who complete a desired action in a funnel.",
+      "interview_importance": "Useful for framing checkout, signup, onboarding, and activation problems.",
+      "example": "Direct booking conversion is the key hotel funnel metric."
+    },
+    {
+      "category": "Metrics",
+      "term": "north-star metric",
+      "definition": "A single primary metric intended to reflect delivered customer value and business growth.",
+      "interview_importance": "Strong PMs choose one but still protect against gaming with guardrails.",
+      "example": "Completed practice sessions with improved score could be a north-star metric."
+    },
+    {
+      "category": "Metrics",
+      "term": "guardrail metric",
+      "definition": "A metric that must not worsen while optimizing the primary metric.",
+      "interview_importance": "Shows balanced product judgment around quality, trust, cost, and latency.",
+      "example": "Increase conversion while keeping refund rate and p95 latency within bounds."
+    },
+    {
+      "category": "Metrics",
+      "term": "CAC",
+      "definition": "Customer acquisition cost: the cost to acquire a customer or account.",
+      "interview_importance": "Critical for marketplace, SaaS, and direct-booking unit economics.",
+      "example": "AI must lift conversion enough to justify the hotel's CAC."
+    },
+    {
+      "category": "Metrics",
+      "term": "LTV",
+      "definition": "Lifetime value: expected gross profit or value from a customer over time.",
+      "interview_importance": "Pairs with CAC to judge whether growth is economically healthy.",
+      "example": "A direct guest relationship matters if it raises repeat booking LTV."
+    },
+    {
+      "category": "Product",
+      "term": "PMF",
+      "definition": "Product-market fit: strong evidence that a product solves an important market need.",
+      "interview_importance": "Avoid vague enthusiasm; cite retention, pull, expansion, or willingness to pay.",
+      "example": "PMF is not demo excitement; it is repeated use in a real workflow."
+    },
+    {
+      "category": "Product",
+      "term": "discovery",
+      "definition": "Learning work that clarifies user needs, risks, constraints, and opportunity size.",
+      "interview_importance": "Senior PM interviews reward evidence-seeking before solution commitment.",
+      "example": "I would interview operators before committing to an AI concierge."
+    },
+    {
+      "category": "Product",
+      "term": "PRD",
+      "definition": "Product requirements document describing problem, goals, scope, constraints, and acceptance criteria.",
+      "interview_importance": "For AI, a PRD should include evals, fallback, risk, and observability.",
+      "example": "The PRD defines acceptable factual error rate and escalation rules."
+    },
+    {
+      "category": "Product",
+      "term": "MVP",
+      "definition": "The smallest useful product version that tests the riskiest assumption.",
+      "interview_importance": "Shows you can reduce scope without losing the learning goal.",
+      "example": "Use a concierge MVP before building a full agent."
+    },
+    {
+      "category": "Product",
+      "term": "ROI",
+      "definition": "Return on investment: value gained compared with investment required.",
+      "interview_importance": "Tie AI work to revenue, cost reduction, risk reduction, or speed.",
+      "example": "The feature needs a credible ROI after inference and support costs."
+    },
+    {
+      "category": "Product",
+      "term": "trade-off",
+      "definition": "A decision where improving one dimension costs another, such as quality versus latency.",
+      "interview_importance": "Senior answers name the trade-off and the decision rule.",
+      "example": "Use a slower model only for high-stakes intents."
+    },
+    {
+      "category": "Product",
+      "term": "activation",
+      "definition": "The first moment a user experiences meaningful product value.",
+      "interview_importance": "Useful for diagnosing high signup but low retention.",
+      "example": "For PaperCoach, activation is completing a useful practice session."
+    },
+    {
+      "category": "Product",
+      "term": "segmentation",
+      "definition": "Dividing users or accounts into meaningful groups for analysis or targeting.",
+      "interview_importance": "Prevents one-size-fits-all conclusions from weak data.",
+      "example": "Hotels may segment by property size, inbound mix, and direct-booking maturity."
+    },
+    {
+      "category": "Interview",
+      "term": "STAR",
+      "definition": "Situation, Task, Action, Result: a structure for behavioral interview answers.",
+      "interview_importance": "Keeps examples concrete and prevents rambling.",
+      "example": "Use STAR for 'tell me about a time' questions."
+    },
+    {
+      "category": "Interview",
+      "term": "structured answer",
+      "definition": "An answer with a clear frame, ordered points, evidence, and a concise close.",
+      "interview_importance": "Signals senior communication under pressure.",
+      "example": "I would answer in three parts: risk, rollout, and metric."
+    },
+    {
+      "category": "Interview",
+      "term": "MECE",
+      "definition": "Mutually exclusive, collectively exhaustive: categories that avoid overlap and gaps.",
+      "interview_importance": "Helpful for case-style structuring, but do not sound robotic.",
+      "example": "Split launch risk into quality, latency, cost, and trust."
+    },
+    {
+      "category": "Interview",
+      "term": "clarifying question",
+      "definition": "A short question asked before answering to pin down scope or assumptions.",
+      "interview_importance": "Shows judgment, but too many can look evasive.",
+      "example": "Before sizing ROI, I would ask whether we optimize revenue or cost."
+    },
+    {
+      "category": "Interview",
+      "term": "executive summary",
+      "definition": "The brief top-line answer before details.",
+      "interview_importance": "Useful with senior interviewers who want the point first.",
+      "example": "My short answer is build a narrow RAG pilot, not a broad agent."
+    },
+    {
+      "category": "Interview",
+      "term": "defense",
+      "definition": "A principled response to an interviewer pushback or objection.",
+      "interview_importance": "Turns challenge questions into evidence of judgment instead of defensiveness.",
+      "example": "If challenged on wrappers, defend workflow fit, data loop, and trust."
+    },
+    {
+      "category": "Interview",
+      "term": "caveat",
+      "definition": "A constraint or uncertainty stated clearly so the answer does not overclaim.",
+      "interview_importance": "Especially important when using directional metrics or estimates.",
+      "example": "I would caveat that the retention lift is directional, not causal proof."
     }
   ]
 }
