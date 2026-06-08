@@ -16,7 +16,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v4.0";
+constexpr const char* kFirmwareVersion = "v4.1";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -315,9 +315,22 @@ struct CoachReaderStage {
   ReaderPageSet pages;
 };
 
+struct DrillOptionPage {
+  uint8_t firstOption = 0;
+  uint8_t optionCount = 0;
+};
+
+struct DrillPagePlan {
+  ReaderPageSet questionPages;
+  DrillOptionPage optionPages[kMaxOptions];
+  uint8_t optionPageCount = 1;
+  uint8_t totalPages = 2;
+};
+
 struct CoachItem {
   CoachItemType type = CoachItemType::Qa;
   String id;
+  String cardId;
   String sectionId;
   String section;
   String number;
@@ -344,6 +357,7 @@ struct CoachItem {
 struct CoachItemView {
   CoachItemType type = CoachItemType::Qa;
   const char* id = "";
+  const char* cardId = "";
   const char* sectionId = "";
   const char* section = "";
   const char* number = "";
@@ -1708,6 +1722,10 @@ bool loadCoachDeckFromSd() {
     CoachItem item;
     item.type = parseCoachType(object["type"] | "qa");
     item.id = object["id"] | "";
+    item.cardId = object["card_id"] | "";
+    if (item.cardId.length() == 0) {
+      item.cardId = item.id;
+    }
     item.sectionId = object["section_id"] | "";
     item.section = object["section"] | "";
     item.number = object["number"] | "";
@@ -1781,6 +1799,7 @@ CoachItemView coachItemAt(size_t index) {
     const CoachItem& item = gCoachItems[index];
     view.type = item.type;
     view.id = item.id.c_str();
+    view.cardId = item.cardId.length() > 0 ? item.cardId.c_str() : item.id.c_str();
     view.sectionId = item.sectionId.c_str();
     view.section = item.section.c_str();
     view.number = item.number.c_str();
@@ -1811,6 +1830,7 @@ CoachItemView coachItemAt(size_t index) {
     const auto& card = embedded_papercoach::kCards[index];
     view.type = CoachItemType::Qa;
     view.id = card.id;
+    view.cardId = card.id;
     view.sectionId = card.sectionId;
     view.section = card.section;
     view.number = card.number;
@@ -1832,6 +1852,7 @@ CoachItemView coachItemAt(size_t index) {
     const auto& drill = embedded_papercoach::kDrills[drillIndex];
     view.type = parseCoachType(drill.type);
     view.id = drill.id;
+    view.cardId = drill.cardId;
     view.sectionId = "D";
     view.section = "PaperCoach Drills";
     view.number = "";
@@ -3193,6 +3214,12 @@ ReaderPageSet buildReaderPages(const String& rawText, int32_t width, uint8_t lin
   pages.sanitizedLength = sanitized.length();
   wrapSanitizedReaderTextToLines(sanitized, width, pages.lines);
   pages.pageCount = boundedPageCount(pages.lines.size(), pages.linesPerPage);
+  if (pages.lines.size() > static_cast<size_t>(pages.linesPerPage) * kMaxReaderPageCount) {
+    Serial.printf("Reader page cap warning: field=%s wrappedLines=%u visibleCapacity=%u pageCap=%u\n",
+                  field && field[0] != '\0' ? field : "text", static_cast<unsigned>(pages.lines.size()),
+                  static_cast<unsigned>(pages.linesPerPage * kMaxReaderPageCount),
+                  static_cast<unsigned>(kMaxReaderPageCount));
+  }
   return pages;
 }
 
@@ -3408,6 +3435,123 @@ bool isOptionDrillScreen(Screen screen, const CoachItemView& item) {
          item.optionCount > 0;
 }
 
+const char* coachDisplayId(const CoachItemView& item) {
+  if (item.cardId && item.cardId[0] != '\0') {
+    return item.cardId;
+  }
+  if (item.id && item.id[0] != '\0') {
+    return item.id;
+  }
+  return coachScreenTitle(gScreen);
+}
+
+const char* drillHeaderLabel(const CoachItemView& item) {
+  switch (item.type) {
+    case CoachItemType::WeakAnswer:
+      return "Weak Answer";
+    case CoachItemType::MetricPrecision:
+      return "Metric Precision";
+    case CoachItemType::HostileFollowup:
+      return "Hostile Follow-up";
+    case CoachItemType::Mcq:
+      return gDrillCategory == DrillCategory::FrameworkChoice ? "Framework Choice" : "MCQ";
+    default:
+      return coachScreenTitle(gScreen);
+  }
+}
+
+FontSizeMode coachReaderSizeFor(const CoachItemView& item) {
+  const FontSizeMode requested = canonicalFontSizeMode(gSettings.fontSizeMode);
+  if (isOptionDrillScreen(gScreen, item) && requested == FontSizeMode::XL) {
+    Serial.printf("Drill auto-fit: item=%s from=Reader L to=Reader M reason=question-options-fit\n",
+                  coachDisplayId(item));
+    return FontSizeMode::Large;
+  }
+  return requested;
+}
+
+String optionLabelWithLetter(const CoachItemView& item, uint8_t option) {
+  return String(static_cast<char>('A' + option)) + ". " + coachOptionLabelFor(item, option);
+}
+
+int32_t optionButtonHeightFor(const String& label, int32_t buttonWidth) {
+  applyCoachButtonFont();
+  std::vector<String> lines;
+  wrapReaderTextToLines(label, buttonWidth - 32, lines, "option-measure");
+  const int32_t lineHeight = static_cast<int32_t>(coachTypography().buttonPx) + 8;
+  const int32_t desiredHeight = static_cast<int32_t>(lines.size()) * lineHeight + 24;
+  return desiredHeight > 56 ? desiredHeight : 56;
+}
+
+void drawOptionButton(const Rect& rect, const String& label) {
+  auto& display = M5.Display;
+  display.drawRoundRect(rect.x, rect.y, rect.w, rect.h, 8, TFT_BLACK);
+  display.drawRoundRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 7, TFT_BLACK);
+  applyCoachButtonFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.setTextDatum(textdatum_t::top_left);
+
+  std::vector<String> lines;
+  wrapReaderTextToLines(label, rect.w - 32, lines, "option-button");
+  const int32_t lineHeight = static_cast<int32_t>(coachTypography().buttonPx) + 8;
+  const int32_t textY = rect.y + 12;
+  for (size_t line = 0; line < lines.size(); ++line) {
+    display.drawString(lines[line], rect.x + 18, textY + static_cast<int32_t>(line) * lineHeight);
+  }
+  logLayoutBox("option-button", rect, static_cast<int32_t>(lines.size()) * lineHeight + 24, 1,
+               static_cast<int32_t>(lines.size()) * lineHeight + 24 > rect.h);
+}
+
+DrillPagePlan buildDrillPagePlan(const CoachItemView& item, const PracticeLayout& layout) {
+  DrillPagePlan plan;
+  plan.questionPages = buildReaderPages(item.prompt, layout.contentW, layout.linesPerPage, "Question");
+  plan.optionPageCount = 0;
+
+  const uint8_t optionCount = item.optionCount < kMaxOptions ? item.optionCount : kMaxOptions;
+  if (optionCount == 0) {
+    plan.totalPages = plan.questionPages.pageCount;
+    return plan;
+  }
+
+  int32_t usedHeight = 0;
+  const int32_t optionGap = 10;
+  for (uint8_t option = 0; option < optionCount; ++option) {
+    const String label = optionLabelWithLetter(item, option);
+    const int32_t optionHeight = optionButtonHeightFor(label, layout.contentW);
+    if (optionHeight > layout.contentH) {
+      Serial.printf("Drill option fit warning: item=%s option=%c height=%ld contentH=%ld\n", coachDisplayId(item),
+                    static_cast<char>('A' + option), static_cast<long>(optionHeight), static_cast<long>(layout.contentH));
+    }
+    const int32_t nextHeight = usedHeight == 0 ? optionHeight : usedHeight + optionGap + optionHeight;
+    if (plan.optionPageCount > 0 && plan.optionPages[plan.optionPageCount - 1].optionCount > 0 &&
+        nextHeight > layout.contentH) {
+      ++plan.optionPageCount;
+      usedHeight = 0;
+    }
+    if (plan.optionPageCount >= kMaxOptions) {
+      plan.optionPageCount = kMaxOptions;
+      break;
+    }
+    if (plan.optionPages[plan.optionPageCount].optionCount == 0) {
+      plan.optionPages[plan.optionPageCount].firstOption = option;
+    }
+    ++plan.optionPages[plan.optionPageCount].optionCount;
+    usedHeight = usedHeight == 0 ? optionHeight : usedHeight + optionGap + optionHeight;
+  }
+
+  if (plan.optionPageCount == 0 || plan.optionPages[plan.optionPageCount].optionCount > 0) {
+    ++plan.optionPageCount;
+  }
+  if (plan.optionPageCount == 0) {
+    plan.optionPageCount = 1;
+  }
+  plan.totalPages = plan.questionPages.pageCount + plan.optionPageCount;
+  if (plan.totalPages == 0) {
+    plan.totalPages = 1;
+  }
+  return plan;
+}
+
 String selectedOptionExplanationText(const CoachItemView& item) {
   String result = String("Selected: ") + static_cast<char>('A' + gSelectedOption) + ". " +
                   coachOptionLabelFor(item, static_cast<uint8_t>(gSelectedOption));
@@ -3423,6 +3567,7 @@ String selectedOptionExplanationText(const CoachItemView& item) {
   } else {
     result += "No explanation available";
   }
+  result += "\nWhy other options are weaker: No per-option explanation available";
   return result;
 }
 
@@ -3491,15 +3636,18 @@ uint8_t currentCoachReaderPageCount() {
   if (gScreen == Screen::InterviewPractice) {
     return interviewStageCount(item);
   }
-  if (isOptionDrillScreen(gScreen, item) && gSelectedOption < 0) {
-    return 1;
-  }
 
   const FontSizeMode savedSize = gSettings.fontSizeMode;
-  const FontSizeMode renderSize = canonicalFontSizeMode(gSettings.fontSizeMode);
+  const FontSizeMode renderSize = coachReaderSizeFor(item);
   gSettings.fontSizeMode = renderSize;
   const PracticeLayout layout = practiceLayoutFor(renderSize);
   applyCoachContentFont();
+  if (isOptionDrillScreen(gScreen, item) && gSelectedOption < 0) {
+    applyCoachButtonFont();
+    const DrillPagePlan plan = buildDrillPagePlan(item, layout);
+    gSettings.fontSizeMode = savedSize;
+    return plan.totalPages;
+  }
   CoachReaderStage stages[3];
   const uint8_t stageCount = buildCoachReaderStages(item, layout, stages, countOf(stages));
   gSettings.fontSizeMode = savedSize;
@@ -3512,9 +3660,13 @@ void drawCompactReaderHeader(const CoachItemView& item, const char* stageName, u
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
   display.setTextColor(darkGray, TFT_WHITE);
-  String line = sanitizeCoachText(item.id && item.id[0] != '\0' ? item.id : coachScreenTitle(gScreen), "reader-id");
+  String line = sanitizeCoachText(coachDisplayId(item), "reader-id");
   line += " · ";
-  line += (item.mustMaster ? "Must" : "Card");
+  if (gScreen == Screen::InterviewPractice || item.type == CoachItemType::Qa || item.type == CoachItemType::Glossary) {
+    line += (item.mustMaster ? "Must" : "Card");
+  } else {
+    line += drillHeaderLabel(item);
+  }
   line += " · ";
   line += stageName;
   if (pageCount > 1) {
@@ -3529,6 +3681,25 @@ void drawCompactReaderHeader(const CoachItemView& item, const char* stageName, u
   } else {
     display.drawString(coachScreenTitle(gScreen), kCoachMargin, 52);
   }
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+}
+
+void drawCompactDrillHeader(const CoachItemView& item, uint8_t pageNumber, uint8_t pageCount) {
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  String line = sanitizeCoachText(coachDisplayId(item), "drill-id");
+  line += " · ";
+  line += drillHeaderLabel(item);
+  if (pageCount > 1) {
+    line += " · ";
+    line += static_cast<unsigned>(pageNumber);
+    line += "/";
+    line += static_cast<unsigned>(pageCount);
+  }
+  display.drawString(line, kCoachMargin, 22);
+  display.drawString(coachScreenTitle(gScreen), kCoachMargin, 52);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
 }
 
@@ -3735,9 +3906,9 @@ void renderCoachScreen() {
 
   auto& display = M5.Display;
   const FontSizeMode savedSize = gSettings.fontSizeMode;
-  const FontSizeMode renderSize = canonicalFontSizeMode(gSettings.fontSizeMode);
+  FontSizeMode renderSize = canonicalFontSizeMode(gSettings.fontSizeMode);
   gSettings.fontSizeMode = renderSize;
-  const PracticeLayout layout = practiceLayoutFor(renderSize);
+  PracticeLayout layout = practiceLayoutFor(renderSize);
   logTypographySettings("coach screen");
   for (uint8_t option = 0; option < kMaxOptions; ++option) {
     gOptionButtons[option] = {};
@@ -3763,6 +3934,10 @@ void renderCoachScreen() {
     finishDisplayRefresh();
     return;
   }
+  renderSize = coachReaderSizeFor(item);
+  gSettings.fontSizeMode = renderSize;
+  layout = practiceLayoutFor(renderSize);
+  logTypographySettings("coach item screen");
   if (gScreen == Screen::MockInterview) {
     applyCoachMetadataFont();
     display.drawString(String("Prompt ") + (gMockStep + 1) + "/5", kCoachMargin, 76);
@@ -3771,58 +3946,46 @@ void renderCoachScreen() {
 
   const bool optionDrill = isOptionDrillScreen(gScreen, item);
   if (optionDrill && gSelectedOption < 0) {
-    const uint8_t optionCount = item.optionCount < kMaxOptions ? item.optionCount : kMaxOptions;
-    const int32_t contentX = layout.contentX;
-    const int32_t contentW = layout.contentW;
-    const int32_t contentY = layout.contentY;
-    const int32_t footerTop = layout.footerY;
-    const int32_t contentH = layout.contentH;
-    drawCompactReaderHeader(item, "Question", 1, 1);
-
-    String optionLabels[kMaxOptions];
-    int32_t optionHeights[kMaxOptions] = {};
-    int32_t optionTotal = 0;
-    const int32_t optionGap = 10;
-    for (uint8_t option = 0; option < optionCount; ++option) {
-      optionLabels[option] = String(static_cast<char>('A' + option)) + ". " + coachOptionLabelFor(item, option);
-      optionHeights[option] = wrappedButtonHeightFor(optionLabels[option], contentW);
-      optionTotal += optionHeights[option];
+    const DrillPagePlan plan = buildDrillPagePlan(item, layout);
+    if (gCoachStage >= plan.totalPages) {
+      gCoachStage = plan.totalPages - 1;
     }
-    if (optionCount > 1) {
-      optionTotal += optionGap * (optionCount - 1);
-    }
+    drawCompactDrillHeader(item, gCoachStage + 1, plan.totalPages);
+    gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
 
-    const int32_t promptAvailable = contentH - optionTotal - 24;
-    const uint8_t promptMaxLines = linesThatFit(promptAvailable, layout.lineHeight, 2, 5);
-    applyCoachContentFont();
-    const TextLayoutResult promptLayout =
-        drawWrappedText(item.prompt, contentX, contentY, contentW, layout.lineHeight, promptMaxLines, "prompt", 1);
-
-    int32_t y = contentY + promptLayout.height + 22;
-    const int32_t usedHeight = promptLayout.height + 22 + optionTotal;
-    Serial.printf("Layout vertical budget: screen=%s header=%ld prompt=%ld options=%ld footer=%ld total=%ld "
-                  "available=%ld pageCount=2\n",
-                  screenName(gScreen), static_cast<long>(kCoachHeaderBottom), static_cast<long>(promptLayout.height),
-                  static_cast<long>(optionTotal), static_cast<long>(display.height() - footerTop),
-                  static_cast<long>(kCoachHeaderBottom + promptLayout.height + 22 + optionTotal +
-                                    (display.height() - footerTop)),
-                  static_cast<long>(display.height()));
-    logLayoutBox("drill-vertical-budget", Rect(contentX, contentY, contentW, contentH), usedHeight, 2,
-                 usedHeight > contentH);
-    for (uint8_t option = 0; option < optionCount; ++option) {
-      int32_t buttonH = optionHeights[option];
-      if (y + buttonH > footerTop - 8) {
-        buttonH = footerTop - 8 - y;
+    if (gCoachStage < plan.questionPages.pageCount) {
+      applyCoachContentFont();
+      drawReaderPage(plan.questionPages, gCoachStage, layout.contentX, layout.contentY, layout.lineHeight);
+      logReaderPagination("Question", plan.questionPages, layout);
+      recordRenderTrace(item, "Question", item.prompt, plan.questionPages, gCoachStage);
+    } else {
+      const uint8_t optionPageIndex = gCoachStage - plan.questionPages.pageCount;
+      const DrillOptionPage& optionPage =
+          plan.optionPages[optionPageIndex < plan.optionPageCount ? optionPageIndex : plan.optionPageCount - 1];
+      int32_t y = layout.contentY;
+      const int32_t optionGap = 10;
+      String traceBody;
+      for (uint8_t offset = 0; offset < optionPage.optionCount; ++offset) {
+        const uint8_t option = optionPage.firstOption + offset;
+        if (option >= item.optionCount || option >= kMaxOptions) {
+          continue;
+        }
+        const String label = optionLabelWithLetter(item, option);
+        const int32_t buttonH = optionButtonHeightFor(label, layout.contentW);
+        gOptionButtons[option] = {layout.contentX, y, layout.contentW, buttonH};
+        drawOptionButton(gOptionButtons[option], label);
+        if (traceBody.length() > 0) {
+          traceBody += "\n";
+        }
+        traceBody += label;
+        y += buttonH + optionGap;
       }
-      if (buttonH < 56) {
-        logLayoutBox("option-clipped", Rect(contentX, y, contentW, buttonH), optionHeights[option], 2, true);
-        break;
-      }
-      gOptionButtons[option] = {contentX, y, contentW, buttonH};
-      drawButton(gOptionButtons[option], optionLabels[option], IconType::None, ButtonTextAlign::Left);
-      y += buttonH + optionGap;
+      ReaderPageSet optionTrace = buildReaderPages(traceBody, layout.contentW, layout.linesPerPage, "Options");
+      recordRenderTrace(item, "Options", traceBody, optionTrace, 0);
+      Serial.printf("Drill options shown: item=%s optionPage=%u/%u first=%u count=%u totalPages=%u\n",
+                    coachDisplayId(item), optionPageIndex + 1, plan.optionPageCount, optionPage.firstOption,
+                    optionPage.optionCount, plan.totalPages);
     }
-    gReaderContentRect = {contentX, contentY, contentW, contentH};
     drawCoachFooterNav(hasPreviousCoachItem(), hasNextCoachItem());
     gSettings.fontSizeMode = savedSize;
     finishDisplayRefresh();
@@ -3849,7 +4012,11 @@ void renderCoachScreen() {
   }
 
   const CoachReaderStage& stage = stages[currentStage];
-  drawCompactReaderHeader(item, stage.name, localPage + 1, stage.pages.pageCount);
+  if (optionDrill) {
+    drawCompactDrillHeader(item, gCoachStage + 1, totalPages);
+  } else {
+    drawCompactReaderHeader(item, stage.name, localPage + 1, stage.pages.pageCount);
+  }
   applyCoachContentFont();
   gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
   drawReaderPage(stage.pages, localPage, layout.contentX, layout.contentY, layout.lineHeight);
