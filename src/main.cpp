@@ -16,13 +16,14 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v3.8";
+constexpr const char* kFirmwareVersion = "v3.9";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
 constexpr const char* kPrefsNamespace = "paperbadge";
 constexpr const char* kReaderVlwPath = "/paperbadge/fonts/reader.vlw";
 constexpr const char* kReaderMidVlwPath = "/paperbadge/fonts/reader_mid.vlw";
+constexpr const char* kRenderTracePath = "/papercoach/debug/render_trace.txt";
 constexpr uint32_t kDefaultLanguageIntervalSeconds = 15;
 constexpr uint32_t kInputDebounceMs = 250;
 constexpr uint32_t kInputCleanRefreshDebounceMs = 600;
@@ -307,6 +308,12 @@ struct PracticePageCounts {
   uint8_t totalPages = 4;
 };
 
+struct CoachReaderStage {
+  const char* name = "Text";
+  String body;
+  ReaderPageSet pages;
+};
+
 struct CoachItem {
   CoachItemType type = CoachItemType::Qa;
   String id;
@@ -359,6 +366,9 @@ struct CoachItemView {
   uint8_t correctIndex = 0;
 };
 
+uint8_t interviewStageCount(const CoachItemView& item);
+PracticeLayout practiceLayoutFor(FontSizeMode renderSize);
+
 BadgeConfig gBadgeConfig;
 Settings gSettings;
 Preferences gPrefs;
@@ -408,6 +418,7 @@ Rect gNextButton;
 Rect gFilterButton;
 Rect gTouchDebugButton;
 Rect gLayoutDebugButton;
+Rect gRenderTraceButton;
 Rect gFontLabButton;
 Rect gVisualQaButton;
 Rect gTypographyResetButton;
@@ -416,6 +427,7 @@ Rect gFontLabSizeButton;
 Rect gFontLabContrastButton;
 Rect gFontLabLineSpacingButton;
 Rect gOptionButtons[kMaxOptions];
+Rect gReaderContentRect;
 bool gSdMounted = false;
 bool gBadgeJsonLoaded = false;
 bool gCoachDeckLoadedFromSd = false;
@@ -458,6 +470,9 @@ String gLastIgnoredTouchReason = "none";
 bool gHitMatchedThisTap = false;
 uint32_t gSanitizerReplacementTotal = 0;
 uint32_t gSanitizerReplacementLast = 0;
+bool gCoachNeedsCleanEntryRefresh = false;
+String gLastRenderTrace;
+String gLastRenderTraceStatus = "not dumped";
 
 const char* screenName(Screen screen);
 const char* fontSizeModeName();
@@ -477,6 +492,7 @@ TextLayoutResult wrapTextToLines(const String& text, int32_t width, int32_t line
 void logLayoutBox(const char* field, const Rect& box, int32_t usedHeight, uint8_t pageCount, bool overflow);
 int32_t coachFooterTop();
 void logCurrentLayoutDiagnostics(const char* reason);
+void dumpCurrentRenderTraceToSd();
 
 struct EmbeddedCoachItem {
   CoachItemType type;
@@ -1899,19 +1915,64 @@ size_t findCoachItem(Screen screen, size_t startIndex) {
   return 0;
 }
 
+bool findNextCoachItem(Screen screen, size_t currentIndex, size_t& nextIndex) {
+  if (gCoachItemCount == 0 || currentIndex + 1 >= gCoachItemCount) {
+    return false;
+  }
+  for (size_t index = currentIndex + 1; index < gCoachItemCount; ++index) {
+    if (itemMatchesScreen(coachItemAt(index), screen)) {
+      nextIndex = index;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool findPreviousCoachItem(Screen screen, size_t currentIndex, size_t& previousIndex) {
+  if (gCoachItemCount == 0 || currentIndex == 0) {
+    return false;
+  }
+  for (size_t offset = 1; offset <= currentIndex; ++offset) {
+    const size_t index = currentIndex - offset;
+    if (itemMatchesScreen(coachItemAt(index), screen)) {
+      previousIndex = index;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool hasNextCoachItem() {
+  size_t index = 0;
+  return findNextCoachItem(gScreen, gCoachIndex, index);
+}
+
+bool hasPreviousCoachItem() {
+  size_t index = 0;
+  return findPreviousCoachItem(gScreen, gCoachIndex, index);
+}
+
 void startCoachMode(Screen screen) {
   gScreen = screen;
   gCoachIndex = findCoachItem(screen, 0);
   gCoachStage = 0;
   gSelectedOption = -1;
   gMockStep = 0;
+  gCoachNeedsCleanEntryRefresh = true;
+  Serial.printf("Coach mode entry: screen=%s cleanRefresh=queued\n", screenName(screen));
 }
 
 void nextCoachItem() {
   if (gCoachItemCount == 0) {
     return;
   }
-  gCoachIndex = findCoachItem(gScreen, (gCoachIndex + 1) % gCoachItemCount);
+  size_t nextIndex = 0;
+  if (!findNextCoachItem(gScreen, gCoachIndex, nextIndex)) {
+    Serial.printf("Coach next item unavailable: screen=%s index=%u\n", screenName(gScreen),
+                  static_cast<unsigned>(gCoachIndex));
+    return;
+  }
+  gCoachIndex = nextIndex;
   gCoachStage = 0;
   gSelectedOption = -1;
   if (gScreen == Screen::MockInterview) {
@@ -1923,13 +1984,13 @@ void previousCoachItem() {
   if (gCoachItemCount == 0) {
     return;
   }
-  for (size_t offset = 1; offset <= gCoachItemCount; ++offset) {
-    const size_t index = (gCoachIndex + gCoachItemCount - offset) % gCoachItemCount;
-    if (itemMatchesScreen(coachItemAt(index), gScreen)) {
-      gCoachIndex = index;
-      break;
-    }
+  size_t previousIndex = 0;
+  if (!findPreviousCoachItem(gScreen, gCoachIndex, previousIndex)) {
+    Serial.printf("Coach previous item unavailable: screen=%s index=%u\n", screenName(gScreen),
+                  static_cast<unsigned>(gCoachIndex));
+    return;
   }
+  gCoachIndex = previousIndex;
   gCoachStage = 0;
   gSelectedOption = -1;
 }
@@ -2027,6 +2088,15 @@ void prepareFullRefresh(const char* reason = nullptr, bool highQuality = false) 
   display.fillScreen(TFT_WHITE);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.setTextWrap(false, false);
+}
+
+void prepareCoachContentRefresh(const char* reason = "content page") {
+  const bool cleanEntry = gCoachNeedsCleanEntryRefresh;
+  prepareFullRefresh(cleanEntry ? "content entry clean" : reason, cleanEntry);
+  if (cleanEntry) {
+    Serial.printf("Content entry clean refresh consumed: screen=%s\n", screenName(gScreen));
+  }
+  gCoachNeedsCleanEntryRefresh = false;
 }
 
 void cleanWhiteRefresh(const char* reason) {
@@ -2267,6 +2337,36 @@ void drawButton(const Rect& rect, const String& label, IconType icon = IconType:
 
 void drawButton(const Rect& rect, const String& label, IconType icon, ButtonTextAlign align) {
   drawButton(rect, label.c_str(), icon, align);
+}
+
+void drawDisabledButton(const Rect& rect, IconType icon) {
+  auto& display = M5.Display;
+  drawButton(rect, "", icon);
+  display.drawLine(rect.x + 12, rect.y + rect.h - 12, rect.x + rect.w - 12, rect.y + 12, TFT_DARKGREY);
+  display.drawLine(rect.x + 13, rect.y + rect.h - 12, rect.x + rect.w - 11, rect.y + 12, TFT_DARKGREY);
+}
+
+void drawCoachFooterNav(bool previousEnabled, bool nextEnabled) {
+  auto& display = M5.Display;
+  const int32_t footerY = display.height() - 76;
+  const int32_t buttonH = 58;
+  const int32_t sideW = 132;
+  const int32_t homeW = 108;
+  gFilterButton = {24, footerY, sideW, buttonH};
+  gHomeButton = {(display.width() - homeW) / 2, footerY, homeW, buttonH};
+  gNextButton = {display.width() - sideW - 24, footerY, sideW, buttonH};
+
+  if (previousEnabled) {
+    drawButton(gFilterButton, "", IconType::Back);
+  } else {
+    drawDisabledButton(gFilterButton, IconType::Back);
+  }
+  drawButton(gHomeButton, "", IconType::Home);
+  if (nextEnabled) {
+    drawButton(gNextButton, "", IconType::Next);
+  } else {
+    drawDisabledButton(gNextButton, IconType::Next);
+  }
 }
 
 bool isCoachScreen(Screen screen) {
@@ -3025,10 +3125,9 @@ String practicePromptText(const CoachItemView& item) {
   return text;
 }
 
-void wrapReaderTextToLines(const String& rawText, int32_t width, std::vector<String>& lines, const char* field) {
+void wrapSanitizedReaderTextToLines(const String& text, int32_t width, std::vector<String>& lines) {
   auto& display = M5.Display;
   lines.clear();
-  const String text = sanitizeCoachText(rawText, field);
   String line;
   String word;
 
@@ -3070,6 +3169,11 @@ void wrapReaderTextToLines(const String& rawText, int32_t width, std::vector<Str
   }
 }
 
+void wrapReaderTextToLines(const String& rawText, int32_t width, std::vector<String>& lines, const char* field) {
+  const String text = sanitizeCoachText(rawText, field);
+  wrapSanitizedReaderTextToLines(text, width, lines);
+}
+
 uint8_t boundedPageCount(size_t lineCount, uint8_t linesPerPage) {
   const size_t safeLinesPerPage = linesPerPage == 0 ? 1 : linesPerPage;
   size_t pages = (lineCount + safeLinesPerPage - 1) / safeLinesPerPage;
@@ -3086,11 +3190,9 @@ ReaderPageSet buildReaderPages(const String& rawText, int32_t width, uint8_t lin
   ReaderPageSet pages;
   pages.sourceLength = rawText.length();
   pages.linesPerPage = linesPerPage == 0 ? 1 : linesPerPage;
-  wrapReaderTextToLines(rawText, width, pages.lines, field);
-  pages.sanitizedLength = 0;
-  for (const auto& line : pages.lines) {
-    pages.sanitizedLength += line.length();
-  }
+  const String sanitized = sanitizeCoachText(rawText, field);
+  pages.sanitizedLength = sanitized.length();
+  wrapSanitizedReaderTextToLines(sanitized, width, pages.lines);
   pages.pageCount = boundedPageCount(pages.lines.size(), pages.linesPerPage);
   return pages;
 }
@@ -3122,6 +3224,79 @@ void logReaderPagination(const char* field, const ReaderPageSet& pages, const Pr
                   field && field[0] != '\0' ? field : "text", page + 1, pages.pageCount,
                   firstCharsForPage(pages, page).c_str());
   }
+}
+
+void appendTraceLine(String& trace, const String& line) {
+  trace += line;
+  trace += "\n";
+}
+
+String renderTraceFor(const CoachItemView& item, const char* stageName, const String& rawText,
+                      const ReaderPageSet& pages, uint8_t pageIndex) {
+  String trace;
+  trace.reserve(1200 + pages.lines.size() * 72);
+  appendTraceLine(trace, "Render trace");
+  appendTraceLine(trace, String("card id: ") + (item.id && item.id[0] != '\0' ? item.id : "(none)"));
+  appendTraceLine(trace, String("section/category: ") +
+                             (item.section && item.section[0] != '\0'
+                                  ? item.section
+                                  : (item.category && item.category[0] != '\0' ? item.category : coachScreenTitle(gScreen))));
+  appendTraceLine(trace, String("stage: ") + (stageName && stageName[0] != '\0' ? stageName : "text"));
+  appendTraceLine(trace, String("raw text length: ") + static_cast<unsigned>(rawText.length()));
+  appendTraceLine(trace, String("sanitized text length: ") + static_cast<unsigned>(pages.sanitizedLength));
+  appendTraceLine(trace, String("wrapped line count: ") + static_cast<unsigned>(pages.lines.size()));
+  appendTraceLine(trace, String("page count: ") + static_cast<unsigned>(pages.pageCount));
+  appendTraceLine(trace, String("page number: ") + static_cast<unsigned>(pageIndex + 1));
+  for (uint8_t page = 0; page < pages.pageCount; ++page) {
+    appendTraceLine(trace, String("page ") + static_cast<unsigned>(page + 1) + "/" +
+                               static_cast<unsigned>(pages.pageCount));
+    const size_t startLine = static_cast<size_t>(page) * pages.linesPerPage;
+    const size_t endLine = min(startLine + pages.linesPerPage, pages.lines.size());
+    for (size_t line = startLine; line < endLine; ++line) {
+      appendTraceLine(trace, String("  line ") + static_cast<unsigned>(line - startLine + 1) + ": " + pages.lines[line]);
+    }
+  }
+  return trace;
+}
+
+void recordRenderTrace(const CoachItemView& item, const char* stageName, const String& rawText,
+                       const ReaderPageSet& pages, uint8_t pageIndex) {
+  gLastRenderTrace = renderTraceFor(item, stageName, rawText, pages, pageIndex);
+  Serial.println("Render trace begin");
+  Serial.print(gLastRenderTrace);
+  Serial.println("Render trace end");
+}
+
+void dumpCurrentRenderTraceToSd() {
+  if (gLastRenderTrace.length() == 0) {
+    gLastRenderTrace = "Render trace\nNo rendered card/stage trace available yet.\n";
+  }
+
+  if (!gSdMounted) {
+    gLastRenderTraceStatus = "SD missing; Serial only";
+    Serial.println("Render trace dump: SD missing; Serial only.");
+    Serial.print(gLastRenderTrace);
+    return;
+  }
+
+  SD.mkdir("/papercoach");
+  SD.mkdir("/papercoach/debug");
+  if (SD.exists(kRenderTracePath)) {
+    SD.remove(kRenderTracePath);
+  }
+  File file = SD.open(kRenderTracePath, FILE_WRITE);
+  if (!file) {
+    gLastRenderTraceStatus = "open failed; Serial only";
+    Serial.printf("Render trace dump: open failed path=%s; Serial only.\n", kRenderTracePath);
+    Serial.print(gLastRenderTrace);
+    return;
+  }
+
+  file.print(gLastRenderTrace);
+  file.close();
+  gLastRenderTraceStatus = String("wrote ") + kRenderTracePath;
+  Serial.printf("Render trace dump: wrote %s bytes=%u\n", kRenderTracePath,
+                static_cast<unsigned>(gLastRenderTrace.length()));
 }
 
 void drawReaderPage(const ReaderPageSet& pages, uint8_t pageIndex, int32_t x, int32_t y, int32_t lineHeight) {
@@ -3226,6 +3401,134 @@ String coachOptionLabelFor(const CoachItemView& item, uint8_t option) {
     }
   }
   return option < item.optionCount ? String(item.options[option]) : String("");
+}
+
+bool isOptionDrillScreen(Screen screen, const CoachItemView& item) {
+  return (screen == Screen::Drills || screen == Screen::BlitzQuiz || screen == Screen::WeakAnswerDetector ||
+          screen == Screen::MetricPrecision) &&
+         item.optionCount > 0;
+}
+
+String selectedOptionExplanationText(const CoachItemView& item) {
+  String result = String("Selected: ") + static_cast<char>('A' + gSelectedOption) + ". " +
+                  coachOptionLabelFor(item, static_cast<uint8_t>(gSelectedOption));
+  result += "\nBest: ";
+  result += static_cast<char>('A' + item.correctIndex);
+  result += ". ";
+  result += coachOptionLabelFor(item, item.correctIndex);
+  result += "\nWhy this is best: ";
+  if (strlen(item.explanation) > 0) {
+    result += item.explanation;
+  } else if (strlen(item.answer) > 0) {
+    result += item.answer;
+  } else {
+    result += "No explanation available";
+  }
+  return result;
+}
+
+uint8_t buildCoachReaderStages(const CoachItemView& item, const PracticeLayout& layout, CoachReaderStage* stages,
+                               uint8_t maxStages) {
+  uint8_t count = 0;
+  auto addStage = [&](const char* name, const String& body) {
+    if (count >= maxStages || body.length() == 0) {
+      return;
+    }
+    stages[count].name = name;
+    stages[count].body = body;
+    stages[count].pages = buildReaderPages(body, layout.contentW, layout.linesPerPage, name);
+    ++count;
+  };
+
+  if (isOptionDrillScreen(gScreen, item) && gSelectedOption >= 0) {
+    addStage("Explanation", selectedOptionExplanationText(item));
+    return count == 0 ? 1 : count;
+  }
+
+  if (item.type == CoachItemType::HostileFollowup) {
+    addStage("Follow-up", coachPromptFor(item));
+    addStage("Defense", coachAnswerFor(item));
+    addStage("Rubric", coachRubricFor(item));
+  } else if (item.type == CoachItemType::Glossary) {
+    addStage("Prompt", coachPromptFor(item));
+    addStage("Answer", coachAnswerFor(item));
+  } else if (item.type == CoachItemType::WeakAnswer) {
+    addStage("Prompt", coachPromptFor(item));
+    addStage("Explanation", coachAnswerFor(item));
+  } else {
+    addStage("Prompt", coachPromptFor(item));
+    addStage("Answer", coachAnswerFor(item));
+    addStage("Rubric", coachRubricFor(item));
+  }
+
+  if (count == 0) {
+    stages[0].name = "Text";
+    stages[0].body = "No content available.";
+    stages[0].pages = buildReaderPages(stages[0].body, layout.contentW, layout.linesPerPage, stages[0].name);
+    count = 1;
+  }
+  return count;
+}
+
+uint8_t totalReaderPages(const CoachReaderStage* stages, uint8_t stageCount) {
+  uint16_t total = 0;
+  for (uint8_t stage = 0; stage < stageCount; ++stage) {
+    total += stages[stage].pages.pageCount;
+  }
+  if (total == 0) {
+    total = 1;
+  }
+  if (total > kMaxReaderPageCount) {
+    total = kMaxReaderPageCount;
+  }
+  return static_cast<uint8_t>(total);
+}
+
+uint8_t currentCoachReaderPageCount() {
+  if (gCoachItemCount == 0) {
+    return 1;
+  }
+  const CoachItemView item = coachItemAt(gCoachIndex);
+  if (gScreen == Screen::InterviewPractice) {
+    return interviewStageCount(item);
+  }
+  if (isOptionDrillScreen(gScreen, item) && gSelectedOption < 0) {
+    return 1;
+  }
+
+  const FontSizeMode savedSize = gSettings.fontSizeMode;
+  const FontSizeMode renderSize = canonicalFontSizeMode(gSettings.fontSizeMode);
+  gSettings.fontSizeMode = renderSize;
+  const PracticeLayout layout = practiceLayoutFor(renderSize);
+  applyCoachContentFont();
+  CoachReaderStage stages[3];
+  const uint8_t stageCount = buildCoachReaderStages(item, layout, stages, countOf(stages));
+  gSettings.fontSizeMode = savedSize;
+  return totalReaderPages(stages, stageCount);
+}
+
+void drawCompactReaderHeader(const CoachItemView& item, const char* stageName, uint8_t pageNumber, uint8_t pageCount) {
+  auto& display = M5.Display;
+  const uint16_t darkGray = metadataTextColor();
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachMetadataFont();
+  display.setTextColor(darkGray, TFT_WHITE);
+  String line = sanitizeCoachText(String(item.id && item.id[0] != '\0' ? item.id : coachScreenTitle(gScreen)) + " | " +
+                                      (item.mustMaster ? "Must" : "Card") + " | " + stageName,
+                                  "reader-header");
+  if (pageCount > 1) {
+    line += " ";
+    line += static_cast<unsigned>(pageNumber);
+    line += "/";
+    line += static_cast<unsigned>(pageCount);
+  }
+  display.drawString(line, kCoachMargin, 22);
+  if (item.section && item.section[0] != '\0') {
+    display.drawString(sanitizeCoachText(item.section, "reader-section"), kCoachMargin, 52);
+  } else {
+    display.drawString(coachScreenTitle(gScreen), kCoachMargin, 52);
+  }
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
 }
 
 int32_t wrappedButtonHeightFor(const String& label, int32_t buttonWidth) {
@@ -3337,7 +3640,7 @@ const char* practiceStageName(uint8_t stage, const PracticePageCounts& counts, u
 
 void renderInterviewPracticeScreen() {
   applyAppRotation();
-  prepareFullRefresh();
+  prepareCoachContentRefresh();
 
   const CoachItemView item = coachItemAt(gCoachIndex);
   const FontSizeMode savedSize = gSettings.fontSizeMode;
@@ -3368,6 +3671,7 @@ void renderInterviewPracticeScreen() {
     localPage = pages.pageCount - 1;
   }
   logReaderPagination(stageName, pages, layout);
+  recordRenderTrace(item, stageName, body, pages, localPage);
 
   auto& display = M5.Display;
   const uint16_t darkGray = metadataTextColor();
@@ -3385,22 +3689,11 @@ void renderInterviewPracticeScreen() {
 
   applyCoachContentFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
+  gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
   drawReaderPage(pages, localPage, layout.contentX, layout.contentY, layout.lineHeight);
 
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  gFilterButton = {24, layout.footerY, 152, layout.buttonH};
-  gHomeButton = {(display.width() - 108) / 2, layout.footerY, 108, layout.buttonH};
-  gNextButton = {display.width() - 176, layout.footerY, 152, layout.buttonH};
-  const String backLabel = gCoachStage > 0 ? String(gCoachStage) + "/" + pageCounts.totalPages : "";
-  const String nextLabel =
-      gCoachStage + 1 < pageCounts.totalPages ? String(gCoachStage + 2) + "/" + pageCounts.totalPages : "";
-  if (backLabel.length() > 0) {
-    drawButton(gFilterButton, backLabel, IconType::Back);
-  } else {
-    drawButton(gFilterButton, "");
-  }
-  drawButton(gHomeButton, "", IconType::Home);
-  drawButton(gNextButton, nextLabel, IconType::Next);
+  drawCoachFooterNav(hasPreviousCoachItem(), hasNextCoachItem());
 
   gSettings.fontSizeMode = savedSize;
   finishDisplayRefresh();
@@ -3416,70 +3709,53 @@ void renderCoachScreen() {
   }
 
   applyAppRotation();
-  prepareFullRefresh();
-  drawCoachChrome(coachScreenTitle(gScreen));
+  prepareCoachContentRefresh();
 
   auto& display = M5.Display;
-  const CoachTypography type = coachTypography();
+  const FontSizeMode savedSize = gSettings.fontSizeMode;
+  const FontSizeMode renderSize = canonicalFontSizeMode(gSettings.fontSizeMode);
+  gSettings.fontSizeMode = renderSize;
+  const PracticeLayout layout = practiceLayoutFor(renderSize);
   logTypographySettings("coach screen");
+  for (uint8_t option = 0; option < kMaxOptions; ++option) {
+    gOptionButtons[option] = {};
+  }
   display.setTextDatum(textdatum_t::top_left);
   applyCoachContentFont();
-  const int32_t lineHeight = coachLineHeight();
-  const uint8_t promptLines = coachPromptLineCount();
-  const uint8_t answerLines = coachAnswerLineCount();
-  const uint8_t rubricLines = coachRubricLineCount();
 
   if (gCoachItemCount == 0) {
-    drawWrappedText("No PaperCoach deck available.", 34, 140, display.width() - 68, lineHeight, promptLines);
+    drawWrappedText("No PaperCoach deck available.", layout.contentX, layout.contentY, layout.contentW,
+                    layout.lineHeight, layout.linesPerPage, "empty", 1);
+    drawCoachFooterNav(false, false);
+    gSettings.fontSizeMode = savedSize;
     finishDisplayRefresh();
     return;
   }
 
   const CoachItemView item = coachItemAt(gCoachIndex);
   if (!itemMatchesScreen(item, gScreen)) {
-    const int32_t contentX = kCoachMargin;
-    const int32_t contentY = kCoachHeaderBottom + 18;
-    const int32_t contentW = display.width() - kCoachMargin * 2;
-    const int32_t contentH = coachFooterTop() - contentY - 42;
-    drawWrappedText(String("No ") + coachScreenTitle(gScreen) + " items yet.", contentX, contentY, contentW, lineHeight,
-                    linesThatFit(contentH, lineHeight, 2), "empty", 1);
-    drawCoachPageNumber(1, 1);
+    drawWrappedText(String("No ") + coachScreenTitle(gScreen) + " items yet.", layout.contentX, layout.contentY,
+                    layout.contentW, layout.lineHeight, layout.linesPerPage, "empty", 1);
+    drawCoachFooterNav(false, false);
+    gSettings.fontSizeMode = savedSize;
     finishDisplayRefresh();
     return;
   }
   if (gScreen == Screen::MockInterview) {
-    display.drawString(String("Prompt ") + (gMockStep + 1) + "/5", 34, 118);
+    applyCoachMetadataFont();
+    display.drawString(String("Prompt ") + (gMockStep + 1) + "/5", kCoachMargin, 76);
+    applyCoachContentFont();
   }
 
-  const bool optionDrill = (gScreen == Screen::Drills || gScreen == Screen::BlitzQuiz ||
-                            gScreen == Screen::WeakAnswerDetector || gScreen == Screen::MetricPrecision) &&
-                           item.optionCount > 0;
-  if (optionDrill) {
+  const bool optionDrill = isOptionDrillScreen(gScreen, item);
+  if (optionDrill && gSelectedOption < 0) {
     const uint8_t optionCount = item.optionCount < kMaxOptions ? item.optionCount : kMaxOptions;
-    const int32_t contentX = kCoachMargin;
-    const int32_t contentW = display.width() - kCoachMargin * 2;
-    const int32_t contentY = kCoachHeaderBottom + 18;
-    const int32_t footerTop = coachFooterTop();
-    const int32_t contentH = footerTop - contentY - 42;
-
-    if (gSelectedOption >= 0) {
-      String result = String("Correct: ") + static_cast<char>('A' + item.correctIndex) + ". " +
-                      coachOptionLabelFor(item, item.correctIndex);
-      if (gSelectedOption != static_cast<int8_t>(item.correctIndex)) {
-        result += "\nYou chose: ";
-        result += static_cast<char>('A' + gSelectedOption);
-        result += ". ";
-        result += coachOptionLabelFor(item, static_cast<uint8_t>(gSelectedOption));
-      }
-      result += "\n";
-      result += item.explanation;
-      applyCoachContentFont();
-      drawWrappedText(result, contentX, contentY, contentW, lineHeight, linesThatFit(contentH, lineHeight, 2),
-                      "explanation", 2);
-      drawCoachPageNumber(2, 2);
-      finishDisplayRefresh();
-      return;
-    }
+    const int32_t contentX = layout.contentX;
+    const int32_t contentW = layout.contentW;
+    const int32_t contentY = layout.contentY;
+    const int32_t footerTop = layout.footerY;
+    const int32_t contentH = layout.contentH;
+    drawCompactReaderHeader(item, "Prompt", 1, 1);
 
     String optionLabels[kMaxOptions];
     int32_t optionHeights[kMaxOptions] = {};
@@ -3495,10 +3771,10 @@ void renderCoachScreen() {
     }
 
     const int32_t promptAvailable = contentH - optionTotal - 24;
-    const uint8_t promptMaxLines = linesThatFit(promptAvailable, lineHeight, 2, promptLines < 5 ? promptLines : 5);
+    const uint8_t promptMaxLines = linesThatFit(promptAvailable, layout.lineHeight, 2, 5);
     applyCoachContentFont();
     const TextLayoutResult promptLayout =
-        drawWrappedText(item.prompt, contentX, contentY, contentW, lineHeight, promptMaxLines, "prompt", 2);
+        drawWrappedText(item.prompt, contentX, contentY, contentW, layout.lineHeight, promptMaxLines, "prompt", 1);
 
     int32_t y = contentY + promptLayout.height + 22;
     const int32_t usedHeight = promptLayout.height + 22 + optionTotal;
@@ -3524,40 +3800,46 @@ void renderCoachScreen() {
       drawButton(gOptionButtons[option], optionLabels[option], IconType::None, ButtonTextAlign::Left);
       y += buttonH + optionGap;
     }
-    drawCoachPageNumber(1, 2);
+    gReaderContentRect = {contentX, contentY, contentW, contentH};
+    drawCoachFooterNav(hasPreviousCoachItem(), hasNextCoachItem());
+    gSettings.fontSizeMode = savedSize;
     finishDisplayRefresh();
     return;
   }
 
-  const bool hasRubric = coachRubricFor(item).length() > 0;
-  const uint8_t pageCount = hasRubric ? 3 : 2;
-  if (gCoachStage >= pageCount) {
-    gCoachStage = pageCount - 1;
-  }
-  String body;
-  const char* field = "prompt";
-  if (gCoachStage == 0) {
-    body = coachPromptFor(item);
-    field = "prompt";
-  } else if (gCoachStage == 1) {
-    body = coachAnswerFor(item);
-    field = item.type == CoachItemType::Glossary ? "definition" : "answer";
-  } else {
-    body = coachRubricFor(item);
-    field = "rubric";
+  CoachReaderStage stages[3];
+  const uint8_t stageCount = buildCoachReaderStages(item, layout, stages, countOf(stages));
+  const uint8_t totalPages = totalReaderPages(stages, stageCount);
+  if (gCoachStage >= totalPages) {
+    gCoachStage = totalPages - 1;
   }
 
-  const int32_t contentX = kCoachMargin;
-  const int32_t contentY = kCoachHeaderBottom + 18;
-  const int32_t contentW = display.width() - kCoachMargin * 2;
-  const int32_t contentH = coachFooterTop() - contentY - 42;
-  drawWrappedText(body, contentX, contentY, contentW, lineHeight, linesThatFit(contentH, lineHeight, 2), field,
-                  pageCount);
-  drawCoachPageNumber(gCoachStage + 1, pageCount);
+  uint8_t remainingPage = gCoachStage;
+  uint8_t currentStage = 0;
+  uint8_t localPage = 0;
+  for (uint8_t stage = 0; stage < stageCount; ++stage) {
+    if (remainingPage < stages[stage].pages.pageCount) {
+      currentStage = stage;
+      localPage = remainingPage;
+      break;
+    }
+    remainingPage -= stages[stage].pages.pageCount;
+  }
 
+  const CoachReaderStage& stage = stages[currentStage];
+  drawCompactReaderHeader(item, stage.name, localPage + 1, stage.pages.pageCount);
+  applyCoachContentFont();
+  gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
+  drawReaderPage(stage.pages, localPage, layout.contentX, layout.contentY, layout.lineHeight);
+  logReaderPagination(stage.name, stage.pages, layout);
+  recordRenderTrace(item, stage.name, stage.body, stage.pages, localPage);
+  drawCoachFooterNav(hasPreviousCoachItem(), hasNextCoachItem());
+
+  gSettings.fontSizeMode = savedSize;
   finishDisplayRefresh();
-  Serial.printf("%s shown: type=%s index=%u stage=%u source=%s\n", coachScreenTitle(gScreen), coachTypeName(item.type),
-                static_cast<unsigned>(gCoachIndex), gCoachStage, gCoachDeckLoadedFromSd ? "SD" : "embedded");
+  Serial.printf("%s shown: type=%s index=%u page=%u/%u source=%s\n", coachScreenTitle(gScreen), coachTypeName(item.type),
+                static_cast<unsigned>(gCoachIndex), gCoachStage + 1, totalPages,
+                gCoachDeckLoadedFromSd ? "SD" : "embedded");
 }
 
 void renderHome(const char* refreshReason = "mode switch") {
@@ -3816,17 +4098,21 @@ void renderDebug(const char* refreshReason = "mode switch") {
                      26, y);
   y += 24;
   display.drawString(String("touch debug: ") + (gTouchDebugEnabled ? "on" : "off"), 26, y);
+  y += 24;
+  display.drawString(String("trace: ") + gLastRenderTraceStatus, 26, y);
 
-  gVisualQaButton = {26, display.height() - 360, display.width() - 52, 46};
-  gFontLabButton = {26, display.height() - 308, display.width() - 52, 46};
-  gTypographyResetButton = {26, display.height() - 256, display.width() - 52, 46};
-  gLayoutDebugButton = {26, display.height() - 204, display.width() - 52, 46};
-  gTouchDebugButton = {26, display.height() - 152, display.width() - 52, 46};
+  gVisualQaButton = {26, display.height() - 412, display.width() - 52, 42};
+  gFontLabButton = {26, display.height() - 364, display.width() - 52, 42};
+  gTypographyResetButton = {26, display.height() - 316, display.width() - 52, 42};
+  gLayoutDebugButton = {26, display.height() - 268, display.width() - 52, 42};
+  gRenderTraceButton = {26, display.height() - 220, display.width() - 52, 42};
+  gTouchDebugButton = {26, display.height() - 172, display.width() - 52, 42};
   gHomeButton = {26, display.height() - 94, display.width() - 52, 58};
   drawButton(gVisualQaButton, "Visual QA", IconType::Exam);
   drawButton(gFontLabButton, "Font Lab");
   drawButton(gTypographyResetButton, "Reset typography");
   drawButton(gLayoutDebugButton, "Layout log");
+  drawButton(gRenderTraceButton, "Dump render trace");
   drawButton(gTouchDebugButton, gTouchDebugEnabled ? "Touch debug off" : "Touch debug on");
   drawButton(gHomeButton, "Home");
 
@@ -4090,39 +4376,50 @@ void handleInterviewPracticeTouch(int32_t tapX, int32_t tapY) {
     renderHome();
     return;
   }
-  if (hitTarget(gFilterButton, "practice back", tapX, tapY)) {
-    if (gCoachStage > 0) {
-      --gCoachStage;
+  if (hitTarget(gFilterButton, "previous card", tapX, tapY)) {
+    if (hasPreviousCoachItem()) {
+      previousCoachItem();
       renderCoachScreen();
+    } else {
+      Serial.println("practice previous card disabled");
     }
     return;
   }
-  if (hitTarget(gNextButton, "next", tapX, tapY)) {
-    nextCoachItem();
-    renderCoachScreen();
+  if (hitTarget(gNextButton, "next card", tapX, tapY)) {
+    if (hasNextCoachItem()) {
+      nextCoachItem();
+      renderCoachScreen();
+    } else {
+      Serial.println("practice next card disabled");
+    }
     return;
   }
 
   const CoachItemView item = coachItemAt(gCoachIndex);
   const uint8_t stageCount = interviewStageCount(item);
-  if (tapX < M5.Display.width() / 3) {
-    markHitTarget("practice previous area", tapX, tapY);
-    if (gCoachStage > 0) {
-      --gCoachStage;
-    } else {
-      previousCoachItem();
-    }
-    renderCoachScreen();
+  if (!gReaderContentRect.contains(tapX, tapY)) {
+    noteIgnoredIfNoHit(tapX, tapY);
     return;
   }
 
-  markHitTarget("practice next area", tapX, tapY);
+  if (tapY < gReaderContentRect.y + gReaderContentRect.h / 2) {
+    markHitTarget("practice previous page", tapX, tapY);
+    if (gCoachStage > 0) {
+      --gCoachStage;
+      renderCoachScreen();
+    } else {
+      Serial.println("practice previous page disabled");
+    }
+    return;
+  }
+
+  markHitTarget("practice next page", tapX, tapY);
   if (gCoachStage + 1 < stageCount) {
     ++gCoachStage;
+    renderCoachScreen();
   } else {
-    nextCoachItem();
+    Serial.println("practice next page disabled");
   }
-  renderCoachScreen();
 }
 
 void handleTouch() {
@@ -4213,6 +4510,9 @@ void handleTouch() {
     } else if (hitTarget(gLayoutDebugButton, "layout log", tapX, tapY)) {
       logCurrentLayoutDiagnostics("debug button");
       renderDebug();
+    } else if (hitTarget(gRenderTraceButton, "render trace dump", tapX, tapY)) {
+      dumpCurrentRenderTraceToSd();
+      renderDebug("render trace dump");
     } else if (hitTarget(gTouchDebugButton, "touch debug", tapX, tapY)) {
       gTouchDebugEnabled = !gTouchDebugEnabled;
       renderDebug();
@@ -4311,30 +4611,67 @@ void handleTouch() {
     if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
-    } else if (hitTarget(gNextButton, "next", tapX, tapY)) {
-      nextCoachItem();
-      renderCoachScreen();
-    } else if ((gScreen == Screen::Drills || gScreen == Screen::BlitzQuiz || gScreen == Screen::WeakAnswerDetector ||
-                gScreen == Screen::MetricPrecision) &&
-               gSelectedOption < 0) {
+      return;
+    }
+    if (hitTarget(gFilterButton, "previous item", tapX, tapY)) {
+      if (hasPreviousCoachItem()) {
+        previousCoachItem();
+        renderCoachScreen();
+      } else {
+        Serial.println("coach previous item disabled");
+      }
+      return;
+    }
+    if (hitTarget(gNextButton, "next item", tapX, tapY)) {
+      if (hasNextCoachItem()) {
+        nextCoachItem();
+        renderCoachScreen();
+      } else {
+        Serial.println("coach next item disabled");
+      }
+      return;
+    }
+
+    const CoachItemView item = coachItemAt(gCoachIndex);
+    if (isOptionDrillScreen(gScreen, item) && gSelectedOption < 0) {
       const CoachItemView item = coachItemAt(gCoachIndex);
       for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
         const String optionTarget = String("option ") + static_cast<char>('A' + option);
         if (hitTarget(gOptionButtons[option], optionTarget.c_str(), tapX, tapY)) {
           gSelectedOption = option;
-          gCoachStage = 1;
+          gCoachStage = 0;
           renderCoachScreen();
           break;
         }
       }
-      noteIgnoredIfNoHit(tapX, tapY);
-    } else {
-      markHitTarget("coach page", tapX, tapY);
-      if (gCoachStage < 2) {
-        ++gCoachStage;
+      if (gHitMatchedThisTap) {
+        return;
       }
-      renderCoachScreen();
     }
+
+    if (gReaderContentRect.contains(tapX, tapY)) {
+      const uint8_t pageCount = currentCoachReaderPageCount();
+      if (tapY < gReaderContentRect.y + gReaderContentRect.h / 2) {
+        markHitTarget("coach previous page", tapX, tapY);
+        if (gCoachStage > 0) {
+          --gCoachStage;
+          renderCoachScreen();
+        } else {
+          Serial.println("coach previous page disabled");
+        }
+      } else {
+        markHitTarget("coach next page", tapX, tapY);
+        if (gCoachStage + 1 < pageCount) {
+          ++gCoachStage;
+          renderCoachScreen();
+        } else {
+          Serial.println("coach next page disabled");
+        }
+      }
+      return;
+    }
+
+    noteIgnoredIfNoHit(tapX, tapY);
     return;
   }
 
