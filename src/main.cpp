@@ -4,7 +4,10 @@
 #include <SD.h>
 #include <SPI.h>
 #include <M5Unified.h>
+#include <WiFi.h>
 #include <cstring>
+#include <esp32-hal-bt.h>
+#include <esp_sleep.h>
 
 #include "embedded_assets.h"
 #include "embedded_papercoach_deck.h"
@@ -12,7 +15,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v2.5";
+constexpr const char* kFirmwareVersion = "v2.6";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -20,6 +23,8 @@ constexpr const char* kPrefsNamespace = "paperbadge";
 constexpr uint32_t kDefaultLanguageIntervalSeconds = 15;
 constexpr uint32_t kInputDebounceMs = 450;
 constexpr uint32_t kInputCleanRefreshDebounceMs = 850;
+constexpr uint32_t kBatterySaverIdleMs = 180000;
+constexpr uint32_t kConferenceBadgeIdleMs = 10000;
 constexpr size_t kMaxCoachItems = 96;
 constexpr uint8_t kMaxOptions = 4;
 constexpr uint8_t kMaxWrappedLines = 18;
@@ -125,6 +130,12 @@ enum class RefreshMode : uint8_t {
   Clean = 1,
 };
 
+enum class PowerMode : uint8_t {
+  Normal = 0,
+  BatterySaver = 1,
+  ConferenceBadge = 2,
+};
+
 enum class FontStyleMode : uint8_t {
   SansCurrent = 0,
   LargeReader = 1,
@@ -218,6 +229,7 @@ struct Settings {
   FontStyleMode fontStyleMode = FontStyleMode::LargeReader;
   ContrastMode contrastMode = ContrastMode::Dark;
   RefreshMode refreshMode = RefreshMode::Normal;
+  PowerMode powerMode = PowerMode::Normal;
 };
 
 struct CoachTypography {
@@ -330,6 +342,7 @@ Rect gLanguageAutoButton;
 Rect gLanguageEnglishButton;
 Rect gLanguageJapaneseButton;
 Rect gRefreshModeButton;
+Rect gPowerModeButton;
 Rect gFontStyleButton;
 Rect gContrastButton;
 Rect gFontMediumButton;
@@ -371,6 +384,9 @@ DrillCategory gDrillCategory = DrillCategory::All;
 bool gInputLocked = false;
 bool gCurrentRefreshClean = false;
 uint32_t gInputUnlockAtMs = 0;
+uint32_t gLastUserActivityMs = 0;
+bool gIdleModeActive = false;
+uint32_t gIdleEntryCount = 0;
 int32_t gLastTouchDownX = -1;
 int32_t gLastTouchDownY = -1;
 int32_t gLastTouchUpX = -1;
@@ -379,8 +395,13 @@ int32_t gLastTouchUpY = -1;
 const char* screenName(Screen screen);
 const char* fontSizeModeName();
 const char* refreshModeName();
+const char* powerModeName();
 const char* fontStyleModeName();
 const char* contrastModeName();
+void applyPowerPolicy(const char* reason);
+void recordUserActivity(const char* reason);
+void maybeEnterPowerIdle();
+uint32_t loopDelayMs();
 void applyCoachButtonFont();
 CoachTypography coachTypography();
 TextLayoutResult wrapTextToLines(const String& text, int32_t width, int32_t lineHeight, uint8_t maxLines,
@@ -559,13 +580,7 @@ void waitForSerial() {
 }
 
 void bootBeep() {
-  if (!M5.Speaker.isEnabled()) {
-    return;
-  }
-  M5.Speaker.setVolume(64);
-  M5.Speaker.tone(2000, 80);
-  delay(100);
-  M5.Speaker.stop();
+  Serial.println("Boot beep skipped: buzzer silent unless an explicit feedback setting is added.");
 }
 
 void captureNormalPortraitRotation() {
@@ -755,6 +770,119 @@ const char* refreshModeName() {
   return gSettings.refreshMode == RefreshMode::Clean ? "Clean" : "Normal";
 }
 
+const char* powerModeName() {
+  switch (gSettings.powerMode) {
+    case PowerMode::BatterySaver:
+      return "Battery Saver";
+    case PowerMode::ConferenceBadge:
+      return "Conference Badge";
+    case PowerMode::Normal:
+    default:
+      return "Normal";
+  }
+}
+
+const char* wakeReasonName(esp_sleep_wakeup_cause_t reason) {
+  switch (reason) {
+    case ESP_SLEEP_WAKEUP_EXT0:
+      return "ext0";
+    case ESP_SLEEP_WAKEUP_EXT1:
+      return "ext1";
+    case ESP_SLEEP_WAKEUP_TIMER:
+      return "timer";
+    case ESP_SLEEP_WAKEUP_TOUCHPAD:
+      return "touchpad";
+    case ESP_SLEEP_WAKEUP_ULP:
+      return "ulp";
+    case ESP_SLEEP_WAKEUP_GPIO:
+      return "gpio";
+    case ESP_SLEEP_WAKEUP_UART:
+      return "uart";
+    case ESP_SLEEP_WAKEUP_UNDEFINED:
+    default:
+      return "not sleep";
+  }
+}
+
+void cyclePowerMode() {
+  switch (gSettings.powerMode) {
+    case PowerMode::Normal:
+      gSettings.powerMode = PowerMode::BatterySaver;
+      break;
+    case PowerMode::BatterySaver:
+      gSettings.powerMode = PowerMode::ConferenceBadge;
+      break;
+    case PowerMode::ConferenceBadge:
+    default:
+      gSettings.powerMode = PowerMode::Normal;
+      break;
+  }
+}
+
+void disableUnusedRadiosAndPeripherals(const char* reason) {
+  WiFi.disconnect(true, true);
+  WiFi.mode(WIFI_OFF);
+  btStop();
+  M5.Speaker.stop();
+  Serial.printf("Power policy: unused radios/peripherals off reason=%s wifi=off bluetooth=off speaker=stopped\n",
+                reason && reason[0] != '\0' ? reason : "policy");
+}
+
+void applyPowerPolicy(const char* reason) {
+  disableUnusedRadiosAndPeripherals(reason);
+  if (gSettings.powerMode == PowerMode::Normal && gIdleModeActive) {
+    gIdleModeActive = false;
+    Serial.printf("Power idle exit: mode=%s reason=%s\n", powerModeName(),
+                  reason && reason[0] != '\0' ? reason : "normal mode");
+  }
+  Serial.printf("Power mode active: mode=%s idle=%s reason=%s\n", powerModeName(), gIdleModeActive ? "yes" : "no",
+                reason && reason[0] != '\0' ? reason : "policy");
+}
+
+void recordUserActivity(const char* reason) {
+  gLastUserActivityMs = millis();
+  if (gIdleModeActive) {
+    gIdleModeActive = false;
+    Serial.printf("Power idle exit: mode=%s reason=%s\n", powerModeName(),
+                  reason && reason[0] != '\0' ? reason : "touch");
+  }
+}
+
+void enterIdleMode(const char* reason) {
+  if (gIdleModeActive) {
+    return;
+  }
+  gIdleModeActive = true;
+  ++gIdleEntryCount;
+  disableUnusedRadiosAndPeripherals(reason);
+  Serial.printf("Power idle entry: mode=%s reason=%s count=%u sleep=deferred\n", powerModeName(),
+                reason && reason[0] != '\0' ? reason : "inactivity", static_cast<unsigned>(gIdleEntryCount));
+}
+
+void maybeEnterPowerIdle() {
+  if (gSettings.powerMode == PowerMode::Normal || gInputLocked || gLastUserActivityMs == 0) {
+    return;
+  }
+
+  const uint32_t elapsedMs = millis() - gLastUserActivityMs;
+  if (gSettings.powerMode == PowerMode::BatterySaver && elapsedMs >= kBatterySaverIdleMs) {
+    enterIdleMode("battery saver inactivity");
+  } else if (gSettings.powerMode == PowerMode::ConferenceBadge && gScreen == Screen::Badge &&
+             elapsedMs >= kConferenceBadgeIdleMs) {
+    enterIdleMode("conference badge static display");
+  }
+}
+
+uint32_t loopDelayMs() {
+  if (gIdleModeActive && gSettings.powerMode == PowerMode::ConferenceBadge && gScreen == Screen::Badge) {
+    return 1000;
+  }
+  if (gSettings.powerMode == PowerMode::BatterySaver || gSettings.powerMode == PowerMode::ConferenceBadge) {
+    return 250;
+  }
+  return 100;
+}
+
 const char* fontStyleModeName() {
   switch (gSettings.fontStyleMode) {
     case FontStyleMode::SansCurrent:
@@ -904,6 +1032,7 @@ void loadSettings() {
   const uint8_t fontStyle = gPrefs.getUChar("fontStyle", static_cast<uint8_t>(FontStyleMode::LargeReader));
   const uint8_t contrast = gPrefs.getUChar("contrast", static_cast<uint8_t>(ContrastMode::Dark));
   const uint8_t refreshMode = gPrefs.getUChar("refresh", static_cast<uint8_t>(RefreshMode::Normal));
+  const uint8_t powerMode = gPrefs.getUChar("power", static_cast<uint8_t>(PowerMode::Normal));
   gPrefs.end();
 
   gSettings.orientationMode = orientation == static_cast<uint8_t>(OrientationMode::Handheld) ? OrientationMode::Handheld
@@ -966,10 +1095,18 @@ void loadSettings() {
   gSettings.refreshMode =
       refreshMode == static_cast<uint8_t>(RefreshMode::Clean) ? RefreshMode::Clean : RefreshMode::Normal;
 
+  if (powerMode == static_cast<uint8_t>(PowerMode::BatterySaver)) {
+    gSettings.powerMode = PowerMode::BatterySaver;
+  } else if (powerMode == static_cast<uint8_t>(PowerMode::ConferenceBadge)) {
+    gSettings.powerMode = PowerMode::ConferenceBadge;
+  } else {
+    gSettings.powerMode = PowerMode::Normal;
+  }
+
   Serial.printf("Settings loaded: orientation=%s badgeLanguage=%s languageMode=%s autoInterval=%s font=%s style=%s "
-                "contrast=%s refresh=%s\n",
+                "contrast=%s refresh=%s power=%s\n",
                 orientationModeName(), languageName(gBadgeLanguage), languageModeName(), autoRotateIntervalName(),
-                fontSizeModeName(), fontStyleModeName(), contrastModeName(), refreshModeName());
+                fontSizeModeName(), fontStyleModeName(), contrastModeName(), refreshModeName(), powerModeName());
 }
 
 void saveSettings() {
@@ -983,11 +1120,12 @@ void saveSettings() {
   gPrefs.putUChar("fontStyle", static_cast<uint8_t>(gSettings.fontStyleMode));
   gPrefs.putUChar("contrast", static_cast<uint8_t>(gSettings.contrastMode));
   gPrefs.putUChar("refresh", static_cast<uint8_t>(gSettings.refreshMode));
+  gPrefs.putUChar("power", static_cast<uint8_t>(gSettings.powerMode));
   gPrefs.end();
   Serial.printf("Settings saved: orientation=%s badgeLanguage=%s languageMode=%s autoInterval=%s font=%s style=%s "
-                "contrast=%s refresh=%s\n",
+                "contrast=%s refresh=%s power=%s\n",
                 orientationModeName(), languageName(gBadgeLanguage), languageModeName(), autoRotateIntervalName(),
-                fontSizeModeName(), fontStyleModeName(), contrastModeName(), refreshModeName());
+                fontSizeModeName(), fontStyleModeName(), contrastModeName(), refreshModeName(), powerModeName());
 }
 
 void enforceLanguageMode() {
@@ -2638,7 +2776,8 @@ void renderSettings(const char* refreshReason = "mode switch") {
   gFontHugeButton = {52 + halfW, 536, halfW, 58};
   gFontStyleButton = {36, 634, width - 72, 58};
   gRefreshModeButton = {36, 734, width - 72, 58};
-  gHomeButton = {36, display.height() - 72, 178, 54};
+  gPowerModeButton = {36, 828, width - 72, 54};
+  gHomeButton = {36, display.height() - 62, 178, 50};
 
   drawButton(gOrientationButton, gSettings.orientationMode == OrientationMode::Strap ? "Strap 180" : "Handheld 0");
   display.setTextDatum(textdatum_t::top_left);
@@ -2661,11 +2800,15 @@ void renderSettings(const char* refreshReason = "mode switch") {
   applyCoachMetadataFont();
   display.drawString("Refresh mode", 36, 704);
   drawButton(gRefreshModeButton, gSettings.refreshMode == RefreshMode::Clean ? "Clean *" : "Normal *");
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachMetadataFont();
+  display.drawString("Power mode", 36, 798);
+  drawButton(gPowerModeButton, powerModeName());
   drawButton(gHomeButton, "Home");
 
   finishDisplayRefresh();
-  Serial.printf("Settings screen shown: font=%s style=%s contrast=%s refresh=%s\n", fontSizeModeName(),
-                fontStyleModeName(), contrastModeName(), refreshModeName());
+  Serial.printf("Settings screen shown: font=%s style=%s contrast=%s refresh=%s power=%s\n", fontSizeModeName(),
+                fontStyleModeName(), contrastModeName(), refreshModeName(), powerModeName());
 }
 
 void renderDebug(const char* refreshReason = "mode switch") {
@@ -2713,27 +2856,25 @@ void renderDebug(const char* refreshReason = "mode switch") {
   y += 26;
   display.drawString(String("refresh mode: ") + refreshModeName(), 26, y);
   y += 26;
+  display.drawString(String("power mode: ") + powerModeName(), 26, y);
+  y += 26;
+  display.drawString(String("idle active: ") + (gIdleModeActive ? "yes" : "no"), 26, y);
+  y += 26;
+  display.drawString(String("idle entries: ") + static_cast<unsigned>(gIdleEntryCount), 26, y);
+  y += 26;
   display.drawString(String("input locked: ") + (gInputLocked ? "yes" : "no"), 26, y);
   y += 26;
   display.drawString(String("orientation: ") + orientationModeName(), 26, y);
   y += 26;
-  display.drawString(String("source: ") + gLastBadgeSource, 26, y);
-  y += 26;
   const int16_t batteryMv = M5.Power.getBatteryVoltage();
   display.drawString(batteryMv > 0 ? String("battery: ") + batteryMv + " mV" : "battery: unknown", 26, y);
   y += 26;
-  display.drawString(String("embedded bytes: ") + static_cast<unsigned>(embedded_assets::kEmbeddedPngTotalSize), 26, y);
-  y += 30;
   display.drawString(String("touch debug: ") + (gTouchDebugEnabled ? "on" : "off"), 26, y);
-  y += 26;
-  display.drawString(String("touch down: ") + gLastTouchDownX + "," + gLastTouchDownY, 26, y);
-  y += 26;
-  display.drawString(String("touch up: ") + gLastTouchUpX + "," + gLastTouchUpY, 26, y);
 
-  gFontLabButton = {26, display.height() - 314, display.width() - 52, 58};
-  gLayoutDebugButton = {26, display.height() - 246, display.width() - 52, 58};
-  gTouchDebugButton = {26, display.height() - 178, display.width() - 52, 58};
-  gHomeButton = {26, display.height() - 100, display.width() - 52, 58};
+  gFontLabButton = {26, display.height() - 286, display.width() - 52, 58};
+  gLayoutDebugButton = {26, display.height() - 220, display.width() - 52, 58};
+  gTouchDebugButton = {26, display.height() - 154, display.width() - 52, 58};
+  gHomeButton = {26, display.height() - 88, display.width() - 52, 58};
   drawButton(gFontLabButton, "Font Lab");
   drawButton(gLayoutDebugButton, "Layout log");
   drawButton(gTouchDebugButton, gTouchDebugEnabled ? "Touch debug off" : "Touch debug on");
@@ -2918,12 +3059,14 @@ void handleTouch() {
   }
 
   if (detail.wasPressed()) {
+    recordUserActivity("touch press");
     gLastTouchDownX = constrain(detail.x, 0, M5.Display.width());
     gLastTouchDownY = constrain(detail.y, 0, M5.Display.height());
     Serial.printf("touch down coordinates: x=%ld y=%ld screen=%s\n", static_cast<long>(gLastTouchDownX),
                   static_cast<long>(gLastTouchDownY), screenName(gScreen));
   }
   if (detail.wasClicked() || detail.wasReleased()) {
+    recordUserActivity("touch release");
     gLastTouchUpX = constrain(detail.x, 0, M5.Display.width());
     gLastTouchUpY = constrain(detail.y, 0, M5.Display.height());
     Serial.printf("touch up coordinates: x=%ld y=%ld screen=%s\n", static_cast<long>(gLastTouchUpX),
@@ -3115,6 +3258,11 @@ void handleTouch() {
       gSettings.refreshMode = gSettings.refreshMode == RefreshMode::Clean ? RefreshMode::Normal : RefreshMode::Clean;
       saveSettings();
       renderSettings("refresh mode switch");
+    } else if (gPowerModeButton.contains(tapX, tapY)) {
+      cyclePowerMode();
+      saveSettings();
+      applyPowerPolicy("power mode switch");
+      renderSettings("power mode switch");
     } else if (gHomeButton.contains(tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
@@ -3182,9 +3330,14 @@ void setup() {
   waitForSerial();
   captureNormalPortraitRotation();
   loadSettings();
+  gLastUserActivityMs = millis();
+  applyPowerPolicy("boot");
 
   Serial.println();
   Serial.printf("PaperBadge+ %s boot\n", kFirmwareVersion);
+  const esp_sleep_wakeup_cause_t wakeReason = esp_sleep_get_wakeup_cause();
+  Serial.printf("Wake reason: %s (%d)\n", wakeReasonName(wakeReason), static_cast<int>(wakeReason));
+  Serial.println("Power sleep policy: deep/light sleep deferred until PaperS3 touch wake is physically verified.");
   Serial.printf("M5 board id: %d\n", static_cast<int>(M5.getBoard()));
   Serial.printf("Display at boot: %dx%d rotation=%u normalPortrait=%u\n", M5.Display.width(), M5.Display.height(),
                 M5.Display.getRotation() & 3, gNormalPortraitRotation);
@@ -3222,5 +3375,6 @@ void loop() {
   M5.update();
   handleTouch();
   maybeSwitchBadgeLanguage();
-  delay(100);
+  maybeEnterPowerIdle();
+  delay(loopDelayMs());
 }

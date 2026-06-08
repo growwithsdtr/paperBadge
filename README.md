@@ -2,7 +2,7 @@
 
 Firmware for a custom PaperBadgePlus e-ink badge on M5Stack PaperS3 / M5PaperS3 v1.2.
 
-The firmware is intentionally simple and compile-checked in milestones. It does not use Wi-Fi, Bluetooth, cloud calls, or ESP-IDF.
+The firmware is intentionally simple and compile-checked in milestones. It does not enable Wi-Fi/Bluetooth features or make cloud calls; v2.6 only touches local radio-off and sleep wake-cause APIs for power diagnostics.
 
 ## Version Status
 
@@ -31,6 +31,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v2.3: add Debug → Font Lab, persistent typography presets, and contrast presets. The default app typography is now `Large Reader` + `XL`, using real M5GFX `FreeSansBold` fonts for heavier English UI text and Japanese Gothic for Japanese samples/runtime fallback.
 - v2.4: add simple monochrome line icons to top-level Home menu items and add a primitive house icon to Home buttons. Icons are drawn with display primitives rather than icon fonts, so text labels remain the fallback.
 - v2.5: make Badge mode static by default. Badge language defaults to Manual toggle, center tap switches English/Japanese, current language is persisted, and auto-rotate only runs when explicitly selected with a 15s/30s/60s interval.
+- v2.6: add persistent Power Mode settings, turn off unused Wi-Fi/Bluetooth/speaker behavior at boot, silence the boot buzzer, and add conservative idle logging for Battery Saver and Conference Badge modes. Deep/light sleep is documented but deferred until PaperS3 touch wake reliability is physically verified.
 
 ## Hardware
 
@@ -123,8 +124,21 @@ Long-press the center of the Badge screen to enter Home/Menu. If long press is h
 - Badge auto-rotate interval: `Off`, `15s`, `30s`, or `60s`
 - PaperCoach font size: `Medium`, `Large`, `XL`, or `Huge`
 - Refresh mode: `Normal` or `Clean`
+- Power mode: `Normal`, `Battery Saver`, or `Conference Badge`
 
 Settings are stored in ESP32 Preferences/NVS and survive SD card removal.
+
+## Power / Battery Behavior
+
+v2.6 keeps the power policy conservative so the device does not become hard to wake during a conference. At boot, firmware explicitly turns Wi-Fi off, stops Bluetooth, stops the speaker, disables the boot beep, and keeps IMU polling disabled in `M5.config()`.
+
+Power modes:
+
+- `Normal`: standard touch responsiveness. No idle entry while actively using PaperCoach.
+- `Battery Saver`: keeps the same screens available, uses a slower loop delay, and enters a logged idle state after about 180 seconds of inactivity.
+- `Conference Badge`: intended for static badge use. After the badge is drawn and left untouched for about 10 seconds, firmware enters a logged idle state and slows the loop delay.
+
+The v2.6 idle state is not ESP32 deep sleep or light sleep. M5Unified exposes deep/light sleep APIs and the ESP32-S3 reports wake causes, but PaperS3 touch wake behavior must be verified on the physical device before enabling sleep that could make the badge difficult to wake. Serial logs report the selected power mode, idle entry/exit, and boot wake reason.
 
 ## Home/Menu
 
