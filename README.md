@@ -2,7 +2,7 @@
 
 Firmware for a custom PaperBadgePlus e-ink badge on M5Stack PaperS3 / M5PaperS3 v1.2.
 
-The firmware is intentionally simple and compile-checked in milestones. It does not enable Wi-Fi/Bluetooth features or make cloud calls; v2.6 only touches local radio-off and sleep wake-cause APIs for power diagnostics.
+The firmware is intentionally simple and compile-checked in milestones. It does not enable Wi-Fi/Bluetooth features or make cloud calls; power diagnostics use only local M5Unified/ESP32 APIs.
 
 ## Version Status
 
@@ -37,6 +37,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v2.9: improve touch responsiveness by reducing input debounce windows, using padded invisible hitboxes around buttons, logging matched hit targets and ignored-touch reasons, and preventing power idle while touch is active or immediately after interaction.
 - v3.0: polish button alignment and icon affordances. Buttons now center text or icon+label groups vertically and horizontally, compact PaperCoach Home controls are icon-only, and top-level menu icons use stronger primitive-drawn monochrome shapes instead of thin line icons.
 - v3.1: regenerate embedded English/Japanese badge images from one high-contrast 3-line template, remove rendered location/footer text, move the QR upward, and preprocess the portrait offline for sharper 16-level grayscale e-ink output.
+- v3.2: add battery and USB/VBUS status to Settings and Debug, add serial power audit logs, keep battery indicators off Badge/PaperCoach screens unless future critical-low handling is added, and lengthen Conference Badge idle entry to about 30 seconds for better touch reliability.
 
 ## Hardware
 
@@ -143,9 +144,13 @@ Power modes:
 
 - `Normal`: standard touch responsiveness. No idle entry while actively using PaperCoach.
 - `Battery Saver`: keeps the same screens available, uses a slower loop delay, and enters a logged idle state after about 180 seconds of inactivity.
-- `Conference Badge`: intended for static badge use. After the badge is drawn and left untouched for about 10 seconds, firmware enters a logged idle state and slows the loop delay.
+- `Conference Badge`: intended for static badge use. After the badge is drawn and left untouched for about 30 seconds, firmware enters a logged idle state and slows the loop delay.
 
-The v2.6 idle state is not ESP32 deep sleep or light sleep. M5Unified exposes deep/light sleep APIs and the ESP32-S3 reports wake causes, but PaperS3 touch wake behavior must be verified on the physical device before enabling sleep that could make the badge difficult to wake. Serial logs report the selected power mode, idle entry/exit, and boot wake reason.
+The idle state is not ESP32 deep sleep or light sleep. M5Unified exposes deep/light sleep APIs and the ESP32-S3 reports wake causes, but PaperS3 touch wake behavior must be verified on the physical device before enabling sleep that could make the badge difficult to wake. Serial logs report the selected power mode, idle entry/exit, and boot wake reason.
+
+v3.2 shows power status only in diagnostic contexts: Settings has a compact battery/USB line, and Debug shows battery voltage, approximate percent, charge/discharge state, battery current, USB/VBUS status, current power mode, and the radio/peripheral policy. Badge, Practice, and Drills do not show a battery indicator. Percent is whatever M5Unified reports when available, with a conservative voltage estimate fallback.
+
+The power audit log confirms the app policy: Wi-Fi off, Bluetooth stopped, IMU disabled in `M5.config()`, speaker stopped, badge language mode/current language, redraw count, VBUS, battery voltage, charge state, and sleep deferred.
 
 ## E-Ink Refresh Policy
 

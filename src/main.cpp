@@ -15,7 +15,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v3.1";
+constexpr const char* kFirmwareVersion = "v3.2";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -24,7 +24,7 @@ constexpr uint32_t kDefaultLanguageIntervalSeconds = 15;
 constexpr uint32_t kInputDebounceMs = 250;
 constexpr uint32_t kInputCleanRefreshDebounceMs = 600;
 constexpr uint32_t kBatterySaverIdleMs = 180000;
-constexpr uint32_t kConferenceBadgeIdleMs = 10000;
+constexpr uint32_t kConferenceBadgeIdleMs = 30000;
 constexpr uint32_t kPostTouchIdleGuardMs = 5000;
 constexpr uint32_t kHardCleanTransitionLimit = 14;
 constexpr int32_t kHitboxPadding = 10;
@@ -881,6 +881,121 @@ const char* wakeReasonName(esp_sleep_wakeup_cause_t reason) {
   }
 }
 
+const char* chargingStateName(m5::Power_Class::is_charging_t state) {
+  switch (state) {
+    case m5::Power_Class::is_charging:
+      return "charging";
+    case m5::Power_Class::is_discharging:
+      return "discharging";
+    case m5::Power_Class::charge_unknown:
+    default:
+      return "unknown";
+  }
+}
+
+int32_t batteryLevelPercent() {
+  const int32_t level = M5.Power.getBatteryLevel();
+  if (level >= 0 && level <= 100) {
+    return level;
+  }
+
+  const int16_t mv = M5.Power.getBatteryVoltage();
+  if (mv <= 0) {
+    return -1;
+  }
+  const long estimated = map(static_cast<long>(mv), 3300L, 4200L, 0L, 100L);
+  return static_cast<int32_t>(constrain(estimated, 0L, 100L));
+}
+
+const char* usbPowerName(int16_t vbusMv) {
+  if (vbusMv < 0) {
+    return "unknown";
+  }
+  return vbusMv >= 4300 ? "yes" : "no";
+}
+
+String batteryStatusLine() {
+  const int16_t batteryMv = M5.Power.getBatteryVoltage();
+  const int32_t level = batteryLevelPercent();
+  String status = "battery: ";
+  if (batteryMv > 0) {
+    status += batteryMv;
+    status += "mV ";
+  } else {
+    status += "unknown ";
+  }
+  if (level >= 0) {
+    status += level;
+    status += "%";
+  } else {
+    status += "--%";
+  }
+  return status;
+}
+
+String chargeStatusLine() {
+  String status = "charge: ";
+  status += chargingStateName(M5.Power.isCharging());
+  status += " ";
+  status += M5.Power.getBatteryCurrent();
+  status += "mA";
+  return status;
+}
+
+String usbStatusLine() {
+  const int16_t vbusMv = M5.Power.getVBUSVoltage();
+  String status = "usb: ";
+  status += usbPowerName(vbusMv);
+  if (vbusMv >= 0) {
+    status += " ";
+    status += vbusMv;
+    status += "mV";
+  }
+  return status;
+}
+
+String compactPowerStatusLine() {
+  const int16_t batteryMv = M5.Power.getBatteryVoltage();
+  const int32_t level = batteryLevelPercent();
+  const int16_t vbusMv = M5.Power.getVBUSVoltage();
+
+  String status = "Batt ";
+  if (batteryMv > 0) {
+    status += batteryMv;
+    status += "mV";
+  } else {
+    status += "unknown";
+  }
+  status += " ";
+  if (level >= 0) {
+    status += level;
+    status += "%";
+  } else {
+    status += "--%";
+  }
+  status += "  USB ";
+  status += usbPowerName(vbusMv);
+  return status;
+}
+
+void logPowerAudit(const char* reason) {
+  const int16_t batteryMv = M5.Power.getBatteryVoltage();
+  const int32_t level = batteryLevelPercent();
+  const int32_t currentMa = M5.Power.getBatteryCurrent();
+  const int16_t vbusMv = M5.Power.getVBUSVoltage();
+  const bool wifiOff = WiFi.getMode() == WIFI_OFF;
+  const bool bluetoothStarted = btStarted();
+
+  Serial.printf(
+      "Power audit: reason=%s mode=%s idle=%s batteryMv=%d level=%ld charge=%s currentMa=%ld vbusMv=%d usb=%s "
+      "wifi=%s bluetooth=%s imu=disabled speaker=stopped badgeMode=%s badgeLang=%s redraws=%u sleep=deferred\n",
+      reason && reason[0] != '\0' ? reason : "audit", powerModeName(), gIdleModeActive ? "yes" : "no",
+      static_cast<int>(batteryMv), static_cast<long>(level), chargingStateName(M5.Power.isCharging()),
+      static_cast<long>(currentMa), static_cast<int>(vbusMv), usbPowerName(vbusMv), wifiOff ? "off" : "on",
+      bluetoothStarted ? "on" : "off", languageModeName(), languageName(gBadgeLanguage),
+      static_cast<unsigned>(gBadgeRedrawCount));
+}
+
 void cyclePowerMode() {
   switch (gSettings.powerMode) {
     case PowerMode::Normal:
@@ -914,6 +1029,7 @@ void applyPowerPolicy(const char* reason) {
   }
   Serial.printf("Power mode active: mode=%s idle=%s reason=%s\n", powerModeName(), gIdleModeActive ? "yes" : "no",
                 reason && reason[0] != '\0' ? reason : "policy");
+  logPowerAudit(reason);
 }
 
 void recordUserActivity(const char* reason) {
@@ -934,6 +1050,7 @@ void enterIdleMode(const char* reason) {
   disableUnusedRadiosAndPeripherals(reason);
   Serial.printf("Power idle entry: mode=%s reason=%s count=%u sleep=deferred\n", powerModeName(),
                 reason && reason[0] != '\0' ? reason : "inactivity", static_cast<unsigned>(gIdleEntryCount));
+  logPowerAudit(reason);
 }
 
 void maybeEnterPowerIdle() {
@@ -2970,11 +3087,12 @@ void renderSettings(const char* refreshReason = "mode switch") {
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.drawString("Settings", 32, 34);
   applyCoachMetadataFont();
-  display.drawString("Badge orientation", 36, 92);
+  display.drawString(compactPowerStatusLine(), 36, 76);
+  display.drawString("Badge orientation", 36, 104);
 
   const int32_t width = display.width();
   const int32_t halfW = (width - 88) / 2;
-  gOrientationButton = {36, 126, width - 72, 60};
+  gOrientationButton = {36, 136, width - 72, 58};
   gLanguageAutoButton = {36, 238, width - 72, 52};
   gLanguageEnglishButton = {36, 296, width - 72, 52};
   gLanguageJapaneseButton = {};
@@ -3018,6 +3136,7 @@ void renderSettings(const char* refreshReason = "mode switch") {
 
   finishDisplayRefresh();
   logTypographySettings("settings screen");
+  logPowerAudit("settings screen");
   Serial.printf("Settings screen shown: font=%s style=%s contrast=%s refresh=%s power=%s\n", fontSizeModeName(),
                 fontStyleModeName(), contrastModeName(), refreshModeName(), powerModeName());
 }
@@ -3041,47 +3160,46 @@ void renderDebug(const char* refreshReason = "mode switch") {
                          static_cast<unsigned>(gCoachItemCount),
                      26, y);
   y += 26;
-  display.drawString(String("badge json: ") + (gBadgeJsonLoaded ? "loaded" : "missing/fail"), 26, y);
-  y += 26;
   display.drawString(String("badge: ") + languageName(gBadgeLanguage) + " / " + languageModeName() + " / " +
                          autoRotateIntervalName(),
                      26, y);
-  y += 26;
-  display.drawString(String("badge redraws: ") + static_cast<unsigned>(gBadgeRedrawCount), 26, y);
-  y += 26;
+  y += 24;
   display.drawString(String("font: ") + fontSizeModeName() + " / " + fontStyleModeName(), 26, y);
-  y += 26;
+  y += 24;
   display.drawString(String("contrast: ") + contrastModeName() + "  refresh: " + refreshModeName(), 26, y);
-  y += 26;
+  y += 24;
   display.drawString(String("refresh count: ") + static_cast<unsigned>(gRefreshTransitionCount) + "/" +
                          static_cast<unsigned>(kHardCleanTransitionLimit),
                      26, y);
-  y += 26;
+  y += 24;
   display.drawString(String("power: ") + powerModeName() + " idle=" + (gIdleModeActive ? "yes" : "no"), 26, y);
-  y += 26;
-  display.drawString(String("idle entries: ") + static_cast<unsigned>(gIdleEntryCount), 26, y);
-  y += 26;
+  y += 24;
+  display.drawString(batteryStatusLine(), 26, y);
+  y += 24;
+  display.drawString(chargeStatusLine(), 26, y);
+  y += 24;
+  display.drawString(usbStatusLine(), 26, y);
+  y += 24;
+  display.drawString(String("radios: wifi ") + (WiFi.getMode() == WIFI_OFF ? "off" : "on") + " bt " +
+                         (btStarted() ? "on" : "off") + " imu off spk stopped",
+                     26, y);
+  y += 24;
   display.drawString(String("input locked: ") + (gInputLocked ? "yes" : "no") + "  touch active: " +
                          (gTouchActive ? "yes" : "no"),
                      26, y);
-  y += 26;
+  y += 24;
   display.drawString(String("touch down: ") + gLastTouchDownX + "," + gLastTouchDownY, 26, y);
-  y += 26;
+  y += 24;
   display.drawString(String("touch up: ") + gLastTouchUpX + "," + gLastTouchUpY, 26, y);
-  y += 26;
+  y += 24;
   display.drawString(String("last hit: ") + gLastHitTarget, 26, y);
-  y += 26;
+  y += 24;
   display.drawString(String("ignored: ") + gLastIgnoredTouchReason, 26, y);
-  y += 26;
+  y += 24;
   display.drawString(String("refresh end: ") + static_cast<unsigned>(gLastRefreshEndMs) + " ms", 26, y);
-  y += 26;
+  y += 24;
   display.drawString(String("debounce: ") + static_cast<unsigned>(gLastDebounceMs) + " ms", 26, y);
-  y += 26;
-  display.drawString(String("orientation: ") + orientationModeName(), 26, y);
-  y += 26;
-  const int16_t batteryMv = M5.Power.getBatteryVoltage();
-  display.drawString(batteryMv > 0 ? String("battery: ") + batteryMv + " mV" : "battery: unknown", 26, y);
-  y += 26;
+  y += 24;
   display.drawString(String("touch debug: ") + (gTouchDebugEnabled ? "on" : "off"), 26, y);
 
   gFontLabButton = {26, display.height() - 336, display.width() - 52, 52};
@@ -3097,6 +3215,7 @@ void renderDebug(const char* refreshReason = "mode switch") {
 
   finishDisplayRefresh();
   logTypographySettings("debug screen");
+  logPowerAudit("debug screen");
   Serial.println("Debug screen shown.");
 }
 
