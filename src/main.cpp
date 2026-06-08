@@ -16,7 +16,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v3.5";
+constexpr const char* kFirmwareVersion = "v3.6";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -183,6 +183,11 @@ enum class IconType : uint8_t {
   Results,
   Settings,
   Debug,
+};
+
+enum class ButtonTextAlign : uint8_t {
+  Center,
+  Left,
 };
 
 enum class DrillCategory : uint8_t {
@@ -2161,7 +2166,8 @@ void drawIcon(IconType icon, int32_t x, int32_t y, int32_t size) {
   }
 }
 
-void drawButton(const Rect& rect, const char* label, IconType icon = IconType::None) {
+void drawButton(const Rect& rect, const char* label, IconType icon = IconType::None,
+                ButtonTextAlign align = ButtonTextAlign::Center) {
   auto& display = M5.Display;
   display.drawRoundRect(rect.x, rect.y, rect.w, rect.h, 8, TFT_BLACK);
   display.drawRoundRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 7, TFT_BLACK);
@@ -2199,20 +2205,26 @@ void drawButton(const Rect& rect, const char* label, IconType icon = IconType::N
   }
 
   const int32_t groupW = maxLineW + (hasIcon ? iconSize + iconGap : 0);
-  const int32_t groupX = rect.x + (rect.w - groupW) / 2;
-  const int32_t innerX = hasIcon ? groupX + iconSize + iconGap : rect.x + (rect.w - maxLineW) / 2;
+  const int32_t groupX = align == ButtonTextAlign::Left ? rect.x + 22 : rect.x + (rect.w - groupW) / 2;
+  const int32_t innerX = hasIcon ? groupX + iconSize + iconGap
+                                 : (align == ButtonTextAlign::Left ? rect.x + 24 : rect.x + (rect.w - maxLineW) / 2);
   if (hasIcon) {
     drawIcon(icon, groupX, rect.y + (rect.h - iconSize) / 2, iconSize);
   }
   for (uint8_t line = 0; line < result.lineCount; ++line) {
     const int32_t textW = display.textWidth(lines[line]);
-    display.drawString(lines[line], innerX + (maxLineW - textW) / 2, textY + line * lineHeight);
+    const int32_t lineX = align == ButtonTextAlign::Left ? innerX : innerX + (maxLineW - textW) / 2;
+    display.drawString(lines[line], lineX, textY + line * lineHeight);
   }
   logLayoutBox("button", Rect(groupX, rect.y + 4, groupW, rect.h - 8), result.height, 1, result.overflow);
 }
 
 void drawButton(const Rect& rect, const String& label, IconType icon = IconType::None) {
   drawButton(rect, label.c_str(), icon);
+}
+
+void drawButton(const Rect& rect, const String& label, IconType icon, ButtonTextAlign align) {
+  drawButton(rect, label.c_str(), icon, align);
 }
 
 bool isCoachScreen(Screen screen) {
@@ -2290,7 +2302,7 @@ CoachTypography coachTypography() {
       type.bodyLineHeight = 34;
       type.metadataLineHeight = 24;
       type.footerLineHeight = 24;
-      type.buttonHeight = 76;
+      type.buttonHeight = 64;
       type.promptLines = 9;
       type.answerLines = 7;
       type.rubricLines = 5;
@@ -2305,7 +2317,7 @@ CoachTypography coachTypography() {
       type.bodyLineHeight = 54;
       type.metadataLineHeight = 34;
       type.footerLineHeight = 32;
-      type.buttonHeight = 106;
+      type.buttonHeight = 82;
       type.promptLines = 5;
       type.answerLines = 4;
       type.rubricLines = 3;
@@ -2321,7 +2333,7 @@ CoachTypography coachTypography() {
       type.bodyLineHeight = 44;
       type.metadataLineHeight = 24;
       type.footerLineHeight = 24;
-      type.buttonHeight = 88;
+      type.buttonHeight = 72;
       type.promptLines = 8;
       type.answerLines = 6;
       type.rubricLines = 4;
@@ -2330,18 +2342,18 @@ CoachTypography coachTypography() {
   }
 
   if (gSettings.fontStyleMode == FontStyleMode::LargeReader) {
-    type.buttonHeight += 8;
+    type.buttonHeight += 4;
     type.charsPerPage = (type.charsPerPage * 82) / 100;
   } else if (gSettings.fontStyleMode == FontStyleMode::SansBoldLike) {
-    type.buttonHeight += 6;
+    type.buttonHeight += 3;
     type.charsPerPage = (type.charsPerPage * 88) / 100;
   } else if (gSettings.fontStyleMode == FontStyleMode::HighContrast) {
-    type.buttonHeight += 10;
+    type.buttonHeight += 6;
     type.charsPerPage = (type.charsPerPage * 78) / 100;
   } else if (gSettings.fontStyleMode == FontStyleMode::DebugMono) {
     type.buttonPx = canonicalFontSizeMode(gSettings.fontSizeMode) == FontSizeMode::XL ? 24 : type.buttonPx;
     type.bodyLineHeight += 4;
-    type.buttonHeight += 8;
+    type.buttonHeight += 4;
     type.charsPerPage = (type.charsPerPage * 72) / 100;
   }
 
@@ -3424,7 +3436,7 @@ void renderCoachScreen() {
     String optionLabels[kMaxOptions];
     int32_t optionHeights[kMaxOptions] = {};
     int32_t optionTotal = 0;
-    const int32_t optionGap = 12;
+    const int32_t optionGap = 10;
     for (uint8_t option = 0; option < optionCount; ++option) {
       optionLabels[option] = String(static_cast<char>('A' + option)) + ". " + coachOptionLabelFor(item, option);
       optionHeights[option] = wrappedButtonHeightFor(optionLabels[option], contentW);
@@ -3461,7 +3473,7 @@ void renderCoachScreen() {
         break;
       }
       gOptionButtons[option] = {contentX, y, contentW, buttonH};
-      drawButton(gOptionButtons[option], optionLabels[option]);
+      drawButton(gOptionButtons[option], optionLabels[option], IconType::None, ButtonTextAlign::Left);
       y += buttonH + optionGap;
     }
     drawCoachPageNumber(1, 2);
