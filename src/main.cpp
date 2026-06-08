@@ -16,7 +16,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v4.2";
+constexpr const char* kFirmwareVersion = "v4.3";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -99,6 +99,7 @@ enum class Screen {
   HelpLegend,
   QrZoom,
   PhotoZoom,
+  PracticeMenu,
   InterviewPractice,
   DrillsMenu,
   Drills,
@@ -405,6 +406,10 @@ Rect gPracticeButton;
 Rect gDrillsButton;
 Rect gExamButton;
 Rect gResultsButton;
+Rect gPracticeMustButton;
+Rect gPracticeAllButton;
+Rect gPracticeContinueButton;
+Rect gPracticeHelpButton;
 Rect gDrillAllButton;
 Rect gDrillWeakButton;
 Rect gDrillMetricButton;
@@ -465,6 +470,7 @@ uint32_t gBadgeRedrawCount = 0;
 CoachItem gCoachItems[kMaxCoachItems];
 size_t gCoachItemCount = 0;
 size_t gCoachIndex = 0;
+size_t gLastPracticeIndex = 0;
 uint8_t gCoachStage = 0;
 int8_t gSelectedOption = -1;
 uint8_t gMockStep = 0;
@@ -472,6 +478,7 @@ uint8_t gBottomLeftTapCount = 0;
 uint32_t gLastBottomLeftTapMs = 0;
 bool gTouchDebugEnabled = false;
 bool gInterviewMustMasterOnly = false;
+bool gHasPracticeLastIndex = false;
 DrillCategory gDrillCategory = DrillCategory::All;
 bool gInputLocked = false;
 bool gCurrentRefreshClean = false;
@@ -2020,6 +2027,23 @@ void startCoachMode(Screen screen) {
   Serial.printf("Coach mode entry: screen=%s cleanRefresh=queued\n", screenName(screen));
 }
 
+void startPracticeMode(bool mustOnly, bool continueLast) {
+  gInterviewMustMasterOnly = mustOnly;
+  gScreen = Screen::InterviewPractice;
+  size_t startIndex = 0;
+  if (continueLast && gHasPracticeLastIndex && gLastPracticeIndex < gCoachItemCount &&
+      itemMatchesScreen(coachItemAt(gLastPracticeIndex), Screen::InterviewPractice)) {
+    startIndex = gLastPracticeIndex;
+  }
+  gCoachIndex = findCoachItem(Screen::InterviewPractice, startIndex);
+  gCoachStage = 0;
+  gSelectedOption = -1;
+  gMockStep = 0;
+  gCoachNeedsCleanEntryRefresh = true;
+  Serial.printf("Practice entry: filter=%s continue=%s index=%u cleanRefresh=queued\n", mustOnly ? "Must" : "All",
+                continueLast ? "yes" : "no", static_cast<unsigned>(gCoachIndex));
+}
+
 void nextCoachItem() {
   if (gCoachItemCount == 0) {
     return;
@@ -2480,6 +2504,8 @@ const char* screenName(Screen screen) {
       return "QR zoom";
     case Screen::PhotoZoom:
       return "Photo zoom";
+    case Screen::PracticeMenu:
+      return "Practice";
     case Screen::DrillsMenu:
       return "Drills";
     case Screen::Exam:
@@ -4101,6 +4127,8 @@ void renderInterviewPracticeScreen() {
   prepareCoachContentRefresh();
 
   const CoachItemView item = coachItemAt(gCoachIndex);
+  gLastPracticeIndex = gCoachIndex;
+  gHasPracticeLastIndex = true;
   const FontSizeMode savedSize = gSettings.fontSizeMode;
   const FontSizeMode renderSize = choosePracticeReaderSize(item, true);
   gSettings.fontSizeMode = renderSize;
@@ -4377,6 +4405,46 @@ void renderHome(const char* refreshReason = "mode switch") {
 
   finishDisplayRefresh();
   Serial.println("Home/Menu mode: normal orientation.");
+}
+
+void renderPracticeMenu(const char* refreshReason = "mode switch") {
+  gScreen = Screen::PracticeMenu;
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachTitleFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Practice", 32, 34);
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString("Choose cards", 34, 92);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+
+  const int32_t buttonX = 34;
+  const int32_t buttonW = display.width() - 68;
+  const int32_t buttonH = 86;
+  const int32_t gap = 18;
+  int32_t y = 148;
+  gPracticeMustButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gPracticeAllButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gPracticeContinueButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gPracticeHelpButton = {buttonX, y, buttonW, buttonH};
+  gHomeButton = {buttonX, display.height() - 110, buttonW, 76};
+
+  drawButton(gPracticeMustButton, "Must cards", IconType::Practice);
+  drawButton(gPracticeAllButton, "All cards", IconType::Practice);
+  drawButton(gPracticeContinueButton, "Continue last card", IconType::Next);
+  drawButton(gPracticeHelpButton, "Help / Legend");
+  drawButton(gHomeButton, "", IconType::Home);
+
+  finishDisplayRefresh();
+  Serial.printf("Practice menu shown: last=%s index=%u mustCount=%u\n", gHasPracticeLastIndex ? "yes" : "no",
+                static_cast<unsigned>(gLastPracticeIndex), static_cast<unsigned>(gCoachMustMasterCount));
 }
 
 void renderDrillsMenu(const char* refreshReason = "mode switch") {
@@ -4694,9 +4762,15 @@ void renderHelpLegend(const char* refreshReason = "mode switch") {
       "Answer = spoken answer draft",
       "Anchor = memory cue / key points",
       "Watch-out = mistake to avoid",
+      "Follow-up = likely interviewer push",
+      "Defense = strong response principle",
       "Tap upper half = previous page",
       "Tap lower half = next page",
       "Arrows = previous/next card",
+      "Evidence-backed = concrete evidence, metric, or example",
+      "Directional = usable, but caveat causality",
+      "Needs proof = risky unless supported by data",
+      "Avoid / Reframe = weak, defensive, or overclaimed",
   };
 
   display.setTextDatum(textdatum_t::top_left);
@@ -4709,7 +4783,7 @@ void renderHelpLegend(const char* refreshReason = "mode switch") {
   int32_t y = 92;
   for (size_t index = 0; index < countOf(lines); ++index) {
     display.drawString(lines[index], 34, y);
-    y += coachTypography().metadataLineHeight + 8;
+    y += coachTypography().metadataLineHeight + 6;
   }
 
   gHomeButton = {26, display.height() - 94, display.width() - 52, 58};
@@ -5117,6 +5191,26 @@ void handleTouch() {
     return;
   }
 
+  if (gScreen == Screen::PracticeMenu) {
+    if (hitTarget(gHomeButton, "home", tapX, tapY)) {
+      Serial.println("entering Home");
+      renderHome();
+    } else if (hitTarget(gPracticeMustButton, "practice must cards", tapX, tapY)) {
+      startPracticeMode(true, false);
+      renderCoachScreen();
+    } else if (hitTarget(gPracticeAllButton, "practice all cards", tapX, tapY)) {
+      startPracticeMode(false, false);
+      renderCoachScreen();
+    } else if (hitTarget(gPracticeContinueButton, "practice continue", tapX, tapY)) {
+      startPracticeMode(gInterviewMustMasterOnly, true);
+      renderCoachScreen();
+    } else if (hitTarget(gPracticeHelpButton, "practice help legend", tapX, tapY)) {
+      renderHelpLegend();
+    }
+    noteIgnoredIfNoHit(tapX, tapY);
+    return;
+  }
+
   if (gScreen == Screen::DrillsMenu) {
     if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
@@ -5286,8 +5380,7 @@ void handleTouch() {
       Serial.println("returning to Badge");
       renderBadge(true, "mode switch");
     } else if (hitTarget(gPracticeButton, "practice", tapX, tapY)) {
-      startCoachMode(Screen::InterviewPractice);
-      renderCoachScreen();
+      renderPracticeMenu();
     } else if (hitTarget(gDrillsButton, "drills", tapX, tapY)) {
       renderDrillsMenu();
     } else if (hitTarget(gExamButton, "exam", tapX, tapY)) {
