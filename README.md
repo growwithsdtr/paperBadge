@@ -28,6 +28,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v2.0: add a PaperCoach typography/layout foundation for physical readability using M5GFX Gothic fonts, default new installs to XL PaperCoach text, add larger touch targets, persist Normal/Clean refresh mode, and lock touch input during e-ink refresh/debounce windows.
 - v2.1: add reusable text wrapping and layout diagnostics, wrap MCQ option buttons inside their bounds, grow option buttons for multi-line labels, split drill result/explanation onto a separate page, shorten Metric Precision option labels, and log vertical budget/overflow warnings over Serial.
 - v2.2: replace the overlapping PaperCoach top-level modes with outcome-based navigation: Badge, Practice, Drills, Exam, Glossary, Results, Settings, and Debug. Practice opens the existing answer-prep flow, Drills contains category choices, and Exam/Results are readable placeholders.
+- v2.3: add Debug → Font Lab, persistent typography presets, and contrast presets. The default app typography is now `Large Reader` + `XL`, using real M5GFX `FreeSansBold` fonts for heavier English UI text and Japanese Gothic for Japanese samples/runtime fallback.
 
 ## Hardware
 
@@ -147,6 +148,16 @@ v2.0 uses real M5GFX `lgfxJapanGothic_*` fonts rather than offset-drawing fake b
 - Button text: Medium/Large `24`, XL `28`, Huge `32`
 
 New devices default PaperCoach font size to `XL`; existing NVS settings are preserved. Serial logs include the current screen, PaperCoach font size, refresh mode, and input lock/unlock state.
+
+v2.3 adds typography presets:
+
+- `Sans Thin/current`: Japanese Gothic, the original v2.0/v2.2 look.
+- `Large Reader`: real `FreeSansBold` for heavier English UI text; default.
+- `Sans Bold-like`: real `FreeSansBold` with less size expansion than Large Reader.
+- `High Contrast`: real `FreeSansBold`, darker metadata, larger spacing.
+- `Debug Mono`: real `FreeMonoBold`, intended for diagnostics only.
+
+Font Lab is available from Debug and cycles font style, font size, and contrast directly on-device. Japanese sample text uses `lgfxJapanGothic_*` because the FreeSans/FreeMono GFX fonts are ASCII/Latin-oriented.
 
 v2.1 adds serial layout diagnostics for physical debugging. Each PaperCoach render logs important bounding boxes, computed text height, available height, page count, and overflow warnings. The Debug screen has a `Layout log` action. Screenshot-to-SD is not enabled in this checkpoint because the public M5GFX/PaperS3 display API does not expose a simple, safe BMP/PNG save path for the active e-paper framebuffer in this firmware shape.
 

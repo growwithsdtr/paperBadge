@@ -12,7 +12,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v2.2";
+constexpr const char* kFirmwareVersion = "v2.3";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -80,6 +80,7 @@ enum class Screen {
   Home,
   Settings,
   Debug,
+  FontLab,
   QrZoom,
   PhotoZoom,
   InterviewPractice,
@@ -121,6 +122,20 @@ enum class FontSizeMode : uint8_t {
 enum class RefreshMode : uint8_t {
   Normal = 0,
   Clean = 1,
+};
+
+enum class FontStyleMode : uint8_t {
+  SansCurrent = 0,
+  LargeReader = 1,
+  SansBoldLike = 2,
+  HighContrast = 3,
+  DebugMono = 4,
+};
+
+enum class ContrastMode : uint8_t {
+  Standard = 0,
+  Dark = 1,
+  Max = 2,
 };
 
 enum class DrillCategory : uint8_t {
@@ -178,6 +193,8 @@ struct Settings {
   OrientationMode orientationMode = OrientationMode::Strap;
   LanguageMode languageMode = LanguageMode::Auto;
   FontSizeMode fontSizeMode = FontSizeMode::XL;
+  FontStyleMode fontStyleMode = FontStyleMode::LargeReader;
+  ContrastMode contrastMode = ContrastMode::Dark;
   RefreshMode refreshMode = RefreshMode::Normal;
 };
 
@@ -291,6 +308,8 @@ Rect gLanguageAutoButton;
 Rect gLanguageEnglishButton;
 Rect gLanguageJapaneseButton;
 Rect gRefreshModeButton;
+Rect gFontStyleButton;
+Rect gContrastButton;
 Rect gFontMediumButton;
 Rect gFontLargeButton;
 Rect gFontXlButton;
@@ -300,6 +319,10 @@ Rect gNextButton;
 Rect gFilterButton;
 Rect gTouchDebugButton;
 Rect gLayoutDebugButton;
+Rect gFontLabButton;
+Rect gFontLabStyleButton;
+Rect gFontLabSizeButton;
+Rect gFontLabContrastButton;
 Rect gOptionButtons[kMaxOptions];
 bool gSdMounted = false;
 bool gBadgeJsonLoaded = false;
@@ -333,6 +356,8 @@ int32_t gLastTouchUpY = -1;
 const char* screenName(Screen screen);
 const char* fontSizeModeName();
 const char* refreshModeName();
+const char* fontStyleModeName();
+const char* contrastModeName();
 void applyCoachButtonFont();
 CoachTypography coachTypography();
 TextLayoutResult wrapTextToLines(const String& text, int32_t width, int32_t lineHeight, uint8_t maxLines,
@@ -677,6 +702,34 @@ const char* refreshModeName() {
   return gSettings.refreshMode == RefreshMode::Clean ? "Clean" : "Normal";
 }
 
+const char* fontStyleModeName() {
+  switch (gSettings.fontStyleMode) {
+    case FontStyleMode::SansCurrent:
+      return "Sans Thin/current";
+    case FontStyleMode::SansBoldLike:
+      return "Sans Bold-like";
+    case FontStyleMode::HighContrast:
+      return "High Contrast";
+    case FontStyleMode::DebugMono:
+      return "Debug Mono";
+    case FontStyleMode::LargeReader:
+    default:
+      return "Large Reader";
+  }
+}
+
+const char* contrastModeName() {
+  switch (gSettings.contrastMode) {
+    case ContrastMode::Standard:
+      return "Standard";
+    case ContrastMode::Max:
+      return "Max";
+    case ContrastMode::Dark:
+    default:
+      return "Dark";
+  }
+}
+
 const char* drillCategoryName(DrillCategory category) {
   switch (category) {
     case DrillCategory::WeakAnswer:
@@ -695,11 +748,67 @@ const char* drillCategoryName(DrillCategory category) {
   }
 }
 
+void cycleFontSizeMode() {
+  switch (gSettings.fontSizeMode) {
+    case FontSizeMode::Medium:
+      gSettings.fontSizeMode = FontSizeMode::Large;
+      break;
+    case FontSizeMode::Large:
+      gSettings.fontSizeMode = FontSizeMode::XL;
+      break;
+    case FontSizeMode::XL:
+      gSettings.fontSizeMode = FontSizeMode::Huge;
+      break;
+    case FontSizeMode::Huge:
+    default:
+      gSettings.fontSizeMode = FontSizeMode::Medium;
+      break;
+  }
+}
+
+void cycleFontStyleMode() {
+  switch (gSettings.fontStyleMode) {
+    case FontStyleMode::SansCurrent:
+      gSettings.fontStyleMode = FontStyleMode::LargeReader;
+      break;
+    case FontStyleMode::LargeReader:
+      gSettings.fontStyleMode = FontStyleMode::SansBoldLike;
+      break;
+    case FontStyleMode::SansBoldLike:
+      gSettings.fontStyleMode = FontStyleMode::HighContrast;
+      break;
+    case FontStyleMode::HighContrast:
+      gSettings.fontStyleMode = FontStyleMode::DebugMono;
+      break;
+    case FontStyleMode::DebugMono:
+    default:
+      gSettings.fontStyleMode = FontStyleMode::SansCurrent;
+      break;
+  }
+}
+
+void cycleContrastMode() {
+  switch (gSettings.contrastMode) {
+    case ContrastMode::Standard:
+      gSettings.contrastMode = ContrastMode::Dark;
+      break;
+    case ContrastMode::Dark:
+      gSettings.contrastMode = ContrastMode::Max;
+      break;
+    case ContrastMode::Max:
+    default:
+      gSettings.contrastMode = ContrastMode::Standard;
+      break;
+  }
+}
+
 void loadSettings() {
   gPrefs.begin(kPrefsNamespace, true);
   const uint8_t orientation = gPrefs.getUChar("orient", static_cast<uint8_t>(OrientationMode::Strap));
   const uint8_t language = gPrefs.getUChar("lang", static_cast<uint8_t>(LanguageMode::Auto));
   const uint8_t fontSize = gPrefs.getUChar("font", static_cast<uint8_t>(FontSizeMode::XL));
+  const uint8_t fontStyle = gPrefs.getUChar("fontStyle", static_cast<uint8_t>(FontStyleMode::LargeReader));
+  const uint8_t contrast = gPrefs.getUChar("contrast", static_cast<uint8_t>(ContrastMode::Dark));
   const uint8_t refreshMode = gPrefs.getUChar("refresh", static_cast<uint8_t>(RefreshMode::Normal));
   gPrefs.end();
 
@@ -723,11 +832,32 @@ void loadSettings() {
     gSettings.fontSizeMode = FontSizeMode::Large;
   }
 
+  if (fontStyle == static_cast<uint8_t>(FontStyleMode::SansCurrent)) {
+    gSettings.fontStyleMode = FontStyleMode::SansCurrent;
+  } else if (fontStyle == static_cast<uint8_t>(FontStyleMode::SansBoldLike)) {
+    gSettings.fontStyleMode = FontStyleMode::SansBoldLike;
+  } else if (fontStyle == static_cast<uint8_t>(FontStyleMode::HighContrast)) {
+    gSettings.fontStyleMode = FontStyleMode::HighContrast;
+  } else if (fontStyle == static_cast<uint8_t>(FontStyleMode::DebugMono)) {
+    gSettings.fontStyleMode = FontStyleMode::DebugMono;
+  } else {
+    gSettings.fontStyleMode = FontStyleMode::LargeReader;
+  }
+
+  if (contrast == static_cast<uint8_t>(ContrastMode::Standard)) {
+    gSettings.contrastMode = ContrastMode::Standard;
+  } else if (contrast == static_cast<uint8_t>(ContrastMode::Max)) {
+    gSettings.contrastMode = ContrastMode::Max;
+  } else {
+    gSettings.contrastMode = ContrastMode::Dark;
+  }
+
   gSettings.refreshMode =
       refreshMode == static_cast<uint8_t>(RefreshMode::Clean) ? RefreshMode::Clean : RefreshMode::Normal;
 
-  Serial.printf("Settings loaded: orientation=%s language=%s font=%s refresh=%s\n", orientationModeName(),
-                languageModeName(), fontSizeModeName(), refreshModeName());
+  Serial.printf("Settings loaded: orientation=%s language=%s font=%s style=%s contrast=%s refresh=%s\n",
+                orientationModeName(), languageModeName(), fontSizeModeName(), fontStyleModeName(),
+                contrastModeName(), refreshModeName());
 }
 
 void saveSettings() {
@@ -735,10 +865,13 @@ void saveSettings() {
   gPrefs.putUChar("orient", static_cast<uint8_t>(gSettings.orientationMode));
   gPrefs.putUChar("lang", static_cast<uint8_t>(gSettings.languageMode));
   gPrefs.putUChar("font", static_cast<uint8_t>(gSettings.fontSizeMode));
+  gPrefs.putUChar("fontStyle", static_cast<uint8_t>(gSettings.fontStyleMode));
+  gPrefs.putUChar("contrast", static_cast<uint8_t>(gSettings.contrastMode));
   gPrefs.putUChar("refresh", static_cast<uint8_t>(gSettings.refreshMode));
   gPrefs.end();
-  Serial.printf("Settings saved: orientation=%s language=%s font=%s refresh=%s\n", orientationModeName(),
-                languageModeName(), fontSizeModeName(), refreshModeName());
+  Serial.printf("Settings saved: orientation=%s language=%s font=%s style=%s contrast=%s refresh=%s\n",
+                orientationModeName(), languageModeName(), fontSizeModeName(), fontStyleModeName(),
+                contrastModeName(), refreshModeName());
 }
 
 void enforceLanguageMode() {
@@ -1229,9 +1362,10 @@ void lockInputForRefresh(const char* reason, bool cleanRefresh) {
   gInputLocked = true;
   gCurrentRefreshClean = cleanRefresh;
   gInputUnlockAtMs = 0;
-  Serial.printf("UI refresh start: screen=%s font=%s settingRefresh=%s actualRefresh=%s input=locked reason=%s\n",
-                screenName(gScreen), fontSizeModeName(), refreshModeName(), cleanRefresh ? "Clean" : "Normal",
-                reason && reason[0] != '\0' ? reason : "render");
+  Serial.printf("UI refresh start: screen=%s font=%s style=%s contrast=%s settingRefresh=%s actualRefresh=%s "
+                "input=locked reason=%s\n",
+                screenName(gScreen), fontSizeModeName(), fontStyleModeName(), contrastModeName(), refreshModeName(),
+                cleanRefresh ? "Clean" : "Normal", reason && reason[0] != '\0' ? reason : "render");
 }
 
 void finishDisplayRefresh() {
@@ -1401,6 +1535,8 @@ const char* screenName(Screen screen) {
       return "Settings";
     case Screen::Debug:
       return "Debug";
+    case Screen::FontLab:
+      return "Font Lab";
     case Screen::QrZoom:
       return "QR zoom";
     case Screen::PhotoZoom:
@@ -1438,7 +1574,7 @@ CoachTypography coachTypography() {
       type.answerLines = 7;
       type.rubricLines = 5;
       type.charsPerPage = 560;
-      return type;
+      break;
     case FontSizeMode::Huge:
       type.bodyPx = 36;
       type.buttonPx = 32;
@@ -1448,7 +1584,7 @@ CoachTypography coachTypography() {
       type.answerLines = 4;
       type.rubricLines = 3;
       type.charsPerPage = 230;
-      return type;
+      break;
     case FontSizeMode::XL:
       type.bodyPx = 32;
       type.buttonPx = 28;
@@ -1458,7 +1594,7 @@ CoachTypography coachTypography() {
       type.answerLines = 5;
       type.rubricLines = 3;
       type.charsPerPage = 320;
-      return type;
+      break;
     case FontSizeMode::Large:
     default:
       type.bodyPx = 28;
@@ -1469,8 +1605,34 @@ CoachTypography coachTypography() {
       type.answerLines = 6;
       type.rubricLines = 4;
       type.charsPerPage = 430;
-      return type;
+      break;
   }
+
+  if (gSettings.fontStyleMode == FontStyleMode::LargeReader) {
+    type.titlePx += 2;
+    type.bodyPx += 2;
+    type.buttonPx += 2;
+    type.bodyLineHeight += 8;
+    type.buttonHeight += 8;
+    type.charsPerPage = (type.charsPerPage * 82) / 100;
+  } else if (gSettings.fontStyleMode == FontStyleMode::SansBoldLike) {
+    type.bodyLineHeight += 7;
+    type.buttonHeight += 6;
+    type.charsPerPage = (type.charsPerPage * 88) / 100;
+  } else if (gSettings.fontStyleMode == FontStyleMode::HighContrast) {
+    type.titlePx += 2;
+    type.bodyPx += 2;
+    type.buttonPx += 2;
+    type.bodyLineHeight += 9;
+    type.buttonHeight += 10;
+    type.charsPerPage = (type.charsPerPage * 78) / 100;
+  } else if (gSettings.fontStyleMode == FontStyleMode::DebugMono) {
+    type.bodyLineHeight += 8;
+    type.buttonHeight += 8;
+    type.charsPerPage = (type.charsPerPage * 72) / 100;
+  }
+
+  return type;
 }
 
 void applyGothicFont(uint8_t px) {
@@ -1489,24 +1651,75 @@ void applyGothicFont(uint8_t px) {
   display.setTextSize(1);
 }
 
+void applySansBoldFont(uint8_t px) {
+  auto& display = M5.Display;
+  if (px >= 40) {
+    display.setFont(&fonts::FreeSansBold24pt7b);
+  } else if (px >= 31) {
+    display.setFont(&fonts::FreeSansBold18pt7b);
+  } else if (px >= 24) {
+    display.setFont(&fonts::FreeSansBold12pt7b);
+  } else {
+    display.setFont(&fonts::FreeSansBold9pt7b);
+  }
+  display.setTextSize(1);
+}
+
+void applyMonoBoldFont(uint8_t px) {
+  auto& display = M5.Display;
+  if (px >= 34) {
+    display.setFont(&fonts::FreeMonoBold18pt7b);
+  } else if (px >= 24) {
+    display.setFont(&fonts::FreeMonoBold12pt7b);
+  } else {
+    display.setFont(&fonts::FreeMonoBold9pt7b);
+  }
+  display.setTextSize(1);
+}
+
+void applyTypographyFont(uint8_t px) {
+  if (gSettings.fontStyleMode == FontStyleMode::DebugMono) {
+    applyMonoBoldFont(px);
+    return;
+  }
+  if (gSettings.fontStyleMode == FontStyleMode::LargeReader ||
+      gSettings.fontStyleMode == FontStyleMode::SansBoldLike ||
+      gSettings.fontStyleMode == FontStyleMode::HighContrast) {
+    applySansBoldFont(px);
+    return;
+  }
+  applyGothicFont(px);
+}
+
+uint16_t metadataTextColor() {
+  auto& display = M5.Display;
+  if (gSettings.contrastMode == ContrastMode::Max || gSettings.fontStyleMode == FontStyleMode::HighContrast) {
+    return TFT_BLACK;
+  }
+  if (gSettings.contrastMode == ContrastMode::Dark) {
+    return display.color565(28, 28, 28);
+  }
+  return display.color565(55, 55, 55);
+}
+
 void applyCoachTitleFont() {
-  applyGothicFont(coachTypography().titlePx);
+  applyTypographyFont(coachTypography().titlePx);
 }
 
 void applyCoachMetadataFont() {
-  applyGothicFont(coachTypography().metadataPx);
+  applyTypographyFont(coachTypography().metadataPx);
 }
 
 void applyCoachContentFont() {
-  applyGothicFont(coachTypography().bodyPx);
+  applyTypographyFont(coachTypography().bodyPx);
 }
 
 void applyCoachButtonFont() {
-  applyGothicFont(coachTypography().buttonPx);
+  applyTypographyFont(coachTypography().buttonPx);
 }
 
 void applyCoachFooterFont() {
-  applyGothicFont(coachTypography().footerPx);
+  applyTypographyFont(coachTypography().footerPx);
 }
 
 int32_t coachLineHeight() {
@@ -1658,9 +1871,11 @@ void logCurrentLayoutDiagnostics(const char* reason) {
   auto& display = M5.Display;
   const CoachTypography type = coachTypography();
   const int32_t footerTop = coachFooterTop();
-  Serial.printf("Layout diagnostics: reason=%s screen=%s font=%s bodyPx=%u buttonPx=%u refresh=%s size=%dx%d\n",
-                reason && reason[0] != '\0' ? reason : "manual", screenName(gScreen), fontSizeModeName(), type.bodyPx,
-                type.buttonPx, refreshModeName(), display.width(), display.height());
+  Serial.printf("Layout diagnostics: reason=%s screen=%s font=%s style=%s contrast=%s bodyPx=%u buttonPx=%u "
+                "refresh=%s size=%dx%d\n",
+                reason && reason[0] != '\0' ? reason : "manual", screenName(gScreen), fontSizeModeName(),
+                fontStyleModeName(), contrastModeName(), type.bodyPx, type.buttonPx, refreshModeName(), display.width(),
+                display.height());
   logLayoutBox("header", Rect(0, 0, display.width(), kCoachHeaderBottom), kCoachHeaderBottom, 1, false);
   logLayoutBox("content", Rect(kCoachMargin, kCoachHeaderBottom + 18, display.width() - kCoachMargin * 2,
                                footerTop - (kCoachHeaderBottom + 18) - 42),
@@ -1688,7 +1903,7 @@ TextLayoutResult drawWrappedText(const String& text, int32_t x, int32_t y, int32
 void drawCoachChrome(const char* title) {
   auto& display = M5.Display;
   const CoachTypography type = coachTypography();
-  const uint16_t darkGray = display.color565(55, 55, 55);
+  const uint16_t darkGray = metadataTextColor();
   display.setTextDatum(textdatum_t::top_left);
   applyCoachTitleFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
@@ -1710,7 +1925,7 @@ int32_t coachFooterTop() {
 
 void drawCoachPageNumber(uint8_t currentPage, uint8_t pageCount) {
   auto& display = M5.Display;
-  const uint16_t darkGray = display.color565(55, 55, 55);
+  const uint16_t darkGray = metadataTextColor();
   display.setTextDatum(textdatum_t::top_left);
   applyCoachFooterFont();
   display.setTextColor(darkGray, TFT_WHITE);
@@ -1836,7 +2051,7 @@ void renderInterviewPracticeScreen() {
 
   auto& display = M5.Display;
   const CoachTypography type = coachTypography();
-  const uint16_t darkGray = display.color565(55, 55, 55);
+  const uint16_t darkGray = metadataTextColor();
   const uint16_t lightGray = display.color565(170, 170, 170);
 
   display.setTextDatum(textdatum_t::top_left);
@@ -2125,7 +2340,7 @@ void renderDrillsMenu(const char* refreshReason = "mode switch") {
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.drawString("Drills", 32, 34);
   applyCoachMetadataFont();
-  const uint16_t darkGray = display.color565(55, 55, 55);
+  const uint16_t darkGray = metadataTextColor();
   display.setTextColor(darkGray, TFT_WHITE);
   display.drawString("Choose category", 34, 92);
 
@@ -2165,7 +2380,7 @@ void renderPlaceholderScreen(Screen screen, const char* title, const char* body,
   prepareFullRefresh(refreshReason, true);
 
   auto& display = M5.Display;
-  const uint16_t darkGray = display.color565(55, 55, 55);
+  const uint16_t darkGray = metadataTextColor();
   display.setTextDatum(textdatum_t::top_left);
   applyCoachTitleFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
@@ -2212,8 +2427,9 @@ void renderSettings(const char* refreshReason = "mode switch") {
   gFontLargeButton = {52 + halfW, 534, halfW, 58};
   gFontXlButton = {36, 604, halfW, 58};
   gFontHugeButton = {52 + halfW, 604, halfW, 58};
-  gRefreshModeButton = {36, 742, width - 72, 66};
-  gHomeButton = {36, display.height() - 104, 178, 70};
+  gFontStyleButton = {36, 702, width - 72, 58};
+  gRefreshModeButton = {36, 802, width - 72, 58};
+  gHomeButton = {36, display.height() - 72, 178, 54};
 
   drawButton(gOrientationButton, gSettings.orientationMode == OrientationMode::Strap ? "Strap 180" : "Handheld 0");
   display.setTextDatum(textdatum_t::top_left);
@@ -2231,12 +2447,17 @@ void renderSettings(const char* refreshReason = "mode switch") {
   drawButton(gFontHugeButton, gSettings.fontSizeMode == FontSizeMode::Huge ? "Huge *" : "Huge");
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
-  display.drawString("Refresh mode", 36, 702);
+  display.drawString("Font style", 36, 672);
+  drawButton(gFontStyleButton, fontStyleModeName());
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachMetadataFont();
+  display.drawString("Refresh mode", 36, 772);
   drawButton(gRefreshModeButton, gSettings.refreshMode == RefreshMode::Clean ? "Clean *" : "Normal *");
   drawButton(gHomeButton, "Home");
 
   finishDisplayRefresh();
-  Serial.printf("Settings screen shown: font=%s refresh=%s\n", fontSizeModeName(), refreshModeName());
+  Serial.printf("Settings screen shown: font=%s style=%s contrast=%s refresh=%s\n", fontSizeModeName(),
+                fontStyleModeName(), contrastModeName(), refreshModeName());
 }
 
 void renderDebug(const char* refreshReason = "mode switch") {
@@ -2274,6 +2495,10 @@ void renderDebug(const char* refreshReason = "mode switch") {
   y += 26;
   display.drawString(String("font size: ") + fontSizeModeName(), 26, y);
   y += 26;
+  display.drawString(String("font style: ") + fontStyleModeName(), 26, y);
+  y += 26;
+  display.drawString(String("contrast: ") + contrastModeName(), 26, y);
+  y += 26;
   display.drawString(String("refresh mode: ") + refreshModeName(), 26, y);
   y += 26;
   display.drawString(String("input locked: ") + (gInputLocked ? "yes" : "no"), 26, y);
@@ -2293,15 +2518,83 @@ void renderDebug(const char* refreshReason = "mode switch") {
   y += 26;
   display.drawString(String("touch up: ") + gLastTouchUpX + "," + gLastTouchUpY, 26, y);
 
+  gFontLabButton = {26, display.height() - 314, display.width() - 52, 58};
   gLayoutDebugButton = {26, display.height() - 246, display.width() - 52, 58};
   gTouchDebugButton = {26, display.height() - 178, display.width() - 52, 58};
   gHomeButton = {26, display.height() - 100, display.width() - 52, 58};
+  drawButton(gFontLabButton, "Font Lab");
   drawButton(gLayoutDebugButton, "Layout log");
   drawButton(gTouchDebugButton, gTouchDebugEnabled ? "Touch debug off" : "Touch debug on");
   drawButton(gHomeButton, "Home");
 
   finishDisplayRefresh();
   Serial.println("Debug screen shown.");
+}
+
+void renderFontLab(const char* refreshReason = "mode switch") {
+  gScreen = Screen::FontLab;
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  const CoachTypography type = coachTypography();
+  const uint16_t darkGray = metadataTextColor();
+  const char* english = "How would you explain the product impact without overclaiming causality?";
+  const char* japanese = "ダニエル・ヒメネズ / AIプロダクトマネージャー / 東京・日本";
+  const char* metrics = "Define cohort, baseline, period, and denominator.";
+  const String paragraph =
+      String(english) + " " + metrics + " Keep the wording grounded, readable, and honest on the e-ink display.";
+
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachTitleFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Font Lab", 28, 24);
+
+  applyCoachMetadataFont();
+  display.setTextColor(darkGray, TFT_WHITE);
+  display.drawString(String("Style: ") + fontStyleModeName(), 30, 76);
+  display.drawString(String("Size: ") + fontSizeModeName() + "  Contrast: " + contrastModeName(), 30, 104);
+
+  int32_t y = 148;
+  applyCoachTitleFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Title sample", kCoachMargin, y);
+  y += type.bodyLineHeight + 6;
+
+  applyCoachContentFont();
+  drawWrappedText(english, kCoachMargin, y, display.width() - kCoachMargin * 2, type.bodyLineHeight,
+                  linesThatFit(type.bodyLineHeight * 2, type.bodyLineHeight, 1, 2), "font-lab-body", 1);
+  y += type.bodyLineHeight * 2 + 8;
+
+  applyCoachMetadataFont();
+  display.setTextColor(darkGray, TFT_WHITE);
+  display.drawString(metrics, kCoachMargin, y);
+  y += type.metadataLineHeight + 12;
+
+  applyGothicFont(type.bodyPx);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  drawWrappedText(japanese, kCoachMargin, y, display.width() - kCoachMargin * 2, type.bodyLineHeight, 2,
+                  "font-lab-japanese", 1);
+  y += type.bodyLineHeight * 2 + 12;
+
+  applyCoachContentFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  drawWrappedText(paragraph, kCoachMargin, y, display.width() - kCoachMargin * 2, type.bodyLineHeight,
+                  linesThatFit(220, type.bodyLineHeight, 3), "font-lab-paragraph", 1);
+
+  gFontLabStyleButton = {26, display.height() - 284, display.width() - 52, 58};
+  gFontLabSizeButton = {26, display.height() - 218, display.width() - 52, 58};
+  gFontLabContrastButton = {26, display.height() - 152, display.width() - 52, 58};
+  gHomeButton = {26, display.height() - 86, display.width() - 52, 58};
+
+  drawButton(gFontLabStyleButton, String("Style: ") + fontStyleModeName());
+  drawButton(gFontLabSizeButton, String("Size: ") + fontSizeModeName());
+  drawButton(gFontLabContrastButton, String("Contrast: ") + contrastModeName());
+  drawButton(gHomeButton, "Home");
+
+  finishDisplayRefresh();
+  Serial.printf("Font Lab shown: style=%s size=%s contrast=%s fonts=FreeSansBold/FreeMonoBold/JapanGothic\n",
+                fontStyleModeName(), fontSizeModeName(), contrastModeName());
 }
 
 void renderQrZoom() {
@@ -2458,7 +2751,9 @@ void handleTouch() {
   }
 
   if (gScreen == Screen::Debug) {
-    if (gLayoutDebugButton.contains(tapX, tapY)) {
+    if (gFontLabButton.contains(tapX, tapY)) {
+      renderFontLab();
+    } else if (gLayoutDebugButton.contains(tapX, tapY)) {
       logCurrentLayoutDiagnostics("debug button");
       renderDebug();
     } else if (gTouchDebugButton.contains(tapX, tapY)) {
@@ -2469,6 +2764,26 @@ void handleTouch() {
       renderHome();
     } else if (gTouchDebugEnabled) {
       renderDebug();
+    }
+    return;
+  }
+
+  if (gScreen == Screen::FontLab) {
+    if (gFontLabStyleButton.contains(tapX, tapY)) {
+      cycleFontStyleMode();
+      saveSettings();
+      renderFontLab("font style switch");
+    } else if (gFontLabSizeButton.contains(tapX, tapY)) {
+      cycleFontSizeMode();
+      saveSettings();
+      renderFontLab("font size switch");
+    } else if (gFontLabContrastButton.contains(tapX, tapY)) {
+      cycleContrastMode();
+      saveSettings();
+      renderFontLab("contrast switch");
+    } else if (gHomeButton.contains(tapX, tapY)) {
+      Serial.println("entering Home");
+      renderHome();
     }
     return;
   }
@@ -2581,6 +2896,10 @@ void handleTouch() {
       gSettings.fontSizeMode = FontSizeMode::Huge;
       saveSettings();
       renderSettings();
+    } else if (gFontStyleButton.contains(tapX, tapY)) {
+      cycleFontStyleMode();
+      saveSettings();
+      renderSettings("font style switch");
     } else if (gRefreshModeButton.contains(tapX, tapY)) {
       gSettings.refreshMode = gSettings.refreshMode == RefreshMode::Clean ? RefreshMode::Normal : RefreshMode::Clean;
       saveSettings();
