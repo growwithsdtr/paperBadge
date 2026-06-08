@@ -27,6 +27,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v1.9: add objective PaperCoach drills generated offline from the real deck: Blitz Quiz MCQs, Weak Answer Detector options, Metric Precision phrasing drills, and Hostile Follow-up prompts. The embedded fallback includes 149 drills.
 - v2.0: add a PaperCoach typography/layout foundation for physical readability using M5GFX Gothic fonts, default new installs to XL PaperCoach text, add larger touch targets, persist Normal/Clean refresh mode, and lock touch input during e-ink refresh/debounce windows.
 - v2.1: add reusable text wrapping and layout diagnostics, wrap MCQ option buttons inside their bounds, grow option buttons for multi-line labels, split drill result/explanation onto a separate page, shorten Metric Precision option labels, and log vertical budget/overflow warnings over Serial.
+- v2.2: replace the overlapping PaperCoach top-level modes with outcome-based navigation: Badge, Practice, Drills, Exam, Glossary, Results, Settings, and Debug. Practice opens the existing answer-prep flow, Drills contains category choices, and Exam/Results are readable placeholders.
 
 ## Hardware
 
@@ -123,20 +124,18 @@ Settings are stored in ESP32 Preferences/NVS and survive SD card removal.
 
 ## Home/Menu
 
-v1.5 Home/Menu entries:
+v2.2 Home/Menu entries:
 
 - Badge
-- Interview Practice
-- Blitz Quiz
-- Weak Answer Detector
-- Metric Precision
-- Hostile Follow-up
+- Practice
+- Drills
+- Exam
 - Glossary
-- Mock Interview
+- Results
 - Settings
 - Debug
 
-PaperCoach screens are read-only in v1.8. Interview Practice uses the real embedded or SD deck and supports page-based study; there is no progress writing, spaced repetition, RTC scheduling, Wi-Fi, Bluetooth, or AI/API call behavior.
+Practice uses the real embedded or SD interview deck and supports page-based study. Drills contains All Drills, Weak Answer, Metric Precision, Follow-up Defense, Framework Choice, and Maturity Claim categories. Exam is a placeholder for a future 10-question readiness test. Results is a placeholder and shows no session results yet. There is no progress writing, spaced repetition, RTC scheduling, Wi-Fi, Bluetooth, or AI/API call behavior.
 
 ## PaperCoach Typography
 

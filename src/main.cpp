@@ -12,7 +12,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v2.1";
+constexpr const char* kFirmwareVersion = "v2.2";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -83,6 +83,10 @@ enum class Screen {
   QrZoom,
   PhotoZoom,
   InterviewPractice,
+  DrillsMenu,
+  Drills,
+  Exam,
+  Results,
   BlitzQuiz,
   WeakAnswerDetector,
   MetricPrecision,
@@ -117,6 +121,15 @@ enum class FontSizeMode : uint8_t {
 enum class RefreshMode : uint8_t {
   Normal = 0,
   Clean = 1,
+};
+
+enum class DrillCategory : uint8_t {
+  All = 0,
+  WeakAnswer = 1,
+  MetricPrecision = 2,
+  FollowupDefense = 3,
+  FrameworkChoice = 4,
+  MaturityClaim = 5,
 };
 
 enum class CoachItemType : uint8_t {
@@ -254,6 +267,16 @@ BadgeLanguage gBadgeLanguage = BadgeLanguage::English;
 Rect gPhotoRect;
 Rect gQrRect;
 Rect gBadgeButton;
+Rect gPracticeButton;
+Rect gDrillsButton;
+Rect gExamButton;
+Rect gResultsButton;
+Rect gDrillAllButton;
+Rect gDrillWeakButton;
+Rect gDrillMetricButton;
+Rect gDrillFollowupButton;
+Rect gDrillFrameworkButton;
+Rect gDrillMaturityButton;
 Rect gInterviewButton;
 Rect gBlitzButton;
 Rect gWeakAnswerButton;
@@ -298,6 +321,7 @@ uint8_t gBottomLeftTapCount = 0;
 uint32_t gLastBottomLeftTapMs = 0;
 bool gTouchDebugEnabled = false;
 bool gInterviewMustMasterOnly = false;
+DrillCategory gDrillCategory = DrillCategory::All;
 bool gInputLocked = false;
 bool gCurrentRefreshClean = false;
 uint32_t gInputUnlockAtMs = 0;
@@ -651,6 +675,24 @@ const char* fontSizeModeName() {
 
 const char* refreshModeName() {
   return gSettings.refreshMode == RefreshMode::Clean ? "Clean" : "Normal";
+}
+
+const char* drillCategoryName(DrillCategory category) {
+  switch (category) {
+    case DrillCategory::WeakAnswer:
+      return "Weak Answer";
+    case DrillCategory::MetricPrecision:
+      return "Metric Precision";
+    case DrillCategory::FollowupDefense:
+      return "Follow-up Defense";
+    case DrillCategory::FrameworkChoice:
+      return "Framework Choice";
+    case DrillCategory::MaturityClaim:
+      return "Maturity Claim";
+    case DrillCategory::All:
+    default:
+      return "All Drills";
+  }
 }
 
 void loadSettings() {
@@ -1035,8 +1077,31 @@ bool itemMatchesScreen(const CoachItemView& item, Screen screen) {
     if (gInterviewMustMasterOnly && !item.mustMaster) {
       return false;
     }
-    return item.type == CoachItemType::Qa || item.type == CoachItemType::HostileFollowup ||
-           item.type == CoachItemType::MetricPrecision;
+    return item.type == CoachItemType::Qa;
+  }
+  if (screen == Screen::Drills) {
+    if (gDrillCategory == DrillCategory::All) {
+      return item.type == CoachItemType::Mcq || item.type == CoachItemType::WeakAnswer ||
+             item.type == CoachItemType::MetricPrecision || item.type == CoachItemType::HostileFollowup;
+    }
+    if (gDrillCategory == DrillCategory::WeakAnswer) {
+      return item.type == CoachItemType::WeakAnswer;
+    }
+    if (gDrillCategory == DrillCategory::MetricPrecision) {
+      return item.type == CoachItemType::MetricPrecision;
+    }
+    if (gDrillCategory == DrillCategory::FollowupDefense) {
+      return item.type == CoachItemType::HostileFollowup;
+    }
+    if (gDrillCategory == DrillCategory::FrameworkChoice) {
+      return item.type == CoachItemType::Mcq;
+    }
+    if (gDrillCategory == DrillCategory::MaturityClaim) {
+      return item.type == CoachItemType::WeakAnswer &&
+             (String(item.category).indexOf("maturity") >= 0 || String(item.explanation).indexOf("maturity") >= 0 ||
+              String(item.prompt).indexOf("maturity") >= 0);
+    }
+    return false;
   }
   if (screen == Screen::BlitzQuiz) {
     return item.type == CoachItemType::Mcq && item.optionCount > 0;
@@ -1301,13 +1366,15 @@ void drawButton(const Rect& rect, const String& label) {
 }
 
 bool isCoachScreen(Screen screen) {
-  return screen == Screen::InterviewPractice || screen == Screen::BlitzQuiz || screen == Screen::WeakAnswerDetector ||
-         screen == Screen::MetricPrecision || screen == Screen::HostileFollowup || screen == Screen::Glossary ||
-         screen == Screen::MockInterview;
+  return screen == Screen::InterviewPractice || screen == Screen::Drills || screen == Screen::BlitzQuiz ||
+         screen == Screen::WeakAnswerDetector || screen == Screen::MetricPrecision || screen == Screen::HostileFollowup ||
+         screen == Screen::Glossary || screen == Screen::MockInterview;
 }
 
 const char* coachScreenTitle(Screen screen) {
   switch (screen) {
+    case Screen::Drills:
+      return drillCategoryName(gDrillCategory);
     case Screen::BlitzQuiz:
       return "Blitz Quiz";
     case Screen::WeakAnswerDetector:
@@ -1322,7 +1389,7 @@ const char* coachScreenTitle(Screen screen) {
       return "Mock Interview";
     case Screen::InterviewPractice:
     default:
-      return "Interview Practice";
+      return "Practice";
   }
 }
 
@@ -1338,7 +1405,14 @@ const char* screenName(Screen screen) {
       return "QR zoom";
     case Screen::PhotoZoom:
       return "Photo zoom";
+    case Screen::DrillsMenu:
+      return "Drills";
+    case Screen::Exam:
+      return "Exam";
+    case Screen::Results:
+      return "Results";
     case Screen::InterviewPractice:
+    case Screen::Drills:
     case Screen::BlitzQuiz:
     case Screen::WeakAnswerDetector:
     case Screen::MetricPrecision:
@@ -1838,7 +1912,7 @@ void renderInterviewPracticeScreen() {
                      display.height() - type.buttonHeight - 80);
 
   finishDisplayRefresh();
-  Serial.printf("Interview Practice shown: card=%s stage=%u/%u filter=%s source=%s\n", item.id, gCoachStage + 1,
+  Serial.printf("Practice shown: card=%s stage=%u/%u filter=%s source=%s\n", item.id, gCoachStage + 1,
                 stageCount, gInterviewMustMasterOnly ? "must" : "all", gCoachDeckSource.c_str());
 }
 
@@ -1868,12 +1942,23 @@ void renderCoachScreen() {
   }
 
   const CoachItemView item = coachItemAt(gCoachIndex);
+  if (!itemMatchesScreen(item, gScreen)) {
+    const int32_t contentX = kCoachMargin;
+    const int32_t contentY = kCoachHeaderBottom + 18;
+    const int32_t contentW = display.width() - kCoachMargin * 2;
+    const int32_t contentH = coachFooterTop() - contentY - 42;
+    drawWrappedText(String("No ") + coachScreenTitle(gScreen) + " items yet.", contentX, contentY, contentW, lineHeight,
+                    linesThatFit(contentH, lineHeight, 2), "empty", 1);
+    drawCoachPageNumber(1, 1);
+    finishDisplayRefresh();
+    return;
+  }
   if (gScreen == Screen::MockInterview) {
     display.drawString(String("Prompt ") + (gMockStep + 1) + "/5", 34, 118);
   }
 
-  const bool optionDrill = (gScreen == Screen::BlitzQuiz || gScreen == Screen::WeakAnswerDetector ||
-                            gScreen == Screen::MetricPrecision) &&
+  const bool optionDrill = (gScreen == Screen::Drills || gScreen == Screen::BlitzQuiz ||
+                            gScreen == Screen::WeakAnswerDetector || gScreen == Screen::MetricPrecision) &&
                            item.optionCount > 0;
   if (optionDrill) {
     const uint8_t optionCount = item.optionCount < kMaxOptions ? item.optionCount : kMaxOptions;
@@ -1997,42 +2082,111 @@ void renderHome(const char* refreshReason = "mode switch") {
   const int32_t width = display.width();
   const int32_t buttonX = 34;
   const int32_t buttonW = width - 68;
-  const int32_t buttonH = 70;
-  const int32_t gap = 7;
-  int32_t y = 126;
+  const int32_t buttonH = 82;
+  const int32_t gap = 12;
+  int32_t y = 132;
   gBadgeButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
-  gInterviewButton = {buttonX, y, buttonW, buttonH};
+  gPracticeButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
-  gBlitzButton = {buttonX, y, buttonW, buttonH};
+  gDrillsButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
-  gWeakAnswerButton = {buttonX, y, buttonW, buttonH};
-  y += buttonH + gap;
-  gMetricPrecisionButton = {buttonX, y, buttonW, buttonH};
-  y += buttonH + gap;
-  gHostileFollowupButton = {buttonX, y, buttonW, buttonH};
+  gExamButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
   gGlossaryButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
-  gMockInterviewButton = {buttonX, y, buttonW, buttonH};
+  gResultsButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
   gSettingsButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
   gDebugButton = {buttonX, y, buttonW, buttonH};
 
   drawButton(gBadgeButton, "Badge");
-  drawButton(gInterviewButton, "Interview Practice");
-  drawButton(gBlitzButton, "Blitz Quiz");
-  drawButton(gWeakAnswerButton, "Weak Answer Detector");
-  drawButton(gMetricPrecisionButton, "Metric Precision");
-  drawButton(gHostileFollowupButton, "Hostile Follow-up");
+  drawButton(gPracticeButton, "Practice");
+  drawButton(gDrillsButton, "Drills");
+  drawButton(gExamButton, "Exam");
   drawButton(gGlossaryButton, "Glossary");
-  drawButton(gMockInterviewButton, "Mock Interview");
+  drawButton(gResultsButton, "Results");
   drawButton(gSettingsButton, "Settings");
   drawButton(gDebugButton, "Debug");
 
   finishDisplayRefresh();
   Serial.println("Home/Menu mode: normal orientation.");
+}
+
+void renderDrillsMenu(const char* refreshReason = "mode switch") {
+  gScreen = Screen::DrillsMenu;
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachTitleFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Drills", 32, 34);
+  applyCoachMetadataFont();
+  const uint16_t darkGray = display.color565(55, 55, 55);
+  display.setTextColor(darkGray, TFT_WHITE);
+  display.drawString("Choose category", 34, 92);
+
+  const int32_t buttonX = 34;
+  const int32_t buttonW = display.width() - 68;
+  const int32_t buttonH = 82;
+  const int32_t gap = 12;
+  int32_t y = 132;
+  gDrillAllButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gDrillWeakButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gDrillMetricButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gDrillFollowupButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gDrillFrameworkButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gDrillMaturityButton = {buttonX, y, buttonW, buttonH};
+  gHomeButton = {buttonX, display.height() - 110, buttonW, 76};
+
+  drawButton(gDrillAllButton, "All Drills");
+  drawButton(gDrillWeakButton, "Weak Answer");
+  drawButton(gDrillMetricButton, "Metric Precision");
+  drawButton(gDrillFollowupButton, "Follow-up Defense");
+  drawButton(gDrillFrameworkButton, "Framework Choice");
+  drawButton(gDrillMaturityButton, "Maturity Claim");
+  drawButton(gHomeButton, "Home");
+
+  finishDisplayRefresh();
+  Serial.println("Drills menu shown.");
+}
+
+void renderPlaceholderScreen(Screen screen, const char* title, const char* body, const char* refreshReason = "mode switch") {
+  gScreen = screen;
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  const uint16_t darkGray = display.color565(55, 55, 55);
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachTitleFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString(title, 32, 34);
+
+  applyCoachContentFont();
+  const int32_t contentX = kCoachMargin;
+  const int32_t contentY = kCoachHeaderBottom + 18;
+  const int32_t contentW = display.width() - kCoachMargin * 2;
+  const int32_t contentH = coachFooterTop() - contentY - 42;
+  drawWrappedText(body, contentX, contentY, contentW, coachLineHeight(), linesThatFit(contentH, coachLineHeight(), 2),
+                  "placeholder", 1);
+
+  gHomeButton = {34, display.height() - coachTypography().buttonHeight - 28, display.width() - 68,
+                 coachTypography().buttonHeight};
+  display.setTextColor(darkGray, TFT_WHITE);
+  drawCoachPageNumber(1, 1);
+  drawButton(gHomeButton, "Home");
+
+  finishDisplayRefresh();
+  Serial.printf("%s placeholder shown.\n", title);
 }
 
 void renderSettings(const char* refreshReason = "mode switch") {
@@ -2319,6 +2473,46 @@ void handleTouch() {
     return;
   }
 
+  if (gScreen == Screen::DrillsMenu) {
+    if (gHomeButton.contains(tapX, tapY)) {
+      Serial.println("entering Home");
+      renderHome();
+    } else if (gDrillAllButton.contains(tapX, tapY)) {
+      gDrillCategory = DrillCategory::All;
+      startCoachMode(Screen::Drills);
+      renderCoachScreen();
+    } else if (gDrillWeakButton.contains(tapX, tapY)) {
+      gDrillCategory = DrillCategory::WeakAnswer;
+      startCoachMode(Screen::Drills);
+      renderCoachScreen();
+    } else if (gDrillMetricButton.contains(tapX, tapY)) {
+      gDrillCategory = DrillCategory::MetricPrecision;
+      startCoachMode(Screen::Drills);
+      renderCoachScreen();
+    } else if (gDrillFollowupButton.contains(tapX, tapY)) {
+      gDrillCategory = DrillCategory::FollowupDefense;
+      startCoachMode(Screen::Drills);
+      renderCoachScreen();
+    } else if (gDrillFrameworkButton.contains(tapX, tapY)) {
+      gDrillCategory = DrillCategory::FrameworkChoice;
+      startCoachMode(Screen::Drills);
+      renderCoachScreen();
+    } else if (gDrillMaturityButton.contains(tapX, tapY)) {
+      gDrillCategory = DrillCategory::MaturityClaim;
+      startCoachMode(Screen::Drills);
+      renderCoachScreen();
+    }
+    return;
+  }
+
+  if (gScreen == Screen::Exam || gScreen == Screen::Results) {
+    if (gHomeButton.contains(tapX, tapY)) {
+      Serial.println("entering Home");
+      renderHome();
+    }
+    return;
+  }
+
   if (isCoachScreen(gScreen)) {
     if (gScreen == Screen::InterviewPractice) {
       handleInterviewPracticeTouch(tapX, tapY);
@@ -2330,7 +2524,7 @@ void handleTouch() {
     } else if (gNextButton.contains(tapX, tapY)) {
       nextCoachItem();
       renderCoachScreen();
-    } else if ((gScreen == Screen::BlitzQuiz || gScreen == Screen::WeakAnswerDetector ||
+    } else if ((gScreen == Screen::Drills || gScreen == Screen::BlitzQuiz || gScreen == Screen::WeakAnswerDetector ||
                 gScreen == Screen::MetricPrecision) &&
                gSelectedOption < 0) {
       const CoachItemView item = coachItemAt(gCoachIndex);
@@ -2402,27 +2596,18 @@ void handleTouch() {
     if (gBadgeButton.contains(tapX, tapY)) {
       Serial.println("returning to Badge");
       renderBadge(true, "mode switch");
-    } else if (gInterviewButton.contains(tapX, tapY)) {
+    } else if (gPracticeButton.contains(tapX, tapY)) {
       startCoachMode(Screen::InterviewPractice);
       renderCoachScreen();
-    } else if (gBlitzButton.contains(tapX, tapY)) {
-      startCoachMode(Screen::BlitzQuiz);
-      renderCoachScreen();
-    } else if (gWeakAnswerButton.contains(tapX, tapY)) {
-      startCoachMode(Screen::WeakAnswerDetector);
-      renderCoachScreen();
-    } else if (gMetricPrecisionButton.contains(tapX, tapY)) {
-      startCoachMode(Screen::MetricPrecision);
-      renderCoachScreen();
-    } else if (gHostileFollowupButton.contains(tapX, tapY)) {
-      startCoachMode(Screen::HostileFollowup);
-      renderCoachScreen();
+    } else if (gDrillsButton.contains(tapX, tapY)) {
+      renderDrillsMenu();
+    } else if (gExamButton.contains(tapX, tapY)) {
+      renderPlaceholderScreen(Screen::Exam, "Exam", "10-question readiness test later.");
     } else if (gGlossaryButton.contains(tapX, tapY)) {
       startCoachMode(Screen::Glossary);
       renderCoachScreen();
-    } else if (gMockInterviewButton.contains(tapX, tapY)) {
-      startCoachMode(Screen::MockInterview);
-      renderCoachScreen();
+    } else if (gResultsButton.contains(tapX, tapY)) {
+      renderPlaceholderScreen(Screen::Results, "Results", "No session results yet.");
     } else if (gSettingsButton.contains(tapX, tapY)) {
       renderSettings();
     } else if (gDebugButton.contains(tapX, tapY)) {
