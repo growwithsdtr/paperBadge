@@ -12,7 +12,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v2.4";
+constexpr const char* kFirmwareVersion = "v2.5";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -110,6 +110,7 @@ enum class LanguageMode : uint8_t {
   Auto = 0,
   English = 1,
   Japanese = 2,
+  Manual = 3,
 };
 
 enum class FontSizeMode : uint8_t {
@@ -136,6 +137,13 @@ enum class ContrastMode : uint8_t {
   Standard = 0,
   Dark = 1,
   Max = 2,
+};
+
+enum class AutoRotateIntervalMode : uint8_t {
+  Off = 0,
+  Sec15 = 1,
+  Sec30 = 2,
+  Sec60 = 3,
 };
 
 enum class IconType : uint8_t {
@@ -204,7 +212,8 @@ struct BadgeConfig {
 
 struct Settings {
   OrientationMode orientationMode = OrientationMode::Strap;
-  LanguageMode languageMode = LanguageMode::Auto;
+  LanguageMode languageMode = LanguageMode::Manual;
+  AutoRotateIntervalMode autoRotateIntervalMode = AutoRotateIntervalMode::Off;
   FontSizeMode fontSizeMode = FontSizeMode::XL;
   FontStyleMode fontStyleMode = FontStyleMode::LargeReader;
   ContrastMode contrastMode = ContrastMode::Dark;
@@ -347,6 +356,7 @@ String gCoachDeckSource = "embedded";
 uint8_t gNormalPortraitRotation = 0;
 uint32_t gLastLanguageSwitchMs = 0;
 String gLastBadgeSource = "embedded";
+uint32_t gBadgeRedrawCount = 0;
 CoachItem gCoachItems[kMaxCoachItems];
 size_t gCoachItemCount = 0;
 size_t gCoachIndex = 0;
@@ -691,9 +701,39 @@ const char* languageModeName() {
       return "English";
     case LanguageMode::Japanese:
       return "Japanese";
+    case LanguageMode::Manual:
+      return "Manual toggle";
     case LanguageMode::Auto:
     default:
-      return "auto";
+      return "Auto rotate";
+  }
+}
+
+const char* autoRotateIntervalName() {
+  switch (gSettings.autoRotateIntervalMode) {
+    case AutoRotateIntervalMode::Sec15:
+      return "15s";
+    case AutoRotateIntervalMode::Sec30:
+      return "30s";
+    case AutoRotateIntervalMode::Sec60:
+      return "60s";
+    case AutoRotateIntervalMode::Off:
+    default:
+      return "Off";
+  }
+}
+
+uint32_t autoRotateIntervalSeconds() {
+  switch (gSettings.autoRotateIntervalMode) {
+    case AutoRotateIntervalMode::Sec15:
+      return 15;
+    case AutoRotateIntervalMode::Sec30:
+      return 30;
+    case AutoRotateIntervalMode::Sec60:
+      return 60;
+    case AutoRotateIntervalMode::Off:
+    default:
+      return 0;
   }
 }
 
@@ -815,10 +855,51 @@ void cycleContrastMode() {
   }
 }
 
+void cycleLanguageMode() {
+  switch (gSettings.languageMode) {
+    case LanguageMode::Manual:
+      gSettings.languageMode = LanguageMode::English;
+      gBadgeLanguage = BadgeLanguage::English;
+      break;
+    case LanguageMode::English:
+      gSettings.languageMode = LanguageMode::Japanese;
+      gBadgeLanguage = BadgeLanguage::Japanese;
+      break;
+    case LanguageMode::Japanese:
+      gSettings.languageMode = LanguageMode::Auto;
+      break;
+    case LanguageMode::Auto:
+    default:
+      gSettings.languageMode = LanguageMode::Manual;
+      break;
+  }
+}
+
+void cycleAutoRotateInterval() {
+  switch (gSettings.autoRotateIntervalMode) {
+    case AutoRotateIntervalMode::Off:
+      gSettings.autoRotateIntervalMode = AutoRotateIntervalMode::Sec15;
+      break;
+    case AutoRotateIntervalMode::Sec15:
+      gSettings.autoRotateIntervalMode = AutoRotateIntervalMode::Sec30;
+      break;
+    case AutoRotateIntervalMode::Sec30:
+      gSettings.autoRotateIntervalMode = AutoRotateIntervalMode::Sec60;
+      break;
+    case AutoRotateIntervalMode::Sec60:
+    default:
+      gSettings.autoRotateIntervalMode = AutoRotateIntervalMode::Off;
+      break;
+  }
+}
+
 void loadSettings() {
   gPrefs.begin(kPrefsNamespace, true);
   const uint8_t orientation = gPrefs.getUChar("orient", static_cast<uint8_t>(OrientationMode::Strap));
-  const uint8_t language = gPrefs.getUChar("lang", static_cast<uint8_t>(LanguageMode::Auto));
+  const uint8_t language = gPrefs.getUChar("lang", static_cast<uint8_t>(LanguageMode::Manual));
+  const uint8_t languageModeVersion = gPrefs.getUChar("langModeV", 0);
+  const uint8_t badgeLanguage = gPrefs.getUChar("badgeLang", static_cast<uint8_t>(BadgeLanguage::English));
+  const uint8_t autoRotateInterval = gPrefs.getUChar("autoInt", static_cast<uint8_t>(AutoRotateIntervalMode::Off));
   const uint8_t fontSize = gPrefs.getUChar("font", static_cast<uint8_t>(FontSizeMode::XL));
   const uint8_t fontStyle = gPrefs.getUChar("fontStyle", static_cast<uint8_t>(FontStyleMode::LargeReader));
   const uint8_t contrast = gPrefs.getUChar("contrast", static_cast<uint8_t>(ContrastMode::Dark));
@@ -827,12 +908,29 @@ void loadSettings() {
 
   gSettings.orientationMode = orientation == static_cast<uint8_t>(OrientationMode::Handheld) ? OrientationMode::Handheld
                                                                                              : OrientationMode::Strap;
-  if (language == static_cast<uint8_t>(LanguageMode::English)) {
+  gBadgeLanguage = badgeLanguage == static_cast<uint8_t>(BadgeLanguage::Japanese) ? BadgeLanguage::Japanese
+                                                                                  : BadgeLanguage::English;
+
+  if (language == static_cast<uint8_t>(LanguageMode::Auto) && languageModeVersion == 0) {
+    gSettings.languageMode = LanguageMode::Manual;
+  } else if (language == static_cast<uint8_t>(LanguageMode::English)) {
     gSettings.languageMode = LanguageMode::English;
   } else if (language == static_cast<uint8_t>(LanguageMode::Japanese)) {
     gSettings.languageMode = LanguageMode::Japanese;
-  } else {
+  } else if (language == static_cast<uint8_t>(LanguageMode::Auto)) {
     gSettings.languageMode = LanguageMode::Auto;
+  } else {
+    gSettings.languageMode = LanguageMode::Manual;
+  }
+
+  if (autoRotateInterval == static_cast<uint8_t>(AutoRotateIntervalMode::Sec15)) {
+    gSettings.autoRotateIntervalMode = AutoRotateIntervalMode::Sec15;
+  } else if (autoRotateInterval == static_cast<uint8_t>(AutoRotateIntervalMode::Sec30)) {
+    gSettings.autoRotateIntervalMode = AutoRotateIntervalMode::Sec30;
+  } else if (autoRotateInterval == static_cast<uint8_t>(AutoRotateIntervalMode::Sec60)) {
+    gSettings.autoRotateIntervalMode = AutoRotateIntervalMode::Sec60;
+  } else {
+    gSettings.autoRotateIntervalMode = AutoRotateIntervalMode::Off;
   }
 
   if (fontSize == static_cast<uint8_t>(FontSizeMode::Medium)) {
@@ -868,23 +966,28 @@ void loadSettings() {
   gSettings.refreshMode =
       refreshMode == static_cast<uint8_t>(RefreshMode::Clean) ? RefreshMode::Clean : RefreshMode::Normal;
 
-  Serial.printf("Settings loaded: orientation=%s language=%s font=%s style=%s contrast=%s refresh=%s\n",
-                orientationModeName(), languageModeName(), fontSizeModeName(), fontStyleModeName(),
-                contrastModeName(), refreshModeName());
+  Serial.printf("Settings loaded: orientation=%s badgeLanguage=%s languageMode=%s autoInterval=%s font=%s style=%s "
+                "contrast=%s refresh=%s\n",
+                orientationModeName(), languageName(gBadgeLanguage), languageModeName(), autoRotateIntervalName(),
+                fontSizeModeName(), fontStyleModeName(), contrastModeName(), refreshModeName());
 }
 
 void saveSettings() {
   gPrefs.begin(kPrefsNamespace, false);
   gPrefs.putUChar("orient", static_cast<uint8_t>(gSettings.orientationMode));
   gPrefs.putUChar("lang", static_cast<uint8_t>(gSettings.languageMode));
+  gPrefs.putUChar("langModeV", 1);
+  gPrefs.putUChar("badgeLang", static_cast<uint8_t>(gBadgeLanguage));
+  gPrefs.putUChar("autoInt", static_cast<uint8_t>(gSettings.autoRotateIntervalMode));
   gPrefs.putUChar("font", static_cast<uint8_t>(gSettings.fontSizeMode));
   gPrefs.putUChar("fontStyle", static_cast<uint8_t>(gSettings.fontStyleMode));
   gPrefs.putUChar("contrast", static_cast<uint8_t>(gSettings.contrastMode));
   gPrefs.putUChar("refresh", static_cast<uint8_t>(gSettings.refreshMode));
   gPrefs.end();
-  Serial.printf("Settings saved: orientation=%s language=%s font=%s style=%s contrast=%s refresh=%s\n",
-                orientationModeName(), languageModeName(), fontSizeModeName(), fontStyleModeName(),
-                contrastModeName(), refreshModeName());
+  Serial.printf("Settings saved: orientation=%s badgeLanguage=%s languageMode=%s autoInterval=%s font=%s style=%s "
+                "contrast=%s refresh=%s\n",
+                orientationModeName(), languageName(gBadgeLanguage), languageModeName(), autoRotateIntervalName(),
+                fontSizeModeName(), fontStyleModeName(), contrastModeName(), refreshModeName());
 }
 
 void enforceLanguageMode() {
@@ -1483,8 +1586,12 @@ void renderBadge(bool highQualityRefresh = false, const char* refreshReason = nu
   setBadgeTouchZones();
   finishDisplayRefresh();
   gLastLanguageSwitchMs = millis();
-  Serial.printf("Badge mode: language=%s source=%s orientation=%s\n", languageName(gBadgeLanguage),
-                gLastBadgeSource.c_str(), orientationModeName());
+  ++gBadgeRedrawCount;
+  Serial.printf("Badge mode: language=%s languageMode=%s autoInterval=%s source=%s orientation=%s refreshReason=%s "
+                "redrawCount=%u\n",
+                languageName(gBadgeLanguage), languageModeName(), autoRotateIntervalName(), gLastBadgeSource.c_str(),
+                orientationModeName(), refreshReason && refreshReason[0] != '\0' ? refreshReason : "initial",
+                static_cast<unsigned>(gBadgeRedrawCount));
 }
 
 void drawCheckMark(int32_t x, int32_t y, int32_t size) {
@@ -1852,6 +1959,11 @@ uint8_t linesThatFit(int32_t availableHeight, int32_t lineHeight, uint8_t minLin
 
 bool isBottomLeftTap(int32_t x, int32_t y) {
   return x < M5.Display.width() / 3 && y > (M5.Display.height() * 2) / 3;
+}
+
+bool isBadgeCenterTap(int32_t x, int32_t y) {
+  return x > M5.Display.width() / 4 && x < (M5.Display.width() * 3) / 4 && y > M5.Display.height() / 3 &&
+         y < (M5.Display.height() * 2) / 3;
 }
 
 bool recordBottomLeftTripleTap(int32_t x, int32_t y) {
@@ -2519,36 +2631,35 @@ void renderSettings(const char* refreshReason = "mode switch") {
   gOrientationButton = {36, 136, width - 72, 66};
   gLanguageAutoButton = {36, 268, width - 72, 58};
   gLanguageEnglishButton = {36, 334, width - 72, 58};
-  gLanguageJapaneseButton = {36, 400, width - 72, 58};
-  gFontMediumButton = {36, 534, halfW, 58};
-  gFontLargeButton = {52 + halfW, 534, halfW, 58};
-  gFontXlButton = {36, 604, halfW, 58};
-  gFontHugeButton = {52 + halfW, 604, halfW, 58};
-  gFontStyleButton = {36, 702, width - 72, 58};
-  gRefreshModeButton = {36, 802, width - 72, 58};
+  gLanguageJapaneseButton = {};
+  gFontMediumButton = {36, 466, halfW, 58};
+  gFontLargeButton = {52 + halfW, 466, halfW, 58};
+  gFontXlButton = {36, 536, halfW, 58};
+  gFontHugeButton = {52 + halfW, 536, halfW, 58};
+  gFontStyleButton = {36, 634, width - 72, 58};
+  gRefreshModeButton = {36, 734, width - 72, 58};
   gHomeButton = {36, display.height() - 72, 178, 54};
 
   drawButton(gOrientationButton, gSettings.orientationMode == OrientationMode::Strap ? "Strap 180" : "Handheld 0");
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
-  display.drawString("Language mode", 36, 226);
-  drawButton(gLanguageAutoButton, gSettings.languageMode == LanguageMode::Auto ? "Auto *" : "Auto");
-  drawButton(gLanguageEnglishButton, gSettings.languageMode == LanguageMode::English ? "English *" : "English");
-  drawButton(gLanguageJapaneseButton, gSettings.languageMode == LanguageMode::Japanese ? "Japanese *" : "Japanese");
+  display.drawString("Badge language", 36, 226);
+  drawButton(gLanguageAutoButton, String("Mode: ") + languageModeName());
+  drawButton(gLanguageEnglishButton, String("Auto interval: ") + autoRotateIntervalName());
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
-  display.drawString("PaperCoach font", 36, 494);
+  display.drawString("PaperCoach font", 36, 426);
   drawButton(gFontMediumButton, gSettings.fontSizeMode == FontSizeMode::Medium ? "Medium *" : "Medium");
   drawButton(gFontLargeButton, gSettings.fontSizeMode == FontSizeMode::Large ? "Large *" : "Large");
   drawButton(gFontXlButton, gSettings.fontSizeMode == FontSizeMode::XL ? "XL *" : "XL");
   drawButton(gFontHugeButton, gSettings.fontSizeMode == FontSizeMode::Huge ? "Huge *" : "Huge");
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
-  display.drawString("Font style", 36, 672);
+  display.drawString("Font style", 36, 604);
   drawButton(gFontStyleButton, fontStyleModeName());
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
-  display.drawString("Refresh mode", 36, 772);
+  display.drawString("Refresh mode", 36, 704);
   drawButton(gRefreshModeButton, gSettings.refreshMode == RefreshMode::Clean ? "Clean *" : "Normal *");
   drawButton(gHomeButton, "Home");
 
@@ -2589,6 +2700,10 @@ void renderDebug(const char* refreshReason = "mode switch") {
   display.drawString(String("badge language: ") + languageName(gBadgeLanguage), 26, y);
   y += 26;
   display.drawString(String("language mode: ") + languageModeName(), 26, y);
+  y += 26;
+  display.drawString(String("auto interval: ") + autoRotateIntervalName(), 26, y);
+  y += 26;
+  display.drawString(String("badge redraws: ") + static_cast<unsigned>(gBadgeRedrawCount), 26, y);
   y += 26;
   display.drawString(String("font size: ") + fontSizeModeName(), 26, y);
   y += 26;
@@ -2837,6 +2952,11 @@ void handleTouch() {
       renderQrZoom();
     } else if (gPhotoRect.contains(tapX, tapY)) {
       renderPhotoZoom();
+    } else if (gSettings.languageMode == LanguageMode::Manual && isBadgeCenterTap(tapX, tapY)) {
+      gBadgeLanguage = gBadgeLanguage == BadgeLanguage::English ? BadgeLanguage::Japanese : BadgeLanguage::English;
+      Serial.printf("Badge manual language toggle: %s\n", languageName(gBadgeLanguage));
+      saveSettings();
+      renderBadge(true, "manual language toggle");
     }
     return;
   }
@@ -2964,19 +3084,13 @@ void handleTouch() {
       saveSettings();
       renderSettings("orientation switch");
     } else if (gLanguageAutoButton.contains(tapX, tapY)) {
-      gSettings.languageMode = LanguageMode::Auto;
+      cycleLanguageMode();
       saveSettings();
-      renderSettings();
+      renderSettings("badge language mode switch");
     } else if (gLanguageEnglishButton.contains(tapX, tapY)) {
-      gSettings.languageMode = LanguageMode::English;
-      gBadgeLanguage = BadgeLanguage::English;
+      cycleAutoRotateInterval();
       saveSettings();
-      renderSettings();
-    } else if (gLanguageJapaneseButton.contains(tapX, tapY)) {
-      gSettings.languageMode = LanguageMode::Japanese;
-      gBadgeLanguage = BadgeLanguage::Japanese;
-      saveSettings();
-      renderSettings();
+      renderSettings("badge interval switch");
     } else if (gFontMediumButton.contains(tapX, tapY)) {
       gSettings.fontSizeMode = FontSizeMode::Medium;
       saveSettings();
@@ -3041,14 +3155,17 @@ void maybeSwitchBadgeLanguage() {
     return;
   }
 
-  const uint32_t intervalMs = gBadgeConfig.intervalSeconds * 1000UL;
-  if (intervalMs == 0 || millis() - gLastLanguageSwitchMs < intervalMs) {
+  const uint32_t intervalSeconds = autoRotateIntervalSeconds();
+  const uint32_t intervalMs = intervalSeconds * 1000UL;
+  if (intervalSeconds == 0 || millis() - gLastLanguageSwitchMs < intervalMs) {
     return;
   }
 
   gBadgeLanguage = gBadgeLanguage == BadgeLanguage::English ? BadgeLanguage::Japanese : BadgeLanguage::English;
-  Serial.printf("Badge language timer: switching to %s\n", languageName(gBadgeLanguage));
-  renderBadge(false);
+  Serial.printf("Badge language timer: switching to %s interval=%s\n", languageName(gBadgeLanguage),
+                autoRotateIntervalName());
+  saveSettings();
+  renderBadge(false, "auto language rotate");
 }
 }  // namespace
 

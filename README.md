@@ -30,6 +30,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v2.2: replace the overlapping PaperCoach top-level modes with outcome-based navigation: Badge, Practice, Drills, Exam, Glossary, Results, Settings, and Debug. Practice opens the existing answer-prep flow, Drills contains category choices, and Exam/Results are readable placeholders.
 - v2.3: add Debug → Font Lab, persistent typography presets, and contrast presets. The default app typography is now `Large Reader` + `XL`, using real M5GFX `FreeSansBold` fonts for heavier English UI text and Japanese Gothic for Japanese samples/runtime fallback.
 - v2.4: add simple monochrome line icons to top-level Home menu items and add a primitive house icon to Home buttons. Icons are drawn with display primitives rather than icon fonts, so text labels remain the fallback.
+- v2.5: make Badge mode static by default. Badge language defaults to Manual toggle, center tap switches English/Japanese, current language is persisted, and auto-rotate only runs when explicitly selected with a 15s/30s/60s interval.
 
 ## Hardware
 
@@ -118,7 +119,8 @@ Badge mode defaults to 180 degree strap orientation so the badge appears upright
 Long-press the center of the Badge screen to enter Home/Menu. If long press is hard to trigger, triple-tap the bottom-left area of the Badge screen as an emergency Home/Menu fallback. Settings lets you persist:
 
 - Badge orientation: `strap` or `handheld`
-- Badge language: `auto`, `English`, or `Japanese`
+- Badge language: `Manual toggle`, `English`, `Japanese`, or `Auto rotate`
+- Badge auto-rotate interval: `Off`, `15s`, `30s`, or `60s`
 - PaperCoach font size: `Medium`, `Large`, `XL`, or `Huge`
 - Refresh mode: `Normal` or `Clean`
 
