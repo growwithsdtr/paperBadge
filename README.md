@@ -39,6 +39,8 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v3.1: regenerate embedded English/Japanese badge images from one high-contrast 3-line template, remove rendered location/footer text, move the QR upward, and preprocess the portrait offline for sharper 16-level grayscale e-ink output.
 - v3.2: add battery and USB/VBUS status to Settings and Debug, add serial power audit logs, keep battery indicators off Badge/PaperCoach screens unless future critical-low handling is added, and lengthen Conference Badge idle entry to about 30 seconds for better touch reliability.
 - v3.3a: diagnose the PaperCoach font path, replace the five nominal size choices with three visibly distinct reader sizes, mark legacy XXL/Huge as colliding buckets, add Font Lab measurement rows with actual height/width/line-height metrics, add Tight/Normal/Loose line spacing, and sanitize live PaperCoach text to avoid square-box glyphs.
+- v3.4: replace raw-character Practice pagination with sanitized, measured wrapped-line pagination, compact the reading header/footer, move page information into Back/Next buttons, remove deck/filter labels from reading screens, and auto-fit long Reader L Practice content down to Reader M.
+- v3.5: add an SD-only intermediate reader font experiment. Font Lab probes `/paperbadge/fonts/reader_mid.vlw` when present, logs actual height/width, and always falls back to built-in reader fonts when the file is missing or fails to load.
 
 ## Hardware
 
@@ -220,14 +222,19 @@ Current runtime PaperCoach fonts:
 - Buttons: M5GFX `FreeSansBold12pt7b` or `FreeSansBold18pt7b` depending on reader size.
 - Metadata/footer/debug: smaller M5GFX FreeSansBold/FreeMono/JapanGothic buckets.
 
-These are embedded/discrete font faces, not a continuous scalable TTF renderer. M5GFX supports `loadFont()` for VLW runtime fonts from flash arrays or filesystems; v3.3a adds an experimental Font Lab-only probe for `/paperbadge/fonts/reader.vlw` on SD. No external font file is bundled in firmware, so there is no new font license/source to track and no flash cost from a reader font asset. To test a real Latin reader font later, generate a legally licensed VLW file on the Mac and place it at:
+These are embedded/discrete font faces, not a continuous scalable TTF renderer. M5GFX supports `loadFont()` for VLW runtime fonts from flash arrays or filesystems; v3.3a adds an experimental Font Lab-only probe for `/paperbadge/fonts/reader.vlw` on SD, and v3.5 adds the intermediate reader probe `/paperbadge/fonts/reader_mid.vlw`. No external font file is bundled in firmware, so there is no new font license/source to track and no flash cost from a reader font asset.
+
+The local project does not include a verified Atkinson/Inter/Plex/Source Sans reader asset. A scan of common local Mac font folders found system Noto fonts but no repo-owned open-license intermediate reader file ready to convert. To test a real Latin reader font later, generate a legally licensed VLW file on the Mac and place it at:
 
 ```text
 PAPERSD/
   paperbadge/
     fonts/
+      reader_mid.vlw
       reader.vlw
 ```
+
+`reader_mid.vlw` is the preferred v3.5 experiment path for a 20-22pt-equivalent font. Font Lab reports whether it was found, loaded, its type, height, width, and whether fallback was used.
 
 Live PaperCoach rendering now sanitizes UTF-8 punctuation at draw time for both SD and embedded decks. It replaces curly quotes, en/em dashes, bullets, ellipses, non-breaking spaces, arrows, and other non-ASCII glyphs with ASCII fallbacks before wrapping/drawing. Badge assets are image-rendered and are not sanitized.
 

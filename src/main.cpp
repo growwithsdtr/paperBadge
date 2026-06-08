@@ -16,12 +16,13 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v3.4";
+constexpr const char* kFirmwareVersion = "v3.5";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
 constexpr const char* kPrefsNamespace = "paperbadge";
 constexpr const char* kReaderVlwPath = "/paperbadge/fonts/reader.vlw";
+constexpr const char* kReaderMidVlwPath = "/paperbadge/fonts/reader_mid.vlw";
 constexpr uint32_t kDefaultLanguageIntervalSeconds = 15;
 constexpr uint32_t kInputDebounceMs = 250;
 constexpr uint32_t kInputCleanRefreshDebounceMs = 600;
@@ -409,6 +410,7 @@ Rect gOptionButtons[kMaxOptions];
 bool gSdMounted = false;
 bool gBadgeJsonLoaded = false;
 bool gCoachDeckLoadedFromSd = false;
+bool gReaderMidVlwAvailable = false;
 size_t gCoachMustMasterCount = 0;
 size_t gCoachCardCount = 0;
 size_t gCoachDrillCount = 0;
@@ -2579,6 +2581,8 @@ void logFontEngineDiagnostics(const char* reason) {
   }
   Serial.printf("VLW probe: feasible=yes path=%s status=%s flashImpact=0 unless an asset is embedded\n", kReaderVlwPath,
                 gSdMounted ? "SD available; Font Lab can try loadFont(SD,path)" : "SD not mounted");
+  Serial.printf("Reader Mid probe: path=%s found=%s fallback=%s source=SD-only\n", kReaderMidVlwPath,
+                gReaderMidVlwAvailable ? "yes" : "no", gReaderMidVlwAvailable ? "no" : "yes");
 }
 
 int32_t coachLineHeight() {
@@ -3802,7 +3806,7 @@ void drawFontLabProbeRow(FontStyleMode style, FontSizeMode size, const char* lab
   gSettings.fontSizeMode = savedSize;
 }
 
-void drawFontLabVlwProbe(int32_t y) {
+void drawFontLabVlwProbe(const char* path, const char* label, int32_t y) {
   auto& display = M5.Display;
   static constexpr const char* kSample = "highest-volume, highest-conversion intent";
   applyCoachMetadataFont();
@@ -3810,19 +3814,19 @@ void drawFontLabVlwProbe(int32_t y) {
   display.setTextDatum(textdatum_t::top_left);
 
   if (!gSdMounted) {
-    display.drawString(String("Experimental VLW: SD not mounted. Path ") + kReaderVlwPath, kCoachMargin, y);
-    Serial.printf("Font Lab VLW: status=sd-not-mounted path=%s\n", kReaderVlwPath);
+    display.drawString(String(label) + ": SD not mounted. Path " + path, kCoachMargin, y);
+    Serial.printf("Font Lab VLW: label=%s status=sd-not-mounted path=%s\n", label, path);
     return;
   }
-  if (!SD.exists(kReaderVlwPath)) {
-    display.drawString(String("Experimental VLW: missing ") + kReaderVlwPath, kCoachMargin, y);
-    Serial.printf("Font Lab VLW: status=missing path=%s\n", kReaderVlwPath);
+  if (!SD.exists(path)) {
+    display.drawString(String(label) + ": missing " + path, kCoachMargin, y);
+    Serial.printf("Font Lab VLW: label=%s status=missing path=%s\n", label, path);
     return;
   }
 
-  if (!display.loadFont(SD, kReaderVlwPath)) {
-    display.drawString(String("Experimental VLW: load failed ") + kReaderVlwPath, kCoachMargin, y);
-    Serial.printf("Font Lab VLW: status=load-failed path=%s\n", kReaderVlwPath);
+  if (!display.loadFont(SD, path)) {
+    display.drawString(String(label) + ": load failed " + path, kCoachMargin, y);
+    Serial.printf("Font Lab VLW: label=%s status=load-failed path=%s\n", label, path);
     return;
   }
 
@@ -3830,10 +3834,10 @@ void drawFontLabVlwProbe(int32_t y) {
   const int32_t height = display.fontHeight();
   const int32_t width = display.textWidth(kSample);
   const char* type = display.getFont() != nullptr ? fontTypeName(display.getFont()->getType()) : "none";
-  display.drawString(String("Experimental VLW  h") + height + " w" + width + "  " + type, kCoachMargin, y);
+  display.drawString(String(label) + "  h" + height + " w" + width + "  " + type, kCoachMargin, y);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.drawString(kSample, kCoachMargin, y + 26);
-  Serial.printf("Font Lab VLW: status=loaded path=%s type=%s height=%ld width=%ld\n", kReaderVlwPath, type,
+  Serial.printf("Font Lab VLW: label=%s status=loaded path=%s type=%s height=%ld width=%ld fallback=no\n", label, path, type,
                 static_cast<long>(height), static_cast<long>(width));
   display.unloadFont();
 }
@@ -3872,11 +3876,13 @@ void renderFontLab(const char* refreshReason = "mode switch") {
   y += 76;
   drawFontLabProbeRow(FontStyleMode::HighContrast, FontSizeMode::Large, "Best bitmap Reader M", intentSample, y);
   y += 86;
+  drawFontLabVlwProbe(kReaderMidVlwPath, "Reader Mid SD VLW", y);
+  y += 58;
   drawFontLabProbeRow(FontStyleMode::HighContrast, FontSizeMode::XL, "Best bitmap Reader L", shortSample, y);
   y += 96;
   drawFontLabProbeRow(FontStyleMode::HighContrast, FontSizeMode::XXL, "Legacy XXL disabled", shortSample, y, true);
   y += 44;
-  drawFontLabVlwProbe(y);
+  drawFontLabVlwProbe(kReaderVlwPath, "Generic reader SD VLW", y);
   y += 34;
 
   applyCoachContentFont();
@@ -4345,6 +4351,9 @@ void setup() {
   findSdImage("profile", kProfileCandidates, countOf(kProfileCandidates), gProfileSd);
   findSdImage("QR", kQrCandidates, countOf(kQrCandidates), gQrSd);
   loadCoachDeck();
+  gReaderMidVlwAvailable = gSdMounted && SD.exists(kReaderMidVlwPath);
+  Serial.printf("Reader Mid font: path=%s found=%s fallback=%s\n", kReaderMidVlwPath,
+                gReaderMidVlwAvailable ? "yes" : "no", gReaderMidVlwAvailable ? "no" : "yes");
   logFontEngineDiagnostics("boot");
   Serial.println("Badge mode defaults to strap 180 orientation unless Settings override is handheld.");
 
