@@ -15,17 +15,19 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v2.8";
+constexpr const char* kFirmwareVersion = "v2.9";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
 constexpr const char* kPrefsNamespace = "paperbadge";
 constexpr uint32_t kDefaultLanguageIntervalSeconds = 15;
-constexpr uint32_t kInputDebounceMs = 450;
-constexpr uint32_t kInputCleanRefreshDebounceMs = 850;
+constexpr uint32_t kInputDebounceMs = 250;
+constexpr uint32_t kInputCleanRefreshDebounceMs = 600;
 constexpr uint32_t kBatterySaverIdleMs = 180000;
 constexpr uint32_t kConferenceBadgeIdleMs = 10000;
+constexpr uint32_t kPostTouchIdleGuardMs = 5000;
 constexpr uint32_t kHardCleanTransitionLimit = 14;
+constexpr int32_t kHitboxPadding = 10;
 constexpr size_t kMaxCoachItems = 96;
 constexpr uint8_t kMaxOptions = 4;
 constexpr uint8_t kMaxWrappedLines = 18;
@@ -389,14 +391,20 @@ DrillCategory gDrillCategory = DrillCategory::All;
 bool gInputLocked = false;
 bool gCurrentRefreshClean = false;
 uint32_t gInputUnlockAtMs = 0;
+uint32_t gLastRefreshEndMs = 0;
+uint32_t gLastDebounceMs = 0;
 uint32_t gRefreshTransitionCount = 0;
 uint32_t gLastUserActivityMs = 0;
 bool gIdleModeActive = false;
 uint32_t gIdleEntryCount = 0;
+bool gTouchActive = false;
 int32_t gLastTouchDownX = -1;
 int32_t gLastTouchDownY = -1;
 int32_t gLastTouchUpX = -1;
 int32_t gLastTouchUpY = -1;
+String gLastHitTarget = "none";
+String gLastIgnoredTouchReason = "none";
+bool gHitMatchedThisTap = false;
 
 const char* screenName(Screen screen);
 const char* fontSizeModeName();
@@ -929,11 +937,14 @@ void enterIdleMode(const char* reason) {
 }
 
 void maybeEnterPowerIdle() {
-  if (gSettings.powerMode == PowerMode::Normal || gInputLocked || gLastUserActivityMs == 0) {
+  if (gSettings.powerMode == PowerMode::Normal || gInputLocked || gTouchActive || gLastUserActivityMs == 0) {
     return;
   }
 
   const uint32_t elapsedMs = millis() - gLastUserActivityMs;
+  if (elapsedMs < kPostTouchIdleGuardMs) {
+    return;
+  }
   if (gSettings.powerMode == PowerMode::BatterySaver && elapsedMs >= kBatterySaverIdleMs) {
     enterIdleMode("battery saver inactivity");
   } else if (gSettings.powerMode == PowerMode::ConferenceBadge && gScreen == Screen::Badge &&
@@ -944,12 +955,12 @@ void maybeEnterPowerIdle() {
 
 uint32_t loopDelayMs() {
   if (gIdleModeActive && gSettings.powerMode == PowerMode::ConferenceBadge && gScreen == Screen::Badge) {
-    return 1000;
+    return 500;
   }
   if (gSettings.powerMode == PowerMode::BatterySaver || gSettings.powerMode == PowerMode::ConferenceBadge) {
-    return 250;
+    return 120;
   }
-  return 100;
+  return 50;
 }
 
 const char* fontStyleModeName() {
@@ -1724,6 +1735,8 @@ void lockInputForRefresh(const char* reason, bool cleanRefresh) {
 void finishDisplayRefresh() {
   M5.Display.display();
   const uint32_t debounceMs = gCurrentRefreshClean ? kInputCleanRefreshDebounceMs : kInputDebounceMs;
+  gLastRefreshEndMs = millis();
+  gLastDebounceMs = debounceMs;
   gInputUnlockAtMs = millis() + debounceMs;
   Serial.printf("UI refresh displayed: screen=%s input=locked debounce=%u ms\n", screenName(gScreen),
                 static_cast<unsigned>(debounceMs));
@@ -2223,6 +2236,43 @@ bool isBottomLeftTap(int32_t x, int32_t y) {
 bool isBadgeCenterTap(int32_t x, int32_t y) {
   return x > M5.Display.width() / 4 && x < (M5.Display.width() * 3) / 4 && y > M5.Display.height() / 3 &&
          y < (M5.Display.height() * 2) / 3;
+}
+
+bool rectContainsExpanded(const Rect& rect, int32_t px, int32_t py, int32_t padding = kHitboxPadding) {
+  if (rect.w <= 0 || rect.h <= 0) {
+    return false;
+  }
+  return px >= rect.x - padding && px <= rect.x + rect.w + padding && py >= rect.y - padding &&
+         py <= rect.y + rect.h + padding;
+}
+
+bool hitTarget(const Rect& rect, const char* target, int32_t px, int32_t py, int32_t padding = kHitboxPadding) {
+  if (!rectContainsExpanded(rect, px, py, padding)) {
+    return false;
+  }
+  gHitMatchedThisTap = true;
+  gLastHitTarget = target && target[0] != '\0' ? target : "unnamed";
+  Serial.printf("hitbox matched: target=%s x=%ld y=%ld visible=(%ld,%ld,%ld,%ld) pad=%ld screen=%s\n",
+                gLastHitTarget.c_str(), static_cast<long>(px), static_cast<long>(py), static_cast<long>(rect.x),
+                static_cast<long>(rect.y), static_cast<long>(rect.w), static_cast<long>(rect.h),
+                static_cast<long>(padding), screenName(gScreen));
+  return true;
+}
+
+void markHitTarget(const char* target, int32_t px, int32_t py) {
+  gHitMatchedThisTap = true;
+  gLastHitTarget = target && target[0] != '\0' ? target : "unnamed";
+  Serial.printf("hitbox matched: target=%s x=%ld y=%ld screen=%s\n", gLastHitTarget.c_str(), static_cast<long>(px),
+                static_cast<long>(py), screenName(gScreen));
+}
+
+void noteIgnoredIfNoHit(int32_t px, int32_t py) {
+  if (gHitMatchedThisTap) {
+    return;
+  }
+  gLastIgnoredTouchReason = "no hit target";
+  Serial.printf("touch ignored: reason=no hit target x=%ld y=%ld screen=%s\n", static_cast<long>(px),
+                static_cast<long>(py), screenName(gScreen));
 }
 
 bool recordBottomLeftTripleTap(int32_t x, int32_t y) {
@@ -2952,39 +3002,45 @@ void renderDebug(const char* refreshReason = "mode switch") {
   y += 34;
   display.drawString(String("firmware: ") + kFirmwareVersion, 26, y);
   y += 26;
-  display.drawString(String("SD mounted: ") + (gSdMounted ? "yes" : "no"), 26, y);
+  display.drawString(String("SD: ") + (gSdMounted ? "yes" : "no") + "  deck: " + gCoachDeckSource + " " +
+                         static_cast<unsigned>(gCoachItemCount),
+                     26, y);
   y += 26;
-  display.drawString(String("badge.json: ") + (gBadgeJsonLoaded ? "loaded" : "missing/fail"), 26, y);
+  display.drawString(String("badge json: ") + (gBadgeJsonLoaded ? "loaded" : "missing/fail"), 26, y);
   y += 26;
-  display.drawString(String("coach deck: ") + gCoachDeckSource + " " + static_cast<unsigned>(gCoachItemCount), 26, y);
-  y += 26;
-  display.drawString(String("badge language: ") + languageName(gBadgeLanguage), 26, y);
-  y += 26;
-  display.drawString(String("language mode: ") + languageModeName(), 26, y);
-  y += 26;
-  display.drawString(String("auto interval: ") + autoRotateIntervalName(), 26, y);
+  display.drawString(String("badge: ") + languageName(gBadgeLanguage) + " / " + languageModeName() + " / " +
+                         autoRotateIntervalName(),
+                     26, y);
   y += 26;
   display.drawString(String("badge redraws: ") + static_cast<unsigned>(gBadgeRedrawCount), 26, y);
   y += 26;
-  display.drawString(String("font size: ") + fontSizeModeName(), 26, y);
+  display.drawString(String("font: ") + fontSizeModeName() + " / " + fontStyleModeName(), 26, y);
   y += 26;
-  display.drawString(String("font style: ") + fontStyleModeName(), 26, y);
-  y += 26;
-  display.drawString(String("contrast: ") + contrastModeName(), 26, y);
-  y += 26;
-  display.drawString(String("refresh mode: ") + refreshModeName(), 26, y);
+  display.drawString(String("contrast: ") + contrastModeName() + "  refresh: " + refreshModeName(), 26, y);
   y += 26;
   display.drawString(String("refresh count: ") + static_cast<unsigned>(gRefreshTransitionCount) + "/" +
                          static_cast<unsigned>(kHardCleanTransitionLimit),
                      26, y);
   y += 26;
-  display.drawString(String("power mode: ") + powerModeName(), 26, y);
-  y += 26;
-  display.drawString(String("idle active: ") + (gIdleModeActive ? "yes" : "no"), 26, y);
+  display.drawString(String("power: ") + powerModeName() + " idle=" + (gIdleModeActive ? "yes" : "no"), 26, y);
   y += 26;
   display.drawString(String("idle entries: ") + static_cast<unsigned>(gIdleEntryCount), 26, y);
   y += 26;
-  display.drawString(String("input locked: ") + (gInputLocked ? "yes" : "no"), 26, y);
+  display.drawString(String("input locked: ") + (gInputLocked ? "yes" : "no") + "  touch active: " +
+                         (gTouchActive ? "yes" : "no"),
+                     26, y);
+  y += 26;
+  display.drawString(String("touch down: ") + gLastTouchDownX + "," + gLastTouchDownY, 26, y);
+  y += 26;
+  display.drawString(String("touch up: ") + gLastTouchUpX + "," + gLastTouchUpY, 26, y);
+  y += 26;
+  display.drawString(String("last hit: ") + gLastHitTarget, 26, y);
+  y += 26;
+  display.drawString(String("ignored: ") + gLastIgnoredTouchReason, 26, y);
+  y += 26;
+  display.drawString(String("refresh end: ") + static_cast<unsigned>(gLastRefreshEndMs) + " ms", 26, y);
+  y += 26;
+  display.drawString(String("debounce: ") + static_cast<unsigned>(gLastDebounceMs) + " ms", 26, y);
   y += 26;
   display.drawString(String("orientation: ") + orientationModeName(), 26, y);
   y += 26;
@@ -3157,18 +3213,18 @@ bool clickedPoint(const m5::touch_detail_t& detail, int32_t& x, int32_t& y) {
 }
 
 void handleInterviewPracticeTouch(int32_t tapX, int32_t tapY) {
-  if (gHomeButton.contains(tapX, tapY)) {
+  if (hitTarget(gHomeButton, "home", tapX, tapY)) {
     Serial.println("entering Home");
     renderHome();
     return;
   }
-  if (gFilterButton.contains(tapX, tapY)) {
+  if (hitTarget(gFilterButton, "practice filter", tapX, tapY)) {
     gInterviewMustMasterOnly = !gInterviewMustMasterOnly;
     startCoachMode(Screen::InterviewPractice);
     renderCoachScreen();
     return;
   }
-  if (gNextButton.contains(tapX, tapY)) {
+  if (hitTarget(gNextButton, "next", tapX, tapY)) {
     nextCoachItem();
     renderCoachScreen();
     return;
@@ -3177,6 +3233,7 @@ void handleInterviewPracticeTouch(int32_t tapX, int32_t tapY) {
   const CoachItemView item = coachItemAt(gCoachIndex);
   const uint8_t stageCount = interviewStageCount(item);
   if (tapX < M5.Display.width() / 3) {
+    markHitTarget("practice previous area", tapX, tapY);
     if (gCoachStage > 0) {
       --gCoachStage;
     } else {
@@ -3186,6 +3243,7 @@ void handleInterviewPracticeTouch(int32_t tapX, int32_t tapY) {
     return;
   }
 
+  markHitTarget("practice next area", tapX, tapY);
   if (gCoachStage + 1 < stageCount) {
     ++gCoachStage;
   } else {
@@ -3203,13 +3261,16 @@ void handleTouch() {
   const auto detail = M5.Touch.getDetail();
   if (gInputLocked) {
     if (detail.wasPressed() || detail.wasReleased() || detail.wasClicked() || detail.wasHold()) {
-      Serial.printf("touch ignored: input locked screen=%s font=%s refresh=%s\n", screenName(gScreen),
-                    fontSizeModeName(), refreshModeName());
+      gLastIgnoredTouchReason = "input locked";
+      Serial.printf("touch ignored: reason=input locked screen=%s font=%s refresh=%s unlockIn=%ld\n",
+                    screenName(gScreen), fontSizeModeName(), refreshModeName(),
+                    static_cast<long>(gInputUnlockAtMs > millis() ? gInputUnlockAtMs - millis() : 0));
     }
     return;
   }
 
   if (detail.wasPressed()) {
+    gTouchActive = true;
     recordUserActivity("touch press");
     gLastTouchDownX = constrain(detail.x, 0, M5.Display.width());
     gLastTouchDownY = constrain(detail.y, 0, M5.Display.height());
@@ -3217,6 +3278,7 @@ void handleTouch() {
                   static_cast<long>(gLastTouchDownY), screenName(gScreen));
   }
   if (detail.wasClicked() || detail.wasReleased()) {
+    gTouchActive = false;
     recordUserActivity("touch release");
     gLastTouchUpX = constrain(detail.x, 0, M5.Display.width());
     gLastTouchUpY = constrain(detail.y, 0, M5.Display.height());
@@ -3237,109 +3299,119 @@ void handleTouch() {
   if (!clickedPoint(detail, tapX, tapY)) {
     return;
   }
+  gHitMatchedThisTap = false;
 
   if (gScreen == Screen::Badge) {
     if (recordBottomLeftTripleTap(tapX, tapY)) {
+      markHitTarget("emergency home", tapX, tapY);
       Serial.println("entering Home");
       renderHome();
-    } else if (gQrRect.contains(tapX, tapY)) {
+    } else if (hitTarget(gQrRect, "qr zoom", tapX, tapY)) {
       renderQrZoom();
-    } else if (gPhotoRect.contains(tapX, tapY)) {
+    } else if (hitTarget(gPhotoRect, "photo zoom", tapX, tapY)) {
       renderPhotoZoom();
     } else if (gSettings.languageMode == LanguageMode::Manual && isBadgeCenterTap(tapX, tapY)) {
+      markHitTarget("badge language toggle", tapX, tapY);
       gBadgeLanguage = gBadgeLanguage == BadgeLanguage::English ? BadgeLanguage::Japanese : BadgeLanguage::English;
       Serial.printf("Badge manual language toggle: %s\n", languageName(gBadgeLanguage));
       saveSettings();
       renderBadge(true, "manual language toggle");
     }
+    noteIgnoredIfNoHit(tapX, tapY);
     return;
   }
 
   if (gScreen == Screen::QrZoom || gScreen == Screen::PhotoZoom) {
+    markHitTarget("zoom exit", tapX, tapY);
     cleanWhiteRefresh("zoom exit");
     renderBadge(false);
     return;
   }
 
   if (gScreen == Screen::Debug) {
-    if (gFontLabButton.contains(tapX, tapY)) {
+    if (hitTarget(gFontLabButton, "font lab", tapX, tapY)) {
       renderFontLab();
-    } else if (gTypographyResetButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gTypographyResetButton, "reset typography", tapX, tapY)) {
       resetTypographyDefaults();
       saveSettings();
       renderDebug("typography reset");
-    } else if (gLayoutDebugButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gLayoutDebugButton, "layout log", tapX, tapY)) {
       logCurrentLayoutDiagnostics("debug button");
       renderDebug();
-    } else if (gTouchDebugButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gTouchDebugButton, "touch debug", tapX, tapY)) {
       gTouchDebugEnabled = !gTouchDebugEnabled;
       renderDebug();
-    } else if (gHomeButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
     } else if (gTouchDebugEnabled) {
+      markHitTarget("touch debug canvas", tapX, tapY);
       renderDebug();
     }
+    noteIgnoredIfNoHit(tapX, tapY);
     return;
   }
 
   if (gScreen == Screen::FontLab) {
-    if (gFontLabStyleButton.contains(tapX, tapY)) {
+    if (hitTarget(gFontLabStyleButton, "font lab style", tapX, tapY)) {
       cycleFontStyleMode();
       saveSettings();
       renderFontLab("font style switch");
-    } else if (gFontLabSizeButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gFontLabSizeButton, "font lab size", tapX, tapY)) {
       cycleFontSizeMode();
       saveSettings();
       renderFontLab("font size switch");
-    } else if (gFontLabContrastButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gFontLabContrastButton, "font lab contrast", tapX, tapY)) {
       cycleContrastMode();
       saveSettings();
       renderFontLab("contrast switch");
-    } else if (gHomeButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
     }
+    noteIgnoredIfNoHit(tapX, tapY);
     return;
   }
 
   if (gScreen == Screen::DrillsMenu) {
-    if (gHomeButton.contains(tapX, tapY)) {
+    if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
-    } else if (gDrillAllButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gDrillAllButton, "all drills", tapX, tapY)) {
       gDrillCategory = DrillCategory::All;
       startCoachMode(Screen::Drills);
       renderCoachScreen();
-    } else if (gDrillWeakButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gDrillWeakButton, "weak answer drill", tapX, tapY)) {
       gDrillCategory = DrillCategory::WeakAnswer;
       startCoachMode(Screen::Drills);
       renderCoachScreen();
-    } else if (gDrillMetricButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gDrillMetricButton, "metric precision drill", tapX, tapY)) {
       gDrillCategory = DrillCategory::MetricPrecision;
       startCoachMode(Screen::Drills);
       renderCoachScreen();
-    } else if (gDrillFollowupButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gDrillFollowupButton, "follow-up defense drill", tapX, tapY)) {
       gDrillCategory = DrillCategory::FollowupDefense;
       startCoachMode(Screen::Drills);
       renderCoachScreen();
-    } else if (gDrillFrameworkButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gDrillFrameworkButton, "framework choice drill", tapX, tapY)) {
       gDrillCategory = DrillCategory::FrameworkChoice;
       startCoachMode(Screen::Drills);
       renderCoachScreen();
-    } else if (gDrillMaturityButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gDrillMaturityButton, "maturity claim drill", tapX, tapY)) {
       gDrillCategory = DrillCategory::MaturityClaim;
       startCoachMode(Screen::Drills);
       renderCoachScreen();
     }
+    noteIgnoredIfNoHit(tapX, tapY);
     return;
   }
 
   if (gScreen == Screen::Exam || gScreen == Screen::Results) {
-    if (gHomeButton.contains(tapX, tapY)) {
+    if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
     }
+    noteIgnoredIfNoHit(tapX, tapY);
     return;
   }
 
@@ -3348,10 +3420,10 @@ void handleTouch() {
       handleInterviewPracticeTouch(tapX, tapY);
       return;
     }
-    if (gHomeButton.contains(tapX, tapY)) {
+    if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
-    } else if (gNextButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gNextButton, "next", tapX, tapY)) {
       nextCoachItem();
       renderCoachScreen();
     } else if ((gScreen == Screen::Drills || gScreen == Screen::BlitzQuiz || gScreen == Screen::WeakAnswerDetector ||
@@ -3359,14 +3431,17 @@ void handleTouch() {
                gSelectedOption < 0) {
       const CoachItemView item = coachItemAt(gCoachIndex);
       for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
-        if (gOptionButtons[option].contains(tapX, tapY)) {
+        const String optionTarget = String("option ") + static_cast<char>('A' + option);
+        if (hitTarget(gOptionButtons[option], optionTarget.c_str(), tapX, tapY)) {
           gSelectedOption = option;
           gCoachStage = 1;
           renderCoachScreen();
           break;
         }
       }
+      noteIgnoredIfNoHit(tapX, tapY);
     } else {
+      markHitTarget("coach page", tapX, tapY);
       if (gCoachStage < 2) {
         ++gCoachStage;
       }
@@ -3376,80 +3451,82 @@ void handleTouch() {
   }
 
   if (gScreen == Screen::Settings) {
-    if (gOrientationButton.contains(tapX, tapY)) {
+    if (hitTarget(gOrientationButton, "orientation", tapX, tapY)) {
       gSettings.orientationMode =
           gSettings.orientationMode == OrientationMode::Strap ? OrientationMode::Handheld : OrientationMode::Strap;
       saveSettings();
       renderSettings("orientation switch");
-    } else if (gLanguageAutoButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gLanguageAutoButton, "language mode", tapX, tapY)) {
       cycleLanguageMode();
       saveSettings();
       renderSettings("badge language mode switch");
-    } else if (gLanguageEnglishButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gLanguageEnglishButton, "auto interval", tapX, tapY)) {
       cycleAutoRotateInterval();
       saveSettings();
       renderSettings("badge interval switch");
-    } else if (gFontMediumButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gFontMediumButton, "font medium", tapX, tapY)) {
       gSettings.fontSizeMode = FontSizeMode::Medium;
       saveSettings();
       renderSettings();
-    } else if (gFontLargeButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gFontLargeButton, "font large", tapX, tapY)) {
       gSettings.fontSizeMode = FontSizeMode::Large;
       saveSettings();
       renderSettings();
-    } else if (gFontXlButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gFontXlButton, "font xl", tapX, tapY)) {
       gSettings.fontSizeMode = FontSizeMode::XL;
       saveSettings();
       renderSettings();
-    } else if (gFontXxlButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gFontXxlButton, "font xxl", tapX, tapY)) {
       gSettings.fontSizeMode = FontSizeMode::XXL;
       saveSettings();
       renderSettings();
-    } else if (gFontHugeButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gFontHugeButton, "font huge", tapX, tapY)) {
       gSettings.fontSizeMode = FontSizeMode::Huge;
       saveSettings();
       renderSettings();
-    } else if (gFontStyleButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gFontStyleButton, "font style", tapX, tapY)) {
       cycleFontStyleMode();
       saveSettings();
       renderSettings("font style switch");
-    } else if (gRefreshModeButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gRefreshModeButton, "refresh mode", tapX, tapY)) {
       cycleRefreshMode();
       saveSettings();
       renderSettings("refresh mode switch");
-    } else if (gPowerModeButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gPowerModeButton, "power mode", tapX, tapY)) {
       cyclePowerMode();
       saveSettings();
       applyPowerPolicy("power mode switch");
       renderSettings("power mode switch");
-    } else if (gHomeButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
     }
+    noteIgnoredIfNoHit(tapX, tapY);
     return;
   }
 
   if (gScreen == Screen::Home) {
-    if (gBadgeButton.contains(tapX, tapY)) {
+    if (hitTarget(gBadgeButton, "badge", tapX, tapY)) {
       Serial.println("returning to Badge");
       renderBadge(true, "mode switch");
-    } else if (gPracticeButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gPracticeButton, "practice", tapX, tapY)) {
       startCoachMode(Screen::InterviewPractice);
       renderCoachScreen();
-    } else if (gDrillsButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gDrillsButton, "drills", tapX, tapY)) {
       renderDrillsMenu();
-    } else if (gExamButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gExamButton, "exam", tapX, tapY)) {
       renderPlaceholderScreen(Screen::Exam, "Exam", "10-question readiness test later.");
-    } else if (gGlossaryButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gGlossaryButton, "glossary", tapX, tapY)) {
       startCoachMode(Screen::Glossary);
       renderCoachScreen();
-    } else if (gResultsButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gResultsButton, "results", tapX, tapY)) {
       renderPlaceholderScreen(Screen::Results, "Results", "No session results yet.");
-    } else if (gSettingsButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gSettingsButton, "settings", tapX, tapY)) {
       renderSettings();
-    } else if (gDebugButton.contains(tapX, tapY)) {
+    } else if (hitTarget(gDebugButton, "debug", tapX, tapY)) {
       renderDebug();
     }
+    noteIgnoredIfNoHit(tapX, tapY);
   }
 }
 

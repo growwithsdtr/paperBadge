@@ -34,6 +34,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v2.6: add persistent Power Mode settings, turn off unused Wi-Fi/Bluetooth/speaker behavior at boot, silence the boot buzzer, and add conservative idle logging for Battery Saver and Conference Badge modes. Deep/light sleep is documented but deferred until PaperS3 touch wake reliability is physically verified.
 - v2.7: add Fast/Balanced/Clean refresh modes with an adaptive e-paper policy. Badge/image/zoom transitions still get clean refreshes, normal text navigation can use faster updates, and a hard-clean counter forces a clean refresh after 14 non-clean transitions.
 - v2.8: make High Contrast + XXL the recommended typography default for new installs, add an XXL font size between XL and Huge, tighten PaperCoach line spacing, add Debug -> Reset typography, and expand Font Lab with direct candidate comparisons.
+- v2.9: improve touch responsiveness by reducing input debounce windows, using padded invisible hitboxes around buttons, logging matched hit targets and ignored-touch reasons, and preventing power idle while touch is active or immediately after interaction.
 
 ## Hardware
 
@@ -151,6 +152,15 @@ v2.7 adds case-by-case refresh control:
 - `Clean`: prioritizes ghosting reduction and uses clean refreshes more often. Zoom exit still performs an explicit white clean refresh before returning to Badge.
 
 Firmware tracks consecutive non-clean transitions and forces a clean refresh after 14 transitions regardless of mode. Serial logs include refresh mode, refresh reason, actual refresh type, transition count, and whether the hard-clean counter fired.
+
+## Touch Responsiveness
+
+v2.9 keeps the e-ink input lock, but reduces the post-refresh lockout:
+
+- Fast/text refresh debounce: `250 ms`
+- Clean refresh debounce: `600 ms`
+
+Buttons use an invisible `10 px` hitbox expansion around their visible bounds. Serial logs include touch down/up coordinates, matched target name, ignored touch reason, last refresh end time, and active debounce. Debug shows the same diagnostics on-device. `Clean` refresh mode can still feel slower because a clean e-paper update takes longer and uses the longer debounce window; `Balanced` remains the recommended mode for normal PaperCoach use.
 
 ## Home/Menu
 
