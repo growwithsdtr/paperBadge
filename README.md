@@ -38,6 +38,7 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 - v3.0: polish button alignment and icon affordances. Buttons now center text or icon+label groups vertically and horizontally, compact PaperCoach Home controls are icon-only, and top-level menu icons use stronger primitive-drawn monochrome shapes instead of thin line icons.
 - v3.1: regenerate embedded English/Japanese badge images from one high-contrast 3-line template, remove rendered location/footer text, move the QR upward, and preprocess the portrait offline for sharper 16-level grayscale e-ink output.
 - v3.2: add battery and USB/VBUS status to Settings and Debug, add serial power audit logs, keep battery indicators off Badge/PaperCoach screens unless future critical-low handling is added, and lengthen Conference Badge idle entry to about 30 seconds for better touch reliability.
+- v3.3a: diagnose the PaperCoach font path, replace the five nominal size choices with three visibly distinct reader sizes, mark legacy XXL/Huge as colliding buckets, add Font Lab measurement rows with actual height/width/line-height metrics, add Tight/Normal/Loose line spacing, and sanitize live PaperCoach text to avoid square-box glyphs.
 
 ## Hardware
 
@@ -130,7 +131,7 @@ Long-press the center of the Badge screen to enter Home/Menu. If long press is h
 - Badge orientation: `strap` or `handheld`
 - Badge language: `Manual toggle`, `English`, `Japanese`, or `Auto rotate`
 - Badge auto-rotate interval: `Off`, `15s`, `30s`, or `60s`
-- PaperCoach font size: `Medium`, `Large`, `XL`, `XXL`, or `Huge`
+- PaperCoach reader size: `Reader S`, `Reader M`, or `Reader L`
 - Refresh mode: `Fast`, `Balanced`, or `Clean`
 - Power mode: `Normal`, `Battery Saver`, or `Conference Badge`
 
@@ -188,14 +189,9 @@ Practice uses the real embedded or SD interview deck and supports page-based stu
 
 ## PaperCoach Typography
 
-v2.0 uses real M5GFX `lgfxJapanGothic_*` fonts rather than offset-drawing fake bold text. Main content is black; metadata is dark gray.
+v2.0 started with real M5GFX `lgfxJapanGothic_*` fonts rather than offset-drawing fake bold text. Main content is black; metadata is dark gray.
 
-- Screen title: `lgfxJapanGothic_32`
-- Metadata/footer: `lgfxJapanGothic_20`
-- Body/question: Medium `24`, Large `28`, XL `32`, XXL `34`, Huge `36`
-- Button text: Medium/Large `24`, XL `28`, XXL `30`, Huge `32`
-
-New devices default PaperCoach typography to `High Contrast` + `XXL`; existing NVS settings are preserved. Serial logs include the current screen, PaperCoach font size, refresh mode, and input lock/unlock state.
+v3.3a defaults PaperCoach typography to `High Contrast` + `Reader L` + `Tight` line spacing. Existing NVS values are preserved but legacy `XXL` and `Huge` are canonicalized to `Reader L`. Serial logs include the current screen, reader size, underlying font bucket, measured text height/width, line height, refresh mode, and input lock/unlock state.
 
 v2.3 adds typography presets:
 
@@ -208,6 +204,32 @@ v2.3 adds typography presets:
 Font Lab is available from Debug and cycles font style, font size, and contrast directly on-device. Japanese sample text uses `lgfxJapanGothic_*` because the FreeSans/FreeMono GFX fonts are ASCII/Latin-oriented.
 
 v2.8 changes the recommended new-device typography default to `High Contrast` + `XXL` + `Max` contrast. Existing Preferences/NVS values are preserved; use `Debug -> Reset typography` to force the new default. PaperCoach line spacing is tighter than v2.7, especially for Practice and Drills. Font Lab now shows direct comparison rows for High Contrast XL, High Contrast XXL, High Contrast Huge, Sans Bold-like XXL, and Large Reader XXL. Serial typography logs include font style, size, body/button pixels, line height, and button height.
+
+v3.3a changes the PaperCoach typography model from nominal pixel steps to physical reader buckets:
+
+- `Reader S`: High Contrast body maps to `FreeSansBold12pt7b`
+- `Reader M`: High Contrast body maps to `FreeSansBold18pt7b`
+- `Reader L`: High Contrast body maps to `FreeSansBold24pt7b`
+
+The previous `XXL` and `Huge` values remain supported internally for Preferences/NVS compatibility, but they are canonicalized to `Reader L` because they collide with the same rendered font bucket. Font Lab now reports the active style, logical/effective size, underlying M5GFX font name/type, actual `fontHeight()`, measured sample width, line height, and collisions over Serial and on screen.
+
+Current runtime PaperCoach fonts:
+
+- Headings: M5GFX `FreeSansBold18pt7b` or `FreeSansBold24pt7b` for High Contrast/Large Reader/Sans Bold-like; `lgfxJapanGothic_*` for Sans Thin/current; `FreeMonoBold*` for Debug Mono.
+- Body text: M5GFX `FreeSansBold12pt7b`, `FreeSansBold18pt7b`, or `FreeSansBold24pt7b` for the three reader sizes.
+- Buttons: M5GFX `FreeSansBold12pt7b` or `FreeSansBold18pt7b` depending on reader size.
+- Metadata/footer/debug: smaller M5GFX FreeSansBold/FreeMono/JapanGothic buckets.
+
+These are embedded/discrete font faces, not a continuous scalable TTF renderer. M5GFX supports `loadFont()` for VLW runtime fonts from flash arrays or filesystems; v3.3a adds an experimental Font Lab-only probe for `/paperbadge/fonts/reader.vlw` on SD. No external font file is bundled in firmware, so there is no new font license/source to track and no flash cost from a reader font asset. To test a real Latin reader font later, generate a legally licensed VLW file on the Mac and place it at:
+
+```text
+PAPERSD/
+  paperbadge/
+    fonts/
+      reader.vlw
+```
+
+Live PaperCoach rendering now sanitizes UTF-8 punctuation at draw time for both SD and embedded decks. It replaces curly quotes, en/em dashes, bullets, ellipses, non-breaking spaces, arrows, and other non-ASCII glyphs with ASCII fallbacks before wrapping/drawing. Badge assets are image-rendered and are not sanitized.
 
 v2.1 adds serial layout diagnostics for physical debugging. Each PaperCoach render logs important bounding boxes, computed text height, available height, page count, and overflow warnings. The Debug screen has a `Layout log` action. Screenshot-to-SD is not enabled in this checkpoint because the public M5GFX/PaperS3 display API does not expose a simple, safe BMP/PNG save path for the active e-paper framebuffer in this firmware shape.
 
