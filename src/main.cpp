@@ -16,7 +16,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v3.9";
+constexpr const char* kFirmwareVersion = "v4.0";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -95,6 +95,7 @@ enum class Screen {
   Debug,
   FontLab,
   VisualQa,
+  HelpLegend,
   QrZoom,
   PhotoZoom,
   InterviewPractice,
@@ -419,6 +420,7 @@ Rect gFilterButton;
 Rect gTouchDebugButton;
 Rect gLayoutDebugButton;
 Rect gRenderTraceButton;
+Rect gHelpButton;
 Rect gFontLabButton;
 Rect gVisualQaButton;
 Rect gTypographyResetButton;
@@ -2409,6 +2411,8 @@ const char* screenName(Screen screen) {
       return "Font Lab";
     case Screen::VisualQa:
       return "Visual QA";
+    case Screen::HelpLegend:
+      return "Help";
     case Screen::QrZoom:
       return "QR zoom";
     case Screen::PhotoZoom:
@@ -3117,12 +3121,7 @@ void appendReaderWrappedWord(std::vector<String>& lines, const String& word, int
 }
 
 String practicePromptText(const CoachItemView& item) {
-  String text = item.title;
-  if (strlen(item.confidence) > 0) {
-    text += "\n\nConfidence: ";
-    text += item.confidence;
-  }
-  return text;
+  return item.title;
 }
 
 void wrapSanitizedReaderTextToLines(const String& text, int32_t width, std::vector<String>& lines) {
@@ -3448,17 +3447,17 @@ uint8_t buildCoachReaderStages(const CoachItemView& item, const PracticeLayout& 
   if (item.type == CoachItemType::HostileFollowup) {
     addStage("Follow-up", coachPromptFor(item));
     addStage("Defense", coachAnswerFor(item));
-    addStage("Rubric", coachRubricFor(item));
+    addStage("Anchor", coachRubricFor(item));
   } else if (item.type == CoachItemType::Glossary) {
-    addStage("Prompt", coachPromptFor(item));
+    addStage("Question", coachPromptFor(item));
     addStage("Answer", coachAnswerFor(item));
   } else if (item.type == CoachItemType::WeakAnswer) {
-    addStage("Prompt", coachPromptFor(item));
+    addStage("Question", coachPromptFor(item));
     addStage("Explanation", coachAnswerFor(item));
   } else {
-    addStage("Prompt", coachPromptFor(item));
+    addStage("Question", coachPromptFor(item));
     addStage("Answer", coachAnswerFor(item));
-    addStage("Rubric", coachRubricFor(item));
+    addStage("Anchor", coachRubricFor(item));
   }
 
   if (count == 0) {
@@ -3513,11 +3512,13 @@ void drawCompactReaderHeader(const CoachItemView& item, const char* stageName, u
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
   display.setTextColor(darkGray, TFT_WHITE);
-  String line = sanitizeCoachText(String(item.id && item.id[0] != '\0' ? item.id : coachScreenTitle(gScreen)) + " | " +
-                                      (item.mustMaster ? "Must" : "Card") + " | " + stageName,
-                                  "reader-header");
+  String line = sanitizeCoachText(item.id && item.id[0] != '\0' ? item.id : coachScreenTitle(gScreen), "reader-id");
+  line += " · ";
+  line += (item.mustMaster ? "Must" : "Card");
+  line += " · ";
+  line += stageName;
   if (pageCount > 1) {
-    line += " ";
+    line += " · ";
     line += static_cast<unsigned>(pageNumber);
     line += "/";
     line += static_cast<unsigned>(pageCount);
@@ -3548,9 +3549,9 @@ PracticeLayout practiceLayoutFor(FontSizeMode renderSize) {
 
   PracticeLayout layout;
   layout.renderSize = renderSize;
-  layout.contentX = 30;
+  layout.contentX = 38;
   layout.contentY = 92;
-  layout.contentW = display.width() - 60;
+  layout.contentW = display.width() - 76;
   layout.buttonH = 58;
   layout.footerY = display.height() - layout.buttonH - 18;
   layout.contentH = layout.footerY - layout.contentY - 16;
@@ -3571,15 +3572,34 @@ FontSizeMode choosePracticeReaderSize(const CoachItemView& item, bool logDecisio
   gSettings.fontSizeMode = FontSizeMode::XL;
   PracticeLayout layout = practiceLayoutFor(FontSizeMode::XL);
   applyCoachContentFont();
-  ReaderPageSet spoken = buildReaderPages(item.spoken, layout.contentW, layout.linesPerPage, "autofit-spoken");
+  struct AutoFitProbe {
+    const char* name;
+    String body;
+  };
+  AutoFitProbe probes[] = {
+      {"Question", practicePromptText(item)},
+      {"Answer", item.spoken},
+      {"Anchor", item.anchor},
+      {"Watch-out", item.watch},
+  };
+  const char* crowdedStage = "Answer";
+  uint8_t crowdedPages = 0;
+  for (size_t index = 0; index < countOf(probes); ++index) {
+    ReaderPageSet pages = buildReaderPages(probes[index].body, layout.contentW, layout.linesPerPage, probes[index].name);
+    if (pages.pageCount > crowdedPages) {
+      crowdedPages = pages.pageCount;
+      crowdedStage = probes[index].name;
+    }
+  }
   gSettings.fontSizeMode = savedSize;
 
-  const bool tooManyPages = spoken.pageCount > 4;
+  const bool tooManyPages = crowdedPages > 4;
   const bool tooFewLines = layout.linesPerPage < 8;
   if (tooManyPages || tooFewLines) {
     if (logDecision) {
-      Serial.printf("Reader auto-fit: card=%s from=Reader L to=Reader M reason=%s spokenPages=%u linesPerPage=%u\n",
-                    item.id, tooManyPages ? "too-many-pages" : "too-few-lines", spoken.pageCount, layout.linesPerPage);
+      Serial.printf("Reader auto-fit: card=%s from=Reader L to=Reader M reason=%s stage=%s pages=%u linesPerPage=%u\n",
+                    item.id, tooManyPages ? "too-many-pages" : "too-few-lines", crowdedStage, crowdedPages,
+                    layout.linesPerPage);
     }
     return FontSizeMode::Large;
   }
@@ -3618,13 +3638,13 @@ const char* practiceStageName(uint8_t stage, const PracticePageCounts& counts, u
   if (stage < counts.promptPages) {
     localPage = stage;
     localCount = counts.promptPages;
-    return "Prompt";
+    return "Question";
   }
   stage -= counts.promptPages;
   if (stage < counts.spokenPages) {
     localPage = stage;
     localCount = counts.spokenPages;
-    return "Spoken";
+    return "Answer";
   }
   stage -= counts.spokenPages;
   if (stage < counts.anchorPages) {
@@ -3635,7 +3655,7 @@ const char* practiceStageName(uint8_t stage, const PracticePageCounts& counts, u
   stage -= counts.anchorPages;
   localPage = stage < counts.watchPages ? stage : counts.watchPages - 1;
   localCount = counts.watchPages;
-  return "Watch";
+  return "Watch-out";
 }
 
 void renderInterviewPracticeScreen() {
@@ -3656,9 +3676,9 @@ void renderInterviewPracticeScreen() {
   uint8_t localCount = 1;
   const char* stageName = practiceStageName(gCoachStage, pageCounts, localPage, localCount);
   String body;
-  if (strcmp(stageName, "Prompt") == 0) {
+  if (strcmp(stageName, "Question") == 0) {
     body = practicePromptText(item);
-  } else if (strcmp(stageName, "Spoken") == 0) {
+  } else if (strcmp(stageName, "Answer") == 0) {
     body = item.spoken;
   } else if (strcmp(stageName, "Anchor") == 0) {
     body = item.anchor;
@@ -3674,23 +3694,25 @@ void renderInterviewPracticeScreen() {
   recordRenderTrace(item, stageName, body, pages, localPage);
 
   auto& display = M5.Display;
-  const uint16_t darkGray = metadataTextColor();
-
-  display.setTextDatum(textdatum_t::top_left);
-  applyCoachMetadataFont();
-  display.setTextColor(darkGray, TFT_WHITE);
-  const String headerLine = sanitizeCoachText(String(item.id) + " | " + (item.mustMaster ? "Must" : "Card") + " | " +
-                                                 stageName + " " + (localPage + 1) + "/" + localCount,
-                                             "practice-header");
-  display.drawString(headerLine, layout.contentX, 22);
-  if (strlen(item.section) > 0) {
-    display.drawString(sanitizeCoachText(item.section, "practice-section"), layout.contentX, 52);
-  }
+  drawCompactReaderHeader(item, stageName, localPage + 1, localCount);
 
   applyCoachContentFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
   drawReaderPage(pages, localPage, layout.contentX, layout.contentY, layout.lineHeight);
+  if (strcmp(stageName, "Question") == 0 && localPage == 0 && strlen(item.confidence) > 0) {
+    const size_t startLine = static_cast<size_t>(localPage) * pages.linesPerPage;
+    const size_t endLine = min(startLine + pages.linesPerPage, pages.lines.size());
+    const int32_t tagY = layout.contentY + static_cast<int32_t>(endLine - startLine) * layout.lineHeight + 14;
+    if (tagY + coachTypography().metadataLineHeight < layout.footerY - 8) {
+      applyCoachMetadataFont();
+      display.setTextColor(metadataTextColor(), TFT_WHITE);
+      display.drawString(sanitizeCoachText(String("Confidence: ") + item.confidence, "practice-confidence"),
+                         layout.contentX, tagY);
+      applyCoachContentFont();
+      display.setTextColor(TFT_BLACK, TFT_WHITE);
+    }
+  }
 
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   drawCoachFooterNav(hasPreviousCoachItem(), hasNextCoachItem());
@@ -3755,7 +3777,7 @@ void renderCoachScreen() {
     const int32_t contentY = layout.contentY;
     const int32_t footerTop = layout.footerY;
     const int32_t contentH = layout.contentH;
-    drawCompactReaderHeader(item, "Prompt", 1, 1);
+    drawCompactReaderHeader(item, "Question", 1, 1);
 
     String optionLabels[kMaxOptions];
     int32_t optionHeights[kMaxOptions] = {};
@@ -4101,13 +4123,24 @@ void renderDebug(const char* refreshReason = "mode switch") {
   y += 24;
   display.drawString(String("trace: ") + gLastRenderTraceStatus, 26, y);
 
-  gVisualQaButton = {26, display.height() - 412, display.width() - 52, 42};
-  gFontLabButton = {26, display.height() - 364, display.width() - 52, 42};
-  gTypographyResetButton = {26, display.height() - 316, display.width() - 52, 42};
-  gLayoutDebugButton = {26, display.height() - 268, display.width() - 52, 42};
-  gRenderTraceButton = {26, display.height() - 220, display.width() - 52, 42};
-  gTouchDebugButton = {26, display.height() - 172, display.width() - 52, 42};
+  const int32_t actionX = 26;
+  const int32_t actionGap = 10;
+  const int32_t actionW = (display.width() - 52 - actionGap) / 2;
+  const int32_t actionH = 42;
+  const int32_t rightX = actionX + actionW + actionGap;
+  int32_t actionY = display.height() - 312;
+  gHelpButton = {actionX, actionY, actionW, actionH};
+  gVisualQaButton = {rightX, actionY, actionW, actionH};
+  actionY += actionH + 8;
+  gFontLabButton = {actionX, actionY, actionW, actionH};
+  gTypographyResetButton = {rightX, actionY, actionW, actionH};
+  actionY += actionH + 8;
+  gLayoutDebugButton = {actionX, actionY, actionW, actionH};
+  gRenderTraceButton = {rightX, actionY, actionW, actionH};
+  actionY += actionH + 8;
+  gTouchDebugButton = {actionX, actionY, actionW, actionH};
   gHomeButton = {26, display.height() - 94, display.width() - 52, 58};
+  drawButton(gHelpButton, "Help");
   drawButton(gVisualQaButton, "Visual QA", IconType::Exam);
   drawButton(gFontLabButton, "Font Lab");
   drawButton(gTypographyResetButton, "Reset typography");
@@ -4175,6 +4208,44 @@ void renderVisualQa(const char* refreshReason = "mode switch") {
   Serial.printf("Visual QA shown: reader=%s style=%s refresh=%s power=%s customFont=%s checklist=%u\n",
                 fontSizeModeName(), fontStyleModeName(), refreshModeName(), powerModeName(),
                 gReaderMidVlwAvailable ? "yes" : "no", static_cast<unsigned>(countOf(checklist)));
+}
+
+void renderHelpLegend(const char* refreshReason = "mode switch") {
+  gScreen = Screen::HelpLegend;
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  static constexpr const char* lines[] = {
+      "Must = important card",
+      "Card = standard card",
+      "Question = interview prompt",
+      "Answer = spoken answer draft",
+      "Anchor = memory cue / key points",
+      "Watch-out = mistake to avoid",
+      "Tap upper half = previous page",
+      "Tap lower half = next page",
+      "Arrows = previous/next card",
+  };
+
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachTitleFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Help / Legend", 28, 26);
+
+  applyCoachMetadataFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  int32_t y = 92;
+  for (size_t index = 0; index < countOf(lines); ++index) {
+    display.drawString(lines[index], 34, y);
+    y += coachTypography().metadataLineHeight + 8;
+  }
+
+  gHomeButton = {26, display.height() - 94, display.width() - 52, 58};
+  drawButton(gHomeButton, "Home");
+
+  finishDisplayRefresh();
+  Serial.println("Help legend shown.");
 }
 
 void drawFontLabProbeRow(FontStyleMode style, FontSizeMode size, const char* label, const char* sample, int32_t y,
@@ -4499,7 +4570,9 @@ void handleTouch() {
   }
 
   if (gScreen == Screen::Debug) {
-    if (hitTarget(gVisualQaButton, "visual qa", tapX, tapY)) {
+    if (hitTarget(gHelpButton, "help legend", tapX, tapY)) {
+      renderHelpLegend();
+    } else if (hitTarget(gVisualQaButton, "visual qa", tapX, tapY)) {
       renderVisualQa();
     } else if (hitTarget(gFontLabButton, "font lab", tapX, tapY)) {
       renderFontLab();
@@ -4522,6 +4595,15 @@ void handleTouch() {
     } else if (gTouchDebugEnabled) {
       markHitTarget("touch debug canvas", tapX, tapY);
       renderDebug();
+    }
+    noteIgnoredIfNoHit(tapX, tapY);
+    return;
+  }
+
+  if (gScreen == Screen::HelpLegend) {
+    if (hitTarget(gHomeButton, "home", tapX, tapY)) {
+      Serial.println("entering Home");
+      renderHome();
     }
     noteIgnoredIfNoHit(tapX, tapY);
     return;
