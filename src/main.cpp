@@ -16,7 +16,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v4.1";
+constexpr const char* kFirmwareVersion = "v4.2";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -24,6 +24,7 @@ constexpr const char* kPrefsNamespace = "paperbadge";
 constexpr const char* kReaderVlwPath = "/paperbadge/fonts/reader.vlw";
 constexpr const char* kReaderMidVlwPath = "/paperbadge/fonts/reader_mid.vlw";
 constexpr const char* kRenderTracePath = "/papercoach/debug/render_trace.txt";
+constexpr const char* kEmbeddedDeckDumpPath = "/papercoach/debug/embedded_deck_dump.md";
 constexpr uint32_t kDefaultLanguageIntervalSeconds = 15;
 constexpr uint32_t kInputDebounceMs = 250;
 constexpr uint32_t kInputCleanRefreshDebounceMs = 600;
@@ -325,6 +326,10 @@ struct DrillPagePlan {
   DrillOptionPage optionPages[kMaxOptions];
   uint8_t optionPageCount = 1;
   uint8_t totalPages = 2;
+  bool combinedQuestionOptions = false;
+  uint8_t questionLineCount = 0;
+  int32_t questionBlockHeight = 0;
+  String reminder;
 };
 
 struct CoachItem {
@@ -434,6 +439,7 @@ Rect gFilterButton;
 Rect gTouchDebugButton;
 Rect gLayoutDebugButton;
 Rect gRenderTraceButton;
+Rect gExportDeckButton;
 Rect gHelpButton;
 Rect gFontLabButton;
 Rect gVisualQaButton;
@@ -489,6 +495,8 @@ uint32_t gSanitizerReplacementLast = 0;
 bool gCoachNeedsCleanEntryRefresh = false;
 String gLastRenderTrace;
 String gLastRenderTraceStatus = "not dumped";
+String gLastDeckExportStatus = "not exported";
+String gLastRefreshReason = "boot";
 
 const char* screenName(Screen screen);
 const char* fontSizeModeName();
@@ -503,6 +511,7 @@ void maybeEnterPowerIdle();
 uint32_t loopDelayMs();
 void applyCoachButtonFont();
 CoachTypography coachTypography();
+const char* coachDisplayId(const CoachItemView& item);
 TextLayoutResult wrapTextToLines(const String& text, int32_t width, int32_t lineHeight, uint8_t maxLines,
                                  String* lines);
 void logLayoutBox(const char* field, const Rect& box, int32_t usedHeight, uint8_t pageCount, bool overflow);
@@ -1939,10 +1948,11 @@ size_t findCoachItem(Screen screen, size_t startIndex) {
 }
 
 bool findNextCoachItem(Screen screen, size_t currentIndex, size_t& nextIndex) {
-  if (gCoachItemCount == 0 || currentIndex + 1 >= gCoachItemCount) {
+  if (gCoachItemCount == 0) {
     return false;
   }
-  for (size_t index = currentIndex + 1; index < gCoachItemCount; ++index) {
+  for (size_t offset = 1; offset <= gCoachItemCount; ++offset) {
+    const size_t index = (currentIndex + offset) % gCoachItemCount;
     if (itemMatchesScreen(coachItemAt(index), screen)) {
       nextIndex = index;
       return true;
@@ -1952,11 +1962,11 @@ bool findNextCoachItem(Screen screen, size_t currentIndex, size_t& nextIndex) {
 }
 
 bool findPreviousCoachItem(Screen screen, size_t currentIndex, size_t& previousIndex) {
-  if (gCoachItemCount == 0 || currentIndex == 0) {
+  if (gCoachItemCount == 0) {
     return false;
   }
-  for (size_t offset = 1; offset <= currentIndex; ++offset) {
-    const size_t index = currentIndex - offset;
+  for (size_t offset = 1; offset <= gCoachItemCount; ++offset) {
+    const size_t index = (currentIndex + gCoachItemCount - offset) % gCoachItemCount;
     if (itemMatchesScreen(coachItemAt(index), screen)) {
       previousIndex = index;
       return true;
@@ -1965,14 +1975,39 @@ bool findPreviousCoachItem(Screen screen, size_t currentIndex, size_t& previousI
   return false;
 }
 
+uint16_t matchingCoachItemCount(Screen screen) {
+  uint16_t total = 0;
+  for (size_t index = 0; index < gCoachItemCount; ++index) {
+    if (itemMatchesScreen(coachItemAt(index), screen)) {
+      ++total;
+    }
+  }
+  return total;
+}
+
+void filteredItemPosition(Screen screen, size_t currentIndex, uint16_t& position, uint16_t& total) {
+  position = 0;
+  total = 0;
+  for (size_t index = 0; index < gCoachItemCount; ++index) {
+    if (!itemMatchesScreen(coachItemAt(index), screen)) {
+      continue;
+    }
+    ++total;
+    if (index == currentIndex) {
+      position = total;
+    }
+  }
+  if (position == 0 && total > 0) {
+    position = 1;
+  }
+}
+
 bool hasNextCoachItem() {
-  size_t index = 0;
-  return findNextCoachItem(gScreen, gCoachIndex, index);
+  return matchingCoachItemCount(gScreen) > 0;
 }
 
 bool hasPreviousCoachItem() {
-  size_t index = 0;
-  return findPreviousCoachItem(gScreen, gCoachIndex, index);
+  return matchingCoachItemCount(gScreen) > 0;
 }
 
 void startCoachMode(Screen screen) {
@@ -1995,9 +2030,13 @@ void nextCoachItem() {
                   static_cast<unsigned>(gCoachIndex));
     return;
   }
+  const bool leavingFeedback = gSelectedOption >= 0;
   gCoachIndex = nextIndex;
   gCoachStage = 0;
   gSelectedOption = -1;
+  if (leavingFeedback) {
+    gCoachNeedsCleanEntryRefresh = true;
+  }
   if (gScreen == Screen::MockInterview) {
     gMockStep = (gMockStep + 1) % 5;
   }
@@ -2013,9 +2052,13 @@ void previousCoachItem() {
                   static_cast<unsigned>(gCoachIndex));
     return;
   }
+  const bool leavingFeedback = gSelectedOption >= 0;
   gCoachIndex = previousIndex;
   gCoachStage = 0;
   gSelectedOption = -1;
+  if (leavingFeedback) {
+    gCoachNeedsCleanEntryRefresh = true;
+  }
 }
 
 float fitScale(uint16_t sourceWidth, uint16_t sourceHeight, int32_t targetWidth, int32_t targetHeight) {
@@ -2073,11 +2116,12 @@ bool drawEmbeddedPngFit(const uint8_t* data, size_t dataSize, uint16_t sourceWid
 void lockInputForRefresh(const char* reason, bool cleanRefresh) {
   gInputLocked = true;
   gCurrentRefreshClean = cleanRefresh;
+  gLastRefreshReason = reason && reason[0] != '\0' ? reason : "render";
   gInputUnlockAtMs = 0;
   Serial.printf("UI refresh start: screen=%s font=%s style=%s contrast=%s settingRefresh=%s actualRefresh=%s "
                 "input=locked reason=%s\n",
                 screenName(gScreen), fontSizeModeName(), fontStyleModeName(), contrastModeName(), refreshModeName(),
-                cleanRefresh ? "Clean" : "Fast", reason && reason[0] != '\0' ? reason : "render");
+                cleanRefresh ? "Clean" : "Fast", gLastRefreshReason.c_str());
 }
 
 void finishDisplayRefresh() {
@@ -2362,15 +2406,10 @@ void drawButton(const Rect& rect, const String& label, IconType icon, ButtonText
   drawButton(rect, label.c_str(), icon, align);
 }
 
-void drawDisabledButton(const Rect& rect, IconType icon) {
-  auto& display = M5.Display;
-  drawButton(rect, "", icon);
-  display.drawLine(rect.x + 12, rect.y + rect.h - 12, rect.x + rect.w - 12, rect.y + 12, TFT_DARKGREY);
-  display.drawLine(rect.x + 13, rect.y + rect.h - 12, rect.x + rect.w - 11, rect.y + 12, TFT_DARKGREY);
-}
-
 void drawCoachFooterNav(bool previousEnabled, bool nextEnabled) {
   auto& display = M5.Display;
+  (void)previousEnabled;
+  (void)nextEnabled;
   const int32_t footerY = display.height() - 76;
   const int32_t buttonH = 58;
   const int32_t sideW = 132;
@@ -2379,17 +2418,20 @@ void drawCoachFooterNav(bool previousEnabled, bool nextEnabled) {
   gHomeButton = {(display.width() - homeW) / 2, footerY, homeW, buttonH};
   gNextButton = {display.width() - sideW - 24, footerY, sideW, buttonH};
 
-  if (previousEnabled) {
-    drawButton(gFilterButton, "", IconType::Back);
-  } else {
-    drawDisabledButton(gFilterButton, IconType::Back);
-  }
+  drawButton(gFilterButton, "", IconType::Back);
   drawButton(gHomeButton, "", IconType::Home);
-  if (nextEnabled) {
-    drawButton(gNextButton, "", IconType::Next);
-  } else {
-    drawDisabledButton(gNextButton, IconType::Next);
-  }
+  drawButton(gNextButton, "", IconType::Next);
+}
+
+void drawCenteredHomeFooter() {
+  auto& display = M5.Display;
+  const int32_t footerY = display.height() - 76;
+  const int32_t buttonH = 58;
+  const int32_t homeW = 132;
+  gFilterButton = {};
+  gHomeButton = {(display.width() - homeW) / 2, footerY, homeW, buttonH};
+  gNextButton = {};
+  drawButton(gHomeButton, "", IconType::Home);
 }
 
 bool isCoachScreen(Screen screen) {
@@ -3239,6 +3281,24 @@ String firstCharsForPage(const ReaderPageSet& pages, uint8_t pageIndex, size_t l
   return preview;
 }
 
+String visibleTextForPage(const ReaderPageSet& pages, uint8_t pageIndex, size_t limit = 220) {
+  String visible;
+  const size_t startLine = static_cast<size_t>(pageIndex) * pages.linesPerPage;
+  const size_t endLine = min(startLine + pages.linesPerPage, pages.lines.size());
+  for (size_t line = startLine; line < endLine; ++line) {
+    if (visible.length() > 0) {
+      visible += " ";
+    }
+    visible += pages.lines[line];
+    if (visible.length() >= limit) {
+      visible = visible.substring(0, limit);
+      visible += "...";
+      break;
+    }
+  }
+  return visible;
+}
+
 void logReaderPagination(const char* field, const ReaderPageSet& pages, const PracticeLayout& layout) {
   Serial.printf("Reader pagination: field=%s sourceLen=%u sanitizedLen=%u wrappedLines=%u pages=%u reader=%s "
                 "contentH=%ld linesPerPage=%u\n",
@@ -3258,16 +3318,40 @@ void appendTraceLine(String& trace, const String& line) {
 }
 
 String renderTraceFor(const CoachItemView& item, const char* stageName, const String& rawText,
-                      const ReaderPageSet& pages, uint8_t pageIndex) {
+                      const ReaderPageSet& pages, uint8_t pageIndex, bool splitLayout, const char* warning) {
   String trace;
   trace.reserve(1200 + pages.lines.size() * 72);
+  const size_t startLine = static_cast<size_t>(pageIndex) * pages.linesPerPage;
+  const size_t endLine = min(startLine + pages.linesPerPage, pages.lines.size());
+  const bool capped = pages.lines.size() > static_cast<size_t>(pages.linesPerPage) * kMaxReaderPageCount;
   appendTraceLine(trace, "Render trace");
+  appendTraceLine(trace, String("screen/mode: ") + screenName(gScreen));
   appendTraceLine(trace, String("card id: ") + (item.id && item.id[0] != '\0' ? item.id : "(none)"));
+  appendTraceLine(trace, String("card/item display id: ") + coachDisplayId(item));
   appendTraceLine(trace, String("section/category: ") +
                              (item.section && item.section[0] != '\0'
                                   ? item.section
                                   : (item.category && item.category[0] != '\0' ? item.category : coachScreenTitle(gScreen))));
   appendTraceLine(trace, String("stage: ") + (stageName && stageName[0] != '\0' ? stageName : "text"));
+  appendTraceLine(trace, String("page index: ") + static_cast<unsigned>(pageIndex + 1) + "/" +
+                             static_cast<unsigned>(pages.pageCount));
+  appendTraceLine(trace, String("actual visible text excerpt: ") + visibleTextForPage(pages, pageIndex));
+  appendTraceLine(trace, String("visible line count: ") + static_cast<unsigned>(endLine > startLine ? endLine - startLine : 0));
+  appendTraceLine(trace, String("source content line range: wrapped ") + static_cast<unsigned>(startLine + 1) + "-" +
+                             static_cast<unsigned>(endLine));
+  appendTraceLine(trace, String("font used: ") + selectedTypographyFontName(gSettings.fontStyleMode, coachTypography().bodyPx));
+  appendTraceLine(trace, String("reader size: ") + fontSizeModeName());
+  appendTraceLine(trace, String("split layout: ") + (splitLayout ? "yes" : "no"));
+  appendTraceLine(trace, String("clean refresh forced: ") + (gCurrentRefreshClean ? "yes" : "no"));
+  appendTraceLine(trace, String("refresh reason: ") + gLastRefreshReason);
+  appendTraceLine(trace, String("content truncated: ") + (capped ? "yes" : "no"));
+  if (warning != nullptr && warning[0] != '\0') {
+    appendTraceLine(trace, String("warning: ") + warning);
+  } else if (capped) {
+    appendTraceLine(trace, "warning: wrapped content exceeded maximum page capacity");
+  } else {
+    appendTraceLine(trace, "warning: none");
+  }
   appendTraceLine(trace, String("raw text length: ") + static_cast<unsigned>(rawText.length()));
   appendTraceLine(trace, String("sanitized text length: ") + static_cast<unsigned>(pages.sanitizedLength));
   appendTraceLine(trace, String("wrapped line count: ") + static_cast<unsigned>(pages.lines.size()));
@@ -3286,11 +3370,27 @@ String renderTraceFor(const CoachItemView& item, const char* stageName, const St
 }
 
 void recordRenderTrace(const CoachItemView& item, const char* stageName, const String& rawText,
-                       const ReaderPageSet& pages, uint8_t pageIndex) {
-  gLastRenderTrace = renderTraceFor(item, stageName, rawText, pages, pageIndex);
+                       const ReaderPageSet& pages, uint8_t pageIndex, bool splitLayout = false,
+                       const char* warning = nullptr) {
+  gLastRenderTrace = renderTraceFor(item, stageName, rawText, pages, pageIndex, splitLayout, warning);
   Serial.println("Render trace begin");
   Serial.print(gLastRenderTrace);
   Serial.println("Render trace end");
+  if (!gSdMounted) {
+    return;
+  }
+  SD.mkdir("/papercoach");
+  SD.mkdir("/papercoach/debug");
+  File file = SD.open(kRenderTracePath, FILE_APPEND);
+  if (!file) {
+    gLastRenderTraceStatus = "append failed; Serial only";
+    Serial.printf("Render trace append failed path=%s\n", kRenderTracePath);
+    return;
+  }
+  file.print(gLastRenderTrace);
+  file.println();
+  file.close();
+  gLastRenderTraceStatus = String("appended ") + kRenderTracePath;
 }
 
 void dumpCurrentRenderTraceToSd() {
@@ -3323,6 +3423,111 @@ void dumpCurrentRenderTraceToSd() {
   gLastRenderTraceStatus = String("wrote ") + kRenderTracePath;
   Serial.printf("Render trace dump: wrote %s bytes=%u\n", kRenderTracePath,
                 static_cast<unsigned>(gLastRenderTrace.length()));
+}
+
+void writeDeckDumpItem(File& file, size_t index) {
+  const CoachItemView item = coachItemAt(index);
+  file.print("## ");
+  file.print(coachDisplayId(item));
+  file.print(" - ");
+  file.println(coachTypeName(item.type));
+  if (item.section && item.section[0] != '\0') {
+    file.print("Section: ");
+    file.println(sanitizeCoachText(item.section, "deck-dump-section"));
+  }
+  if (item.cardId && item.cardId[0] != '\0') {
+    file.print("Card: ");
+    file.println(item.cardId);
+  }
+  if (item.mustMaster) {
+    file.println("Priority: Must");
+  }
+  if (item.title && item.title[0] != '\0') {
+    file.print("Title: ");
+    file.println(sanitizeCoachText(item.title, "deck-dump-title"));
+  }
+  if (item.prompt && item.prompt[0] != '\0') {
+    file.println();
+    file.println("Prompt:");
+    file.println(sanitizeCoachText(item.prompt, "deck-dump-prompt"));
+  }
+  if (item.spoken && item.spoken[0] != '\0') {
+    file.println();
+    file.println("Answer:");
+    file.println(sanitizeCoachText(item.spoken, "deck-dump-answer"));
+  }
+  if (item.anchor && item.anchor[0] != '\0') {
+    file.println();
+    file.println("Anchor:");
+    file.println(sanitizeCoachText(item.anchor, "deck-dump-anchor"));
+  }
+  if (item.watch && item.watch[0] != '\0') {
+    file.println();
+    file.println("Watch-out:");
+    file.println(sanitizeCoachText(item.watch, "deck-dump-watch"));
+  }
+  if (item.optionCount > 0) {
+    file.println();
+    file.println("Options:");
+    for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
+      file.print(static_cast<char>('A' + option));
+      file.print(". ");
+      file.println(sanitizeCoachText(item.options[option], "deck-dump-option"));
+    }
+    file.print("Best: ");
+    file.println(static_cast<char>('A' + item.correctIndex));
+  }
+  if (item.explanation && item.explanation[0] != '\0') {
+    file.println();
+    file.println("Explanation:");
+    file.println(sanitizeCoachText(item.explanation, "deck-dump-explanation"));
+  }
+  if (item.term && item.term[0] != '\0') {
+    file.println();
+    file.print("Term: ");
+    file.println(sanitizeCoachText(item.term, "deck-dump-term"));
+  }
+  if (item.definition && item.definition[0] != '\0') {
+    file.println("Definition:");
+    file.println(sanitizeCoachText(item.definition, "deck-dump-definition"));
+  }
+  file.println();
+}
+
+void exportDeckTextToSd() {
+  if (!gSdMounted) {
+    gLastDeckExportStatus = "SD missing";
+    Serial.printf("Deck export: SD missing path=%s\n", kEmbeddedDeckDumpPath);
+    return;
+  }
+
+  SD.mkdir("/papercoach");
+  SD.mkdir("/papercoach/debug");
+  if (SD.exists(kEmbeddedDeckDumpPath)) {
+    SD.remove(kEmbeddedDeckDumpPath);
+  }
+  File file = SD.open(kEmbeddedDeckDumpPath, FILE_WRITE);
+  if (!file) {
+    gLastDeckExportStatus = "open failed";
+    Serial.printf("Deck export: open failed path=%s\n", kEmbeddedDeckDumpPath);
+    return;
+  }
+
+  file.println("# PaperCoach Deck Dump");
+  file.println();
+  file.print("Firmware: ");
+  file.println(kFirmwareVersion);
+  file.print("Source: ");
+  file.println(gCoachDeckSource);
+  file.print("Items: ");
+  file.println(static_cast<unsigned>(gCoachItemCount));
+  file.println();
+  for (size_t index = 0; index < gCoachItemCount; ++index) {
+    writeDeckDumpItem(file, index);
+  }
+  file.close();
+  gLastDeckExportStatus = String("wrote ") + kEmbeddedDeckDumpPath;
+  Serial.printf("Deck export: wrote %s items=%u\n", kEmbeddedDeckDumpPath, static_cast<unsigned>(gCoachItemCount));
 }
 
 void drawReaderPage(const ReaderPageSet& pages, uint8_t pageIndex, int32_t x, int32_t y, int32_t lineHeight) {
@@ -3502,10 +3707,26 @@ void drawOptionButton(const Rect& rect, const String& label) {
                static_cast<int32_t>(lines.size()) * lineHeight + 24 > rect.h);
 }
 
+String compactQuestionReminder(const String& prompt) {
+  String safe = sanitizeCoachText(prompt, "question-reminder");
+  safe.replace("\n", " ");
+  safe.trim();
+  const int colon = safe.indexOf(": ");
+  if (colon >= 0 && colon + 2 < static_cast<int>(safe.length())) {
+    safe = safe.substring(colon + 2);
+  }
+  if (safe.length() > 112) {
+    safe = safe.substring(0, 109);
+    safe += "...";
+  }
+  return String("Q: ") + safe;
+}
+
 DrillPagePlan buildDrillPagePlan(const CoachItemView& item, const PracticeLayout& layout) {
   DrillPagePlan plan;
   plan.questionPages = buildReaderPages(item.prompt, layout.contentW, layout.linesPerPage, "Question");
   plan.optionPageCount = 0;
+  plan.reminder = compactQuestionReminder(item.prompt);
 
   const uint8_t optionCount = item.optionCount < kMaxOptions ? item.optionCount : kMaxOptions;
   if (optionCount == 0) {
@@ -3513,18 +3734,47 @@ DrillPagePlan buildDrillPagePlan(const CoachItemView& item, const PracticeLayout
     return plan;
   }
 
-  int32_t usedHeight = 0;
+  int32_t optionHeights[kMaxOptions] = {};
   const int32_t optionGap = 10;
+  int32_t allOptionsHeight = 0;
   for (uint8_t option = 0; option < optionCount; ++option) {
     const String label = optionLabelWithLetter(item, option);
-    const int32_t optionHeight = optionButtonHeightFor(label, layout.contentW);
-    if (optionHeight > layout.contentH) {
+    optionHeights[option] = optionButtonHeightFor(label, layout.contentW);
+    if (optionHeights[option] > layout.contentH) {
       Serial.printf("Drill option fit warning: item=%s option=%c height=%ld contentH=%ld\n", coachDisplayId(item),
-                    static_cast<char>('A' + option), static_cast<long>(optionHeight), static_cast<long>(layout.contentH));
+                    static_cast<char>('A' + option), static_cast<long>(optionHeights[option]),
+                    static_cast<long>(layout.contentH));
     }
+    allOptionsHeight += optionHeights[option];
+    if (option > 0) {
+      allOptionsHeight += optionGap;
+    }
+  }
+
+  plan.questionLineCount = static_cast<uint8_t>(min(plan.questionPages.lines.size(), static_cast<size_t>(layout.linesPerPage)));
+  plan.questionBlockHeight = static_cast<int32_t>(plan.questionLineCount) * layout.lineHeight;
+  const int32_t combinedGap = 18;
+  if (plan.questionPages.pageCount == 1 &&
+      plan.questionBlockHeight + combinedGap + allOptionsHeight <= layout.contentH) {
+    plan.combinedQuestionOptions = true;
+    plan.optionPageCount = 1;
+    plan.optionPages[0].firstOption = 0;
+    plan.optionPages[0].optionCount = optionCount;
+    plan.totalPages = 1;
+    Serial.printf("Drill fit: item=%s layout=combined questionLines=%u optionsHeight=%ld contentH=%ld\n",
+                  coachDisplayId(item), static_cast<unsigned>(plan.questionLineCount),
+                  static_cast<long>(allOptionsHeight), static_cast<long>(layout.contentH));
+    return plan;
+  }
+
+  int32_t usedHeight = 0;
+  const int32_t reminderHeight = coachTypography().metadataLineHeight * 2 + 12;
+  const int32_t optionAreaH = layout.contentH - reminderHeight;
+  for (uint8_t option = 0; option < optionCount; ++option) {
+    const int32_t optionHeight = optionHeights[option];
     const int32_t nextHeight = usedHeight == 0 ? optionHeight : usedHeight + optionGap + optionHeight;
     if (plan.optionPageCount > 0 && plan.optionPages[plan.optionPageCount - 1].optionCount > 0 &&
-        nextHeight > layout.contentH) {
+        nextHeight > optionAreaH) {
       ++plan.optionPageCount;
       usedHeight = 0;
     }
@@ -3549,6 +3799,9 @@ DrillPagePlan buildDrillPagePlan(const CoachItemView& item, const PracticeLayout
   if (plan.totalPages == 0) {
     plan.totalPages = 1;
   }
+  Serial.printf("Drill fit: item=%s layout=split questionPages=%u optionPages=%u reminder=yes contentH=%ld\n",
+                coachDisplayId(item), plan.questionPages.pageCount, plan.optionPageCount,
+                static_cast<long>(layout.contentH));
   return plan;
 }
 
@@ -3567,7 +3820,9 @@ String selectedOptionExplanationText(const CoachItemView& item) {
   } else {
     result += "No explanation available";
   }
-  result += "\nWhy other options are weaker: No per-option explanation available";
+  Serial.printf("Render trace warning: item=%s missing per-option explanations selected=%c best=%c\n",
+                coachDisplayId(item), static_cast<char>('A' + gSelectedOption), static_cast<char>('A' + item.correctIndex));
+  result += "\nWhy other options are weaker: No per-option explanation available yet.";
   return result;
 }
 
@@ -3669,17 +3924,13 @@ void drawCompactReaderHeader(const CoachItemView& item, const char* stageName, u
   }
   line += " · ";
   line += stageName;
-  if (pageCount > 1) {
-    line += " · ";
-    line += static_cast<unsigned>(pageNumber);
-    line += "/";
-    line += static_cast<unsigned>(pageCount);
-  }
+  line += " · ";
+  line += static_cast<unsigned>(pageNumber);
+  line += "/";
+  line += static_cast<unsigned>(pageCount);
   display.drawString(line, kCoachMargin, 22);
   if (item.section && item.section[0] != '\0') {
     display.drawString(sanitizeCoachText(item.section, "reader-section"), kCoachMargin, 52);
-  } else {
-    display.drawString(coachScreenTitle(gScreen), kCoachMargin, 52);
   }
   display.setTextColor(TFT_BLACK, TFT_WHITE);
 }
@@ -3689,17 +3940,33 @@ void drawCompactDrillHeader(const CoachItemView& item, uint8_t pageNumber, uint8
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
   display.setTextColor(metadataTextColor(), TFT_WHITE);
+  uint16_t position = 0;
+  uint16_t total = 0;
+  filteredItemPosition(gScreen, gCoachIndex, position, total);
   String line = sanitizeCoachText(coachDisplayId(item), "drill-id");
   line += " · ";
   line += drillHeaderLabel(item);
-  if (pageCount > 1) {
+  if (total > 0) {
     line += " · ";
-    line += static_cast<unsigned>(pageNumber);
+    line += static_cast<unsigned>(position);
     line += "/";
-    line += static_cast<unsigned>(pageCount);
+    line += static_cast<unsigned>(total);
   }
   display.drawString(line, kCoachMargin, 22);
-  display.drawString(coachScreenTitle(gScreen), kCoachMargin, 52);
+  String categoryLine;
+  if (item.cardId && item.cardId[0] != '\0') {
+    categoryLine = String("Card ") + item.cardId;
+  } else if (item.section && item.section[0] != '\0' && strcmp(item.section, "PaperCoach Drills") != 0) {
+    categoryLine = item.section;
+  }
+  if (categoryLine.length() > 0 && categoryLine != drillHeaderLabel(item)) {
+    display.drawString(sanitizeCoachText(categoryLine, "drill-category"), kCoachMargin, 52);
+  }
+  if (pageCount > 1) {
+    display.setTextDatum(textdatum_t::top_right);
+    display.drawString(String("page ") + pageNumber + "/" + pageCount, display.width() - kCoachMargin, 22);
+    display.setTextDatum(textdatum_t::top_left);
+  }
   display.setTextColor(TFT_BLACK, TFT_WHITE);
 }
 
@@ -3919,7 +4186,7 @@ void renderCoachScreen() {
   if (gCoachItemCount == 0) {
     drawWrappedText("No PaperCoach deck available.", layout.contentX, layout.contentY, layout.contentW,
                     layout.lineHeight, layout.linesPerPage, "empty", 1);
-    drawCoachFooterNav(false, false);
+    drawCenteredHomeFooter();
     gSettings.fontSizeMode = savedSize;
     finishDisplayRefresh();
     return;
@@ -3929,7 +4196,7 @@ void renderCoachScreen() {
   if (!itemMatchesScreen(item, gScreen)) {
     drawWrappedText(String("No ") + coachScreenTitle(gScreen) + " items yet.", layout.contentX, layout.contentY,
                     layout.contentW, layout.lineHeight, layout.linesPerPage, "empty", 1);
-    drawCoachFooterNav(false, false);
+    drawCenteredHomeFooter();
     gSettings.fontSizeMode = savedSize;
     finishDisplayRefresh();
     return;
@@ -3953,18 +4220,51 @@ void renderCoachScreen() {
     drawCompactDrillHeader(item, gCoachStage + 1, plan.totalPages);
     gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
 
-    if (gCoachStage < plan.questionPages.pageCount) {
+    if (plan.combinedQuestionOptions) {
+      applyCoachContentFont();
+      drawReaderPage(plan.questionPages, 0, layout.contentX, layout.contentY, layout.lineHeight);
+      logReaderPagination("Question", plan.questionPages, layout);
+      int32_t y = layout.contentY + plan.questionBlockHeight + 18;
+      const int32_t optionGap = 10;
+      String traceBody = String(item.prompt) + "\n";
+      for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
+        const String label = optionLabelWithLetter(item, option);
+        const int32_t buttonH = optionButtonHeightFor(label, layout.contentW);
+        gOptionButtons[option] = {layout.contentX, y, layout.contentW, buttonH};
+        drawOptionButton(gOptionButtons[option], label);
+        traceBody += "\n";
+        traceBody += label;
+        y += buttonH + optionGap;
+      }
+      ReaderPageSet combinedTrace = buildReaderPages(traceBody, layout.contentW, layout.linesPerPage, "Question+Options");
+      recordRenderTrace(item, "Question+Options", traceBody, combinedTrace, 0, false);
+      Serial.printf("Drill combined shown: item=%s options=%u totalPages=%u\n", coachDisplayId(item), item.optionCount,
+                    plan.totalPages);
+    } else if (gCoachStage < plan.questionPages.pageCount) {
       applyCoachContentFont();
       drawReaderPage(plan.questionPages, gCoachStage, layout.contentX, layout.contentY, layout.lineHeight);
+      if (gCoachStage + 1 == plan.questionPages.pageCount) {
+        applyCoachMetadataFont();
+        display.setTextColor(metadataTextColor(), TFT_WHITE);
+        display.drawString("Choices ->", layout.contentX, layout.footerY - coachTypography().metadataLineHeight - 8);
+        display.setTextColor(TFT_BLACK, TFT_WHITE);
+      }
       logReaderPagination("Question", plan.questionPages, layout);
-      recordRenderTrace(item, "Question", item.prompt, plan.questionPages, gCoachStage);
+      recordRenderTrace(item, "Question", item.prompt, plan.questionPages, gCoachStage, true);
     } else {
       const uint8_t optionPageIndex = gCoachStage - plan.questionPages.pageCount;
       const DrillOptionPage& optionPage =
           plan.optionPages[optionPageIndex < plan.optionPageCount ? optionPageIndex : plan.optionPageCount - 1];
       int32_t y = layout.contentY;
       const int32_t optionGap = 10;
-      String traceBody;
+      applyCoachMetadataFont();
+      display.setTextColor(metadataTextColor(), TFT_WHITE);
+      TextLayoutResult reminderLayout =
+          drawWrappedText(plan.reminder, layout.contentX, y, layout.contentW, coachTypography().metadataLineHeight, 2,
+                          "question-reminder", 1);
+      y += reminderLayout.height + 12;
+      display.setTextColor(TFT_BLACK, TFT_WHITE);
+      String traceBody = plan.reminder;
       for (uint8_t offset = 0; offset < optionPage.optionCount; ++offset) {
         const uint8_t option = optionPage.firstOption + offset;
         if (option >= item.optionCount || option >= kMaxOptions) {
@@ -3981,7 +4281,7 @@ void renderCoachScreen() {
         y += buttonH + optionGap;
       }
       ReaderPageSet optionTrace = buildReaderPages(traceBody, layout.contentW, layout.linesPerPage, "Options");
-      recordRenderTrace(item, "Options", traceBody, optionTrace, 0);
+      recordRenderTrace(item, "Options", traceBody, optionTrace, 0, true);
       Serial.printf("Drill options shown: item=%s optionPage=%u/%u first=%u count=%u totalPages=%u\n",
                     coachDisplayId(item), optionPageIndex + 1, plan.optionPageCount, optionPage.firstOption,
                     optionPage.optionCount, plan.totalPages);
@@ -4021,7 +4321,9 @@ void renderCoachScreen() {
   gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
   drawReaderPage(stage.pages, localPage, layout.contentX, layout.contentY, layout.lineHeight);
   logReaderPagination(stage.name, stage.pages, layout);
-  recordRenderTrace(item, stage.name, stage.body, stage.pages, localPage);
+  const char* traceWarning =
+      optionDrill && gSelectedOption >= 0 ? "per-option explanations unavailable; placeholder shown" : nullptr;
+  recordRenderTrace(item, stage.name, stage.body, stage.pages, localPage, false, traceWarning);
   drawCoachFooterNav(hasPreviousCoachItem(), hasNextCoachItem());
 
   gSettings.fontSizeMode = savedSize;
@@ -4041,15 +4343,13 @@ void renderHome(const char* refreshReason = "mode switch") {
   applyCoachTitleFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.drawString("PaperBadge", 32, 34);
-  applyCoachMetadataFont();
-  display.drawString("Home", 34, 92);
 
   const int32_t width = display.width();
   const int32_t buttonX = 34;
   const int32_t buttonW = width - 68;
   const int32_t buttonH = 82;
   const int32_t gap = 12;
-  int32_t y = 132;
+  int32_t y = 104;
   gBadgeButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
   gPracticeButton = {buttonX, y, buttonW, buttonH};
@@ -4289,6 +4589,8 @@ void renderDebug(const char* refreshReason = "mode switch") {
   display.drawString(String("touch debug: ") + (gTouchDebugEnabled ? "on" : "off"), 26, y);
   y += 24;
   display.drawString(String("trace: ") + gLastRenderTraceStatus, 26, y);
+  y += 24;
+  display.drawString(String("deck export: ") + gLastDeckExportStatus, 26, y);
 
   const int32_t actionX = 26;
   const int32_t actionGap = 10;
@@ -4306,6 +4608,7 @@ void renderDebug(const char* refreshReason = "mode switch") {
   gRenderTraceButton = {rightX, actionY, actionW, actionH};
   actionY += actionH + 8;
   gTouchDebugButton = {actionX, actionY, actionW, actionH};
+  gExportDeckButton = {rightX, actionY, actionW, actionH};
   gHomeButton = {26, display.height() - 94, display.width() - 52, 58};
   drawButton(gHelpButton, "Help");
   drawButton(gVisualQaButton, "Visual QA", IconType::Exam);
@@ -4314,6 +4617,7 @@ void renderDebug(const char* refreshReason = "mode switch") {
   drawButton(gLayoutDebugButton, "Layout log");
   drawButton(gRenderTraceButton, "Dump render trace");
   drawButton(gTouchDebugButton, gTouchDebugEnabled ? "Touch debug off" : "Touch debug on");
+  drawButton(gExportDeckButton, "Export deck text");
   drawButton(gHomeButton, "Home");
 
   finishDisplayRefresh();
@@ -4756,6 +5060,9 @@ void handleTouch() {
     } else if (hitTarget(gTouchDebugButton, "touch debug", tapX, tapY)) {
       gTouchDebugEnabled = !gTouchDebugEnabled;
       renderDebug();
+    } else if (hitTarget(gExportDeckButton, "export deck text", tapX, tapY)) {
+      exportDeckTextToSd();
+      renderDebug("deck export");
     } else if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
@@ -4889,6 +5196,9 @@ void handleTouch() {
         if (hitTarget(gOptionButtons[option], optionTarget.c_str(), tapX, tapY)) {
           gSelectedOption = option;
           gCoachStage = 0;
+          gCoachNeedsCleanEntryRefresh = true;
+          Serial.printf("Drill answer selected: item=%s selected=%c best=%c cleanRefresh=queued\n", coachDisplayId(item),
+                        static_cast<char>('A' + option), static_cast<char>('A' + item.correctIndex));
           renderCoachScreen();
           break;
         }
