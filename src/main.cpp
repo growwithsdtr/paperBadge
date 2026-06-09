@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v4.9";
+constexpr const char* kFirmwareVersion = "v5.0";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -4083,6 +4083,10 @@ bool isOptionDrillScreen(Screen screen, const CoachItemView& item) {
          item.optionCount > 0;
 }
 
+bool isChoiceQuestionScreen(Screen screen, const CoachItemView& item) {
+  return isOptionDrillScreen(screen, item) || (screen == Screen::Exam && item.optionCount > 0);
+}
+
 bool isExamEligibleItem(const CoachItemView& item) {
   return item.optionCount > 0 &&
          (item.type == CoachItemType::Mcq || item.type == CoachItemType::WeakAnswer ||
@@ -4116,9 +4120,9 @@ const char* drillHeaderLabel(const CoachItemView& item) {
 
 FontSizeMode coachReaderSizeFor(const CoachItemView& item) {
   const FontSizeMode requested = canonicalFontSizeMode(gSettings.fontSizeMode);
-  if (isOptionDrillScreen(gScreen, item) && requested == FontSizeMode::XL) {
-    Serial.printf("Drill auto-fit: item=%s from=Reader L to=Reader M reason=question-options-fit\n",
-                  coachDisplayId(item));
+  if (isChoiceQuestionScreen(gScreen, item) && requested == FontSizeMode::XL) {
+    Serial.printf("Choice auto-fit: item=%s from=Reader L to=Reader M reason=question-options-fit screen=%s\n",
+                  coachDisplayId(item), screenName(gScreen));
     return FontSizeMode::Large;
   }
   return requested;
@@ -4128,26 +4132,50 @@ String optionLabelWithLetter(const CoachItemView& item, uint8_t option) {
   return String(static_cast<char>('A' + option)) + ". " + coachOptionLabelFor(item, option);
 }
 
+int32_t optionLineHeight(uint8_t optionPx) {
+  return static_cast<int32_t>(optionPx) + (optionPx >= 31 ? 10 : 8);
+}
+
+uint8_t optionTextPxFor(const String& label, int32_t buttonWidth) {
+  const CoachTypography type = coachTypography();
+  const uint8_t largePx = type.bodyPx >= 31 ? 31 : type.bodyPx;
+  const uint8_t compactPx = type.buttonPx;
+  if (largePx <= compactPx) {
+    return compactPx;
+  }
+
+  applyTypographyFont(largePx);
+  std::vector<String> largeLines;
+  wrapReaderTextToLines(label, buttonWidth - 32, largeLines, "option-large-probe");
+  if (largeLines.size() <= 2) {
+    return largePx;
+  }
+  return compactPx;
+}
+
 int32_t optionButtonHeightFor(const String& label, int32_t buttonWidth) {
-  applyCoachButtonFont();
+  const uint8_t optionPx = optionTextPxFor(label, buttonWidth);
+  applyTypographyFont(optionPx);
   std::vector<String> lines;
   wrapReaderTextToLines(label, buttonWidth - 32, lines, "option-measure");
-  const int32_t lineHeight = static_cast<int32_t>(coachTypography().buttonPx) + 8;
-  const int32_t desiredHeight = static_cast<int32_t>(lines.size()) * lineHeight + 24;
-  return desiredHeight > 56 ? desiredHeight : 56;
+  const int32_t lineHeight = optionLineHeight(optionPx);
+  const int32_t desiredHeight = static_cast<int32_t>(lines.size()) * lineHeight + 26;
+  const int32_t minHeight = optionPx >= 31 ? 72 : 62;
+  return desiredHeight > minHeight ? desiredHeight : minHeight;
 }
 
 void drawOptionButton(const Rect& rect, const String& label) {
   auto& display = M5.Display;
   display.drawRoundRect(rect.x, rect.y, rect.w, rect.h, 8, TFT_BLACK);
   display.drawRoundRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 7, TFT_BLACK);
-  applyCoachButtonFont();
+  const uint8_t optionPx = optionTextPxFor(label, rect.w);
+  applyTypographyFont(optionPx);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.setTextDatum(textdatum_t::top_left);
 
   std::vector<String> lines;
   wrapReaderTextToLines(label, rect.w - 32, lines, "option-button");
-  const int32_t lineHeight = static_cast<int32_t>(coachTypography().buttonPx) + 8;
+  const int32_t lineHeight = optionLineHeight(optionPx);
   const int32_t textY = rect.y + 12;
   for (size_t line = 0; line < lines.size(); ++line) {
     display.drawString(lines[line], rect.x + 18, textY + static_cast<int32_t>(line) * lineHeight);
@@ -4184,7 +4212,7 @@ DrillPagePlan buildDrillPagePlan(const CoachItemView& item, const PracticeLayout
   }
 
   int32_t optionHeights[kMaxOptions] = {};
-  const int32_t optionGap = 10;
+  const int32_t optionGap = 8;
   int32_t allOptionsHeight = 0;
   for (uint8_t option = 0; option < optionCount; ++option) {
     const String label = optionLabelWithLetter(item, option);
@@ -4202,7 +4230,7 @@ DrillPagePlan buildDrillPagePlan(const CoachItemView& item, const PracticeLayout
 
   plan.questionLineCount = static_cast<uint8_t>(min(plan.questionPages.lines.size(), static_cast<size_t>(layout.linesPerPage)));
   plan.questionBlockHeight = static_cast<int32_t>(plan.questionLineCount) * layout.lineHeight;
-  const int32_t combinedGap = 18;
+  const int32_t combinedGap = 14;
   if (plan.questionPages.pageCount == 1 &&
       plan.questionBlockHeight + combinedGap + allOptionsHeight <= layout.contentH) {
     plan.combinedQuestionOptions = true;
@@ -4217,7 +4245,7 @@ DrillPagePlan buildDrillPagePlan(const CoachItemView& item, const PracticeLayout
   }
 
   int32_t usedHeight = 0;
-  const int32_t reminderHeight = coachTypography().metadataLineHeight * 2 + 12;
+  const int32_t reminderHeight = coachTypography().metadataLineHeight * 2 + 16;
   const int32_t optionAreaH = layout.contentH - reminderHeight;
   for (uint8_t option = 0; option < optionCount; ++option) {
     const int32_t optionHeight = optionHeights[option];
@@ -5187,8 +5215,8 @@ void renderCoachScreen() {
       applyCoachContentFont();
       drawReaderPage(plan.questionPages, 0, layout.contentX, layout.contentY, layout.lineHeight);
       logReaderPagination("Question", plan.questionPages, layout);
-      int32_t y = layout.contentY + plan.questionBlockHeight + 18;
-      const int32_t optionGap = 10;
+      int32_t y = layout.contentY + plan.questionBlockHeight + 14;
+      const int32_t optionGap = 8;
       String traceBody = String(item.prompt) + "\n";
       for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
         const String label = optionLabelWithLetter(item, option);
@@ -5219,7 +5247,7 @@ void renderCoachScreen() {
       const DrillOptionPage& optionPage =
           plan.optionPages[optionPageIndex < plan.optionPageCount ? optionPageIndex : plan.optionPageCount - 1];
       int32_t y = layout.contentY;
-      const int32_t optionGap = 10;
+      const int32_t optionGap = 8;
       applyCoachMetadataFont();
       display.setTextColor(metadataTextColor(), TFT_WHITE);
       TextLayoutResult reminderLayout =
@@ -5693,8 +5721,8 @@ void renderExamQuestion(const char* refreshReason = "exam question") {
 
   if (plan.combinedQuestionOptions) {
     drawReaderPage(plan.questionPages, 0, layout.contentX, layout.contentY, layout.lineHeight);
-    int32_t y = layout.contentY + plan.questionBlockHeight + 18;
-    const int32_t optionGap = 10;
+    int32_t y = layout.contentY + plan.questionBlockHeight + 14;
+    const int32_t optionGap = 8;
     String traceBody = String(item.prompt) + "\n";
     for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
       const String label = optionLabelWithLetter(item, option);
@@ -5729,7 +5757,7 @@ void renderExamQuestion(const char* refreshReason = "exam question") {
     y += reminderLayout.height + 12;
     display.setTextColor(TFT_BLACK, TFT_WHITE);
     String traceBody = plan.reminder;
-    const int32_t optionGap = 10;
+    const int32_t optionGap = 8;
     for (uint8_t offset = 0; offset < optionPage.optionCount; ++offset) {
       const uint8_t option = optionPage.firstOption + offset;
       if (option >= item.optionCount || option >= kMaxOptions) {
