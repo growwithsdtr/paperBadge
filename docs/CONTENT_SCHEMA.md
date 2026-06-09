@@ -1,6 +1,6 @@
 # Content Schema
 
-PaperCoach is a generic offline learning engine. The current embedded deck is interview-focused, but the same schema shape is intended to support future grammar, vocabulary, kanji, certification, or other drill decks.
+PaperBadge is the hardware shell. PaperCoach is the generic offline learning mode that runs inside it. The current embedded content pack is interview-focused, but the same schema shape is intended to support future Japanese N3-style grammar, vocabulary, kanji, certification, or other drill decks.
 
 ## SD Override Paths
 
@@ -70,7 +70,7 @@ Supported drill types:
 - `metric_precision`
 - `hostile_followup` for non-option follow-up/defense prompts
 
-Current limitation: per-option explanations are not embedded yet. Firmware shows a clean placeholder and logs the missing detail.
+Current limitation: per-option explanations are not embedded yet. Firmware omits the weaker-options block and logs the missing detail.
 
 For future language-learning decks, MCQ options can be short answers, readings, meanings, grammar choices, or example-sentence completions. UI labels should remain generic; deck categories provide the subject-specific meaning.
 
@@ -100,6 +100,15 @@ Supported categories:
 - `Interview`
 
 Future SD glossary categories may be deck-specific. Firmware currently has a fixed category grid for the embedded PaperCoach set, so new category grids require a firmware-side mapping update.
+
+## Later TODO
+
+- UTF-8/Japanese live text rendering.
+- Dynamic deck-defined categories.
+- Generic stages array.
+- Category cap increase.
+- Glossary search.
+- SRS/long-term history.
 
 ## Results Schema
 

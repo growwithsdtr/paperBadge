@@ -40,7 +40,7 @@
 
 ## Photo Batches
 
-Maximum 10 photos after v5.3/v5.4:
+Maximum 10 photos after v5.5:
 
 1. Static Badge.
 2. Home menu.
@@ -50,7 +50,7 @@ Maximum 10 photos after v5.3/v5.4:
 6. Drill question/options at Reader M.
 7. Drill feedback page.
 8. Glossary term page with Definition / Why it matters / Example.
-9. Results Summary or Categories page after at least one answer.
+9. Results Summary plus one post-summary Results page after at least one answer.
 10. Debug Power Audit.
 
 ## Render Trace

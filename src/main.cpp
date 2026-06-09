@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.4";
+constexpr const char* kFirmwareVersion = "v5.5";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -34,6 +34,7 @@ constexpr uint32_t kInputDebounceMs = 250;
 constexpr uint32_t kInputCleanRefreshDebounceMs = 600;
 constexpr uint32_t kBatterySaverIdleMs = 180000;
 constexpr uint32_t kConferenceBadgeIdleMs = 30000;
+constexpr uint32_t kStaticScreenIdleMs = 90000;
 constexpr uint32_t kBadgeLightSleepIdleMs = 30000;
 constexpr uint32_t kBadgeLightSleepDurationUs = 2000000;
 constexpr uint32_t kPowerPollIntervalMs = 45000;
@@ -50,6 +51,7 @@ constexpr uint8_t kMaxWrappedLines = 18;
 constexpr uint8_t kMaxReaderPageCount = 32;
 constexpr int32_t kCoachMargin = 34;
 constexpr int32_t kCoachHeaderBottom = 132;
+constexpr const char* kHeaderSep = " | ";
 
 constexpr const char* kBadgeEnCandidates[] = {
     "/paperbadge/badge_en.png",
@@ -1176,6 +1178,23 @@ const char* wakeReasonName(esp_sleep_wakeup_cause_t reason) {
   }
 }
 
+bool isStaticIdleScreen(Screen screen) {
+  switch (screen) {
+    case Screen::InterviewPractice:
+    case Screen::Glossary:
+    case Screen::Results:
+    case Screen::Settings:
+    case Screen::Debug:
+    case Screen::PowerAudit:
+    case Screen::VisualQa:
+    case Screen::HelpLegend:
+    case Screen::FontLab:
+      return true;
+    default:
+      return false;
+  }
+}
+
 const char* chargingStateName(m5::Power_Class::is_charging_t state) {
   switch (state) {
     case m5::Power_Class::is_charging:
@@ -1249,6 +1268,19 @@ String batteryStatusLine() {
     status += "%";
   } else {
     status += "--%";
+  }
+  return status;
+}
+
+String idleAuditStatusLine() {
+  String status = gIdleModeActive ? "active" : "awake";
+  status += " ";
+  status += screenName(gScreen);
+  status += " loop ";
+  status += static_cast<unsigned>(loopDelayMs());
+  status += "ms";
+  if (isStaticIdleScreen(gScreen)) {
+    status += " static-ok";
   }
   return status;
 }
@@ -1333,21 +1365,19 @@ void logPowerAudit(const char* reason) {
   const bool bluetoothStarted = btStarted();
   const bool badgeStatic = gSettings.powerMode == PowerMode::ConferenceBadge ||
                            gSettings.languageMode != LanguageMode::Auto || autoRotateIntervalSeconds() == 0;
-  const uint32_t activeLoopDelayMs =
-      gIdleModeActive && gSettings.powerMode == PowerMode::ConferenceBadge && gScreen == Screen::Badge
-          ? 500
-          : (gSettings.powerMode == PowerMode::BatterySaver || gSettings.powerMode == PowerMode::ConferenceBadge ? 120
-                                                                                                                   : 50);
+  const uint32_t activeLoopDelayMs = loopDelayMs();
 
   Serial.printf(
       "Power audit: reason=%s mode=%s idle=%s batteryMv=%d level=%ld charge=%s currentMa=%ld vbusMv=%d usb=%s "
-      "wifi=%s bluetooth=%s imu=disabled speaker=stopped badgeMode=%s badgeLang=%s autoInterval=%s staticBadge=%s "
-      "cpuMhz=%u badgeSleep=%s sleepStatus=\"%s\" lastSleep=\"%s\" lastWake=%s millis=%u redraws=%u refreshes=%u "
-      "badgeRedraws=%u lastRefreshReason=\"%s\" lastInputMs=%u loopDelayMs=%u\n",
+      "wifi=%s bluetooth=%s imu=disabled speaker=stopped sd=%s refreshMode=%s idleStatus=\"%s\" badgeMode=%s "
+      "badgeLang=%s autoInterval=%s staticBadge=%s cpuMhz=%u badgeSleep=%s sleepStatus=\"%s\" lastSleep=\"%s\" "
+      "lastWake=%s millis=%u redraws=%u refreshes=%u badgeRedraws=%u lastRefreshReason=\"%s\" lastInputMs=%u "
+      "loopDelayMs=%u\n",
       reason && reason[0] != '\0' ? reason : "audit", powerModeName(), gIdleModeActive ? "yes" : "no",
       static_cast<int>(batteryMv), static_cast<long>(level), chargingStateName(gCachedChargingState),
       static_cast<long>(currentMa), static_cast<int>(vbusMv), usbPowerName(vbusMv), wifiOff ? "off" : "on",
-      bluetoothStarted ? "on" : "off", languageModeName(), languageName(gBadgeLanguage), autoRotateIntervalName(),
+      bluetoothStarted ? "on" : "off", gSdMounted ? "mounted" : "missing", refreshModeName(),
+      idleAuditStatusLine().c_str(), languageModeName(), languageName(gBadgeLanguage), autoRotateIntervalName(),
       badgeStatic ? "yes" : "no", static_cast<unsigned>(ESP.getCpuFreqMHz()), badgeSleepModeName(),
       sleepStatus.c_str(), gLastSleepAttempt.c_str(), gLastWakeReason.c_str(), static_cast<unsigned>(millis()),
       static_cast<unsigned>(gDisplayRefreshCount),
@@ -1413,7 +1443,7 @@ void enterIdleMode(const char* reason) {
 }
 
 void maybeEnterPowerIdle() {
-  if (gSettings.powerMode == PowerMode::Normal || gInputLocked || gTouchActive || gLastUserActivityMs == 0) {
+  if (gInputLocked || gTouchActive || gLastUserActivityMs == 0) {
     return;
   }
 
@@ -1421,7 +1451,10 @@ void maybeEnterPowerIdle() {
   if (elapsedMs < kPostTouchIdleGuardMs) {
     return;
   }
-  if (gSettings.powerMode == PowerMode::BatterySaver && elapsedMs >= kBatterySaverIdleMs) {
+
+  if (isStaticIdleScreen(gScreen) && elapsedMs >= kStaticScreenIdleMs) {
+    enterIdleMode("static screen light idle");
+  } else if (gSettings.powerMode == PowerMode::BatterySaver && elapsedMs >= kBatterySaverIdleMs) {
     enterIdleMode("battery saver inactivity");
   } else if (gSettings.powerMode == PowerMode::ConferenceBadge && gScreen == Screen::Badge &&
              elapsedMs >= kConferenceBadgeIdleMs) {
@@ -1466,6 +1499,9 @@ void maybeEnterBadgeSleep() {
 uint32_t loopDelayMs() {
   if (gIdleModeActive && gSettings.powerMode == PowerMode::ConferenceBadge && gScreen == Screen::Badge) {
     return 500;
+  }
+  if (gIdleModeActive && isStaticIdleScreen(gScreen)) {
+    return 250;
   }
   if (gSettings.powerMode == PowerMode::BatterySaver || gSettings.powerMode == PowerMode::ConferenceBadge) {
     return 120;
@@ -3446,6 +3482,7 @@ String sanitizeCoachText(const String& text, const char* field = nullptr) {
   static constexpr uint8_t kMinusSign[] = {0xE2, 0x88, 0x92};
   static constexpr uint8_t kRightArrow[] = {0xE2, 0x86, 0x92};
   static constexpr uint8_t kMiddleDot[] = {0xC2, 0xB7};
+  static constexpr uint8_t kKatakanaMiddleDot[] = {0xE3, 0x83, 0xBB};
 
   String sanitized;
   sanitized.reserve(text.length());
@@ -3471,8 +3508,9 @@ String sanitizeCoachText(const String& text, const char* field = nullptr) {
       replacement = "'";
       consumed = 3;
     } else if (matchesBytes(text, index, kBullet, sizeof(kBullet)) ||
-               matchesBytes(text, index, kMiddleDot, sizeof(kMiddleDot))) {
-      replacement = "-";
+               matchesBytes(text, index, kMiddleDot, sizeof(kMiddleDot)) ||
+               matchesBytes(text, index, kKatakanaMiddleDot, sizeof(kKatakanaMiddleDot))) {
+      replacement = kHeaderSep;
       consumed = matchesBytes(text, index, kMiddleDot, sizeof(kMiddleDot)) ? sizeof(kMiddleDot) : 3;
     } else if (matchesBytes(text, index, kEllipsis, sizeof(kEllipsis))) {
       replacement = "...";
@@ -3483,7 +3521,7 @@ String sanitizeCoachText(const String& text, const char* field = nullptr) {
       replacement = " ";
       consumed = matchesBytes(text, index, kNbsp, sizeof(kNbsp)) ? sizeof(kNbsp) : 3;
     } else if (matchesBytes(text, index, kRightArrow, sizeof(kRightArrow))) {
-      replacement = "->";
+      replacement = kHeaderSep;
       consumed = 3;
     }
 
@@ -4299,23 +4337,24 @@ DrillPagePlan buildDrillPagePlan(const CoachItemView& item, const PracticeLayout
 }
 
 String selectedOptionExplanationText(const CoachItemView& item) {
-  String result = String("Selected: ") + static_cast<char>('A' + gSelectedOption) + ". " +
-                  coachOptionLabelFor(item, static_cast<uint8_t>(gSelectedOption));
-  result += "\nBest: ";
+  String result = "Selected\n";
+  result += static_cast<char>('A' + gSelectedOption);
+  result += ". ";
+  result += coachOptionLabelFor(item, static_cast<uint8_t>(gSelectedOption));
+  result += "\n\nBest\n";
   result += static_cast<char>('A' + item.correctIndex);
   result += ". ";
   result += coachOptionLabelFor(item, item.correctIndex);
-  result += "\nWhy this is best: ";
+  result += "\n\nWhy this is best\n";
   if (strlen(item.explanation) > 0) {
     result += item.explanation;
   } else if (strlen(item.answer) > 0) {
     result += item.answer;
   } else {
-    result += "No explanation available";
+    result += "Explanation not available.";
   }
   Serial.printf("Render trace warning: item=%s missing per-option explanations selected=%c best=%c\n",
                 coachDisplayId(item), static_cast<char>('A' + gSelectedOption), static_cast<char>('A' + item.correctIndex));
-  result += "\nWhy other options are weaker: No per-option explanation available yet.";
   return result;
 }
 
@@ -4523,7 +4562,7 @@ uint8_t buildCoachReaderStages(const CoachItemView& item, const PracticeLayout& 
   };
 
   if (isOptionDrillScreen(gScreen, item) && gSelectedOption >= 0) {
-    addStage("Explanation", selectedOptionExplanationText(item));
+    addStage("Feedback", selectedOptionExplanationText(item));
     return count == 0 ? 1 : count;
   }
 
@@ -4716,6 +4755,24 @@ String compactHeaderCategory(const char* raw) {
   return category;
 }
 
+String headerJoin2(const String& first, const String& second) {
+  String line = first;
+  line += kHeaderSep;
+  line += second;
+  return line;
+}
+
+String headerJoin3(const String& first, const String& second, const String& third) {
+  String line = headerJoin2(first, second);
+  line += kHeaderSep;
+  line += third;
+  return line;
+}
+
+String headerPageText(uint8_t pageNumber, uint8_t pageCount) {
+  return String(static_cast<unsigned>(pageNumber)) + "/" + static_cast<unsigned>(pageCount);
+}
+
 String fitHeaderText(String primary, const String& fallback, int32_t maxWidth) {
   auto& display = M5.Display;
   primary.trim();
@@ -4760,22 +4817,16 @@ void drawCompactReaderHeader(const CoachItemView& item, const char* stageName, u
   display.setTextColor(darkGray, TFT_WHITE);
   const int32_t headerW = display.width() - kCoachMargin * 2;
   String line = sanitizeCoachText(coachDisplayId(item), "reader-id");
-  line += " · ";
   if (item.type == CoachItemType::Glossary) {
-    line += "Glossary";
+    line = headerJoin2(line, "Glossary");
   } else if (gScreen == Screen::InterviewPractice || item.type == CoachItemType::Qa) {
-    line += (item.mustMaster ? "Must" : "Card");
+    line = headerJoin2(line, item.mustMaster ? "Must" : "Card");
   } else {
-    line += drillHeaderLabel(item);
+    line = headerJoin2(line, drillHeaderLabel(item));
   }
-  line += " · ";
-  line += stageName;
-  line += " · ";
-  line += static_cast<unsigned>(pageNumber);
-  line += "/";
-  line += static_cast<unsigned>(pageCount);
+  line = headerJoin3(line, stageName, headerPageText(pageNumber, pageCount));
   String fallback = sanitizeCoachText(coachDisplayId(item), "reader-id-fallback");
-  fallback += " · ";
+  fallback += kHeaderSep;
   fallback += (gScreen == Screen::InterviewPractice || item.type == CoachItemType::Qa) ? (item.mustMaster ? "Must" : "Card")
                                                                                        : stageName;
   fallback += " ";
@@ -4785,7 +4836,9 @@ void drawCompactReaderHeader(const CoachItemView& item, const char* stageName, u
   drawReadableHeaderLine(line, fallback, kCoachMargin, 18, headerW);
   if (item.section && item.section[0] != '\0') {
     const String section = compactHeaderCategory(item.section);
-    drawReadableHeaderLine(section, "", kCoachMargin, 54, headerW);
+    if (section.length() > 0 && section != "Card" && section != stageName && section != coachDisplayId(item)) {
+      drawReadableHeaderLine(section, "", kCoachMargin, 54, headerW);
+    }
   }
   display.setTextColor(TFT_BLACK, TFT_WHITE);
 }
@@ -4796,34 +4849,21 @@ void drawCompactDrillHeader(const CoachItemView& item, uint8_t pageNumber, uint8
   applyCoachMetadataFont();
   display.setTextColor(metadataTextColor(), TFT_WHITE);
   const int32_t headerW = display.width() - kCoachMargin * 2;
-  uint16_t position = 0;
-  uint16_t total = 0;
-  filteredItemPosition(gScreen, gCoachIndex, position, total);
   String line = sanitizeCoachText(coachDisplayId(item), "drill-id");
-  line += " · ";
-  line += drillHeaderLabel(item);
-  if (total > 0) {
-    line += " · ";
-    line += static_cast<unsigned>(position);
-    line += "/";
-    line += static_cast<unsigned>(total);
+  line = headerJoin2(line, drillHeaderLabel(item));
+  if (pageCount > 1) {
+    line = headerJoin2(line, headerPageText(pageNumber, pageCount));
   }
   String fallback = sanitizeCoachText(coachDisplayId(item), "drill-id-fallback");
-  fallback += " · ";
+  fallback += kHeaderSep;
   fallback += drillHeaderLabel(item);
-  if (total > 0) {
+  if (pageCount > 1) {
     fallback += " ";
-    fallback += static_cast<unsigned>(position);
-    fallback += "/";
-    fallback += static_cast<unsigned>(total);
+    fallback += headerPageText(pageNumber, pageCount);
   }
   drawReadableHeaderLine(line, fallback, kCoachMargin, 18, headerW);
   String categoryLine;
-  if (item.cardId && item.cardId[0] != '\0' && strcmp(coachDisplayId(item), item.cardId) != 0) {
-    categoryLine = String("Card ") + item.cardId;
-  } else if (item.category && item.category[0] != '\0' && strcmp(item.category, drillHeaderLabel(item)) != 0) {
-    categoryLine = item.category;
-  } else if (item.section && item.section[0] != '\0' && strcmp(item.section, "PaperCoach Drills") != 0) {
+  if (item.section && item.section[0] != '\0' && strcmp(item.section, "PaperCoach Drills") != 0) {
     categoryLine = item.section;
   }
   if (categoryLine.length() > 0 && categoryLine != drillHeaderLabel(item)) {
@@ -4833,29 +4873,43 @@ void drawCompactDrillHeader(const CoachItemView& item, uint8_t pageNumber, uint8
 }
 
 void drawExamHeader(const CoachItemView& item, uint8_t pageNumber, uint8_t pageCount) {
+  (void)item;
   auto& display = M5.Display;
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
   display.setTextColor(metadataTextColor(), TFT_WHITE);
   const int32_t headerW = display.width() - kCoachMargin * 2;
-  String line = "Exam · Q";
-  line += static_cast<unsigned>(gExamPosition + 1);
-  line += "/";
-  line += static_cast<unsigned>(gExamCount);
+  String line = "Exam";
+  String question = "Q";
+  question += static_cast<unsigned>(gExamPosition + 1);
+  question += "/";
+  question += static_cast<unsigned>(gExamCount);
+  line = headerJoin2(line, question);
   if (pageCount > 1) {
-    line += " · ";
-    line += static_cast<unsigned>(pageNumber);
-    line += "/";
-    line += static_cast<unsigned>(pageCount);
+    line = headerJoin2(line, headerPageText(pageNumber, pageCount));
   }
   drawReadableHeaderLine(line, "", kCoachMargin, 18, headerW);
-  String categoryLine = drillHeaderLabel(item);
-  if (item.category && item.category[0] != '\0' && strcmp(item.category, categoryLine.c_str()) != 0) {
-    categoryLine = item.category;
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+}
+
+void drawFeedbackHeader(const CoachItemView& item, uint8_t pageNumber, uint8_t pageCount) {
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  const int32_t headerW = display.width() - kCoachMargin * 2;
+  String line = sanitizeCoachText(coachDisplayId(item), "feedback-id");
+  line = headerJoin3(line, drillHeaderLabel(item), "Feedback");
+  if (pageCount > 1) {
+    line = headerJoin2(line, headerPageText(pageNumber, pageCount));
   }
-  if (categoryLine.length() > 0 && categoryLine != "MCQ") {
-    drawReadableHeaderLine(compactHeaderCategory(categoryLine.c_str()), "", kCoachMargin, 54, headerW);
+  String fallback = sanitizeCoachText(coachDisplayId(item), "feedback-id-fallback");
+  fallback = headerJoin2(fallback, "Feedback");
+  if (pageCount > 1) {
+    fallback += " ";
+    fallback += headerPageText(pageNumber, pageCount);
   }
+  drawReadableHeaderLine(line, fallback, kCoachMargin, 18, headerW);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
 }
 
@@ -4868,13 +4922,9 @@ void drawCompactGlossaryHeader(const CoachItemView& item, uint8_t pageNumber, ui
   uint16_t position = 0;
   uint16_t total = 0;
   filteredItemPosition(Screen::Glossary, gCoachIndex, position, total);
-  String line = "Glossary · ";
-  line += glossaryCategoryName(gGlossaryCategory);
+  String line = headerJoin2("Glossary", glossaryCategoryName(gGlossaryCategory));
   if (total > 0) {
-    line += " · ";
-    line += static_cast<unsigned>(position);
-    line += "/";
-    line += static_cast<unsigned>(total);
+    line = headerJoin2(line, headerPageText(position, total));
   }
   String fallback = "Glossary";
   if (total > 0) {
@@ -5253,7 +5303,7 @@ void renderCoachScreen() {
       if (gCoachStage + 1 == plan.questionPages.pageCount) {
         applyCoachMetadataFont();
         display.setTextColor(metadataTextColor(), TFT_WHITE);
-        display.drawString("Choices ->", layout.contentX, layout.footerY - coachTypography().metadataLineHeight - 8);
+        display.drawString("Choices", layout.contentX, layout.footerY - coachTypography().metadataLineHeight - 8);
         display.setTextColor(TFT_BLACK, TFT_WHITE);
       }
       logReaderPagination("Question", plan.questionPages, layout);
@@ -5320,7 +5370,7 @@ void renderCoachScreen() {
 
   const CoachReaderStage& stage = stages[currentStage];
   if (optionDrill) {
-    drawCompactDrillHeader(item, gCoachStage + 1, totalPages);
+    drawFeedbackHeader(item, gCoachStage + 1, totalPages);
   } else {
     drawCompactReaderHeader(item, stage.name, localPage + 1, stage.pages.pageCount);
   }
@@ -5329,7 +5379,7 @@ void renderCoachScreen() {
   drawReaderPage(stage.pages, localPage, layout.contentX, layout.contentY, layout.lineHeight);
   logReaderPagination(stage.name, stage.pages, layout);
   const char* traceWarning =
-      optionDrill && gSelectedOption >= 0 ? "per-option explanations unavailable; placeholder shown" : nullptr;
+      optionDrill && gSelectedOption >= 0 ? "per-option explanations unavailable; omitted from live feedback" : nullptr;
   recordRenderTrace(item, stage.name, stage.body, stage.pages, localPage, false, traceWarning);
   drawCoachFooterNav(hasPreviousCoachItem(), hasNextCoachItem());
 
@@ -5756,7 +5806,7 @@ void renderExamQuestion(const char* refreshReason = "exam question") {
     if (gCoachStage + 1 == plan.questionPages.pageCount) {
       applyCoachMetadataFont();
       display.setTextColor(metadataTextColor(), TFT_WHITE);
-      display.drawString("Choices ->", layout.contentX, layout.footerY - coachTypography().metadataLineHeight - 8);
+      display.drawString("Choices", layout.contentX, layout.footerY - coachTypography().metadataLineHeight - 8);
       display.setTextColor(TFT_BLACK, TFT_WHITE);
     }
     recordRenderTrace(item, "ExamQuestion", item.prompt, plan.questionPages, gCoachStage, true);
@@ -5848,7 +5898,7 @@ void drawResultBar(int32_t x, int32_t y, int32_t w, int32_t h, uint8_t percent) 
 }
 
 uint8_t resultsCategoryPageCount(uint8_t statCount) {
-  static constexpr uint8_t kResultsStatsPerPage = 4;
+  static constexpr uint8_t kResultsStatsPerPage = 3;
   if (statCount == 0) {
     return 1;
   }
@@ -5882,10 +5932,7 @@ void drawResultsPageLabel(const String& label, uint8_t pageNumber, uint8_t pageC
   display.setTextColor(metadataTextColor(), TFT_WHITE);
   String line = label;
   if (pageCount > 1) {
-    line += " · ";
-    line += static_cast<unsigned>(pageNumber);
-    line += "/";
-    line += static_cast<unsigned>(pageCount);
+    line = headerJoin2(line, headerPageText(pageNumber, pageCount));
   }
   display.drawString(line, 34, 92);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
@@ -5921,7 +5968,7 @@ void renderResultsSummaryPage(uint16_t total, uint16_t correct, uint8_t accuracy
 void renderResultsCategoriesPage(const CategoryStat* stats, uint8_t statCount, uint8_t categoryPage,
                                  uint8_t categoryPages) {
   auto& display = M5.Display;
-  static constexpr uint8_t kResultsStatsPerPage = 4;
+  static constexpr uint8_t kResultsStatsPerPage = 3;
   const uint8_t start = categoryPage * kResultsStatsPerPage;
   const uint8_t end =
       statCount < static_cast<uint8_t>(start + kResultsStatsPerPage) ? statCount : static_cast<uint8_t>(start + kResultsStatsPerPage);
@@ -5937,16 +5984,17 @@ void renderResultsCategoriesPage(const CategoryStat* stats, uint8_t statCount, u
     const uint8_t statAccuracy = resultAccuracyPercent(stats[index].correct, stats[index].total);
     applyCoachMetadataFont();
     display.setTextColor(metadataTextColor(), TFT_WHITE);
-    drawWrappedText(stats[index].name, 36, y, display.width() - 170, coachTypography().metadataLineHeight, 1,
-                    "results-category-name", 1);
+    TextLayoutResult labelLayout =
+        drawWrappedText(stats[index].name, 36, y, display.width() - 140, coachTypography().metadataLineHeight, 2,
+                        "results-category-name", 1);
     applyCoachContentFont();
     display.setTextColor(TFT_BLACK, TFT_WHITE);
     display.setTextDatum(textdatum_t::top_right);
     display.drawString(String(statAccuracy) + "%", display.width() - 36, y - 4);
     display.setTextDatum(textdatum_t::top_left);
-    y += 42;
+    y += labelLayout.height + 14;
     drawResultBar(36, y, display.width() - 72, 24, statAccuracy);
-    y += 60;
+    y += 72;
   }
 
   if (categoryPages > 1) {
@@ -5983,8 +6031,10 @@ void renderResultsWeakestPage(const CategoryStat* stats, uint8_t statCount) {
 
     applyCoachContentFont();
     display.setTextColor(TFT_BLACK, TFT_WHITE);
-    display.drawString(String(rank + 1) + ". " + stats[weakestIndex].name, 36, y);
-    y += 46;
+    TextLayoutResult labelLayout =
+        drawWrappedText(String(rank + 1) + ". " + stats[weakestIndex].name, 36, y, display.width() - 72,
+                        coachTypography().bodyLineHeight, 2, "results-weakest-label", 1);
+    y += labelLayout.height + 8;
     applyCoachMetadataFont();
     display.setTextColor(metadataTextColor(), TFT_WHITE);
     display.drawString(String(weakestAccuracy) + "% accuracy, " + static_cast<unsigned>(stats[weakestIndex].total) +
@@ -6017,8 +6067,9 @@ void renderResultsRecentPage() {
     if (result.correct) {
       continue;
     }
-    String line = String(result.itemId) + " · " + result.category + " · best " +
-                  static_cast<char>('A' + result.bestOption);
+    String best = "best ";
+    best += static_cast<char>('A' + result.bestOption);
+    String line = headerJoin3(result.itemId, result.category, best);
     drawWrappedText(line, 42, y, display.width() - 84, coachTypography().metadataLineHeight, 2, "recent-miss", 1);
     y += 72;
     ++shownMisses;
@@ -6308,10 +6359,13 @@ void renderPowerAudit(const char* refreshReason = "mode switch") {
   row(String("Charge: ") + chargingStateName(gCachedChargingState) + "  " + gCachedBatteryCurrentMa + "mA");
   row(String("Wi-Fi: ") + (wifiOff ? "off" : "on") + "  Bluetooth: " + (bluetoothStarted ? "on" : "off"));
   row("IMU: disabled  Speaker: stopped");
+  row(String("SD: ") + (gSdMounted ? "mounted" : "missing"));
+  row(String("Refresh mode: ") + refreshModeName());
+  row(String("Idle: ") + idleAuditStatusLine());
   row(String("CPU: ") + static_cast<unsigned>(ESP.getCpuFreqMHz()) + " MHz");
   row(String("Power mode: ") + powerModeName());
-  row(String("Badge sleep: ") + badgeSleepModeName());
-  row(String("Sleep: ") + sleepAuditStatusLine());
+  row(String("Sleep mode: ") + badgeSleepModeName());
+  row(String("Sleep status: ") + sleepAuditStatusLine());
   row(String("Last sleep: ") + gLastSleepAttempt);
   row(String("Wake reason: ") + gLastWakeReason);
   row(String("Millis since boot: ") + static_cast<unsigned>(millis()));

@@ -2,7 +2,7 @@
 
 ## Product Goal
 
-PaperCoach turns PaperBadge into a focused, offline e-ink learning engine. The current embedded content is senior AI/Product Manager interview preparation, but the product should also support future decks such as Japanese grammar, vocabulary, kanji, certification drills, or other compact study sets.
+PaperBadge is the hardware shell. PaperCoach is the focused, offline e-ink learning mode that runs inside it. The current embedded content pack is senior AI/Product Manager interview preparation, but the product should also support future decks such as Japanese N3-style grammar, vocabulary, kanji, certification drills, or other compact study sets.
 
 It should make prepared cards easier to rehearse, expose weak areas through drills and exams, and keep the experience readable, low-distraction, low-ghosting, and low-power.
 
@@ -21,6 +21,7 @@ Future user shape: a learner using offline deck content where items can be pract
 - Check AI/PM/interview glossary terms offline.
 - Use static badge mode at conferences without periodic redraws or radios.
 - Reuse the same Practice/Drills/Exam/Glossary/Results shell for non-interview decks.
+- Support future Japanese N3-style grammar, vocabulary, and kanji drills with weak-area tracking and SRS-like review.
 
 ## Design Principles
 
@@ -83,3 +84,4 @@ The device disables Wi-Fi, Bluetooth, speaker output, and IMU polling. Battery p
 - Add glossary search and SRS only if the on-device interaction stays simple.
 - Physically verify safe touch wake for deep sleep before enabling it.
 - Add more interview-specific exam balancing once category coverage grows.
+- Add UTF-8/Japanese live rendering, dynamic deck-defined categories, generic stages arrays, a higher category cap, glossary search, and SRS/long-term history.

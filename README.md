@@ -6,11 +6,13 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 
 ## Current Overview
 
-PaperBadge is also PaperCoach: a generic offline e-ink learning engine. The current embedded deck is senior AI/Product Manager interview content, but the UI, navigation, glossary, drills, exam, and results model are intended to work later with other offline decks such as Japanese grammar, vocabulary, or kanji drills.
+PaperBadge is the hardware shell for the M5PaperS3 e-ink device. PaperCoach is the generic offline learning mode that runs inside that shell.
+
+The current embedded PaperCoach content pack is senior AI/Product Manager interview practice. Future content packs should be able to support offline Japanese N3-style grammar, vocabulary, and kanji drills, including weak-area tracking and SRS-like review, without requiring Wi-Fi, cloud calls, or live AI services.
 
 It boots into a static conference badge and exposes a normal-orientation Home menu with Badge, Practice, Drills, Exam, Glossary, Results, Settings, and Debug.
 
-Current firmware version in source: `v5.4`.
+Current firmware version in source: `v5.5`.
 
 ## Quick Commands
 
@@ -50,6 +52,7 @@ Default upload and monitor port: `/dev/tty.usbmodem1101`.
 - Balanced refresh is the recommended default: clean refresh for major transitions/feedback/badge, faster refresh for ordinary page turns.
 - Badge language should use Manual toggle during QA; Auto interval should stay Off unless explicitly testing auto-rotate.
 - Deep sleep is not enabled by default because PaperS3 touch wake is not physically verified.
+- Static non-Badge reading and diagnostic screens can enter a logged light idle state after inactivity; touch remains active.
 
 ## Badge And Power Behavior
 
@@ -60,8 +63,17 @@ Badge mode is static by default and uses e-ink as intended: render once, hold th
 - Deep sleep touch wake is not enabled automatically.
 - Results are session-oriented; SD persistence writes the current session only.
 - Glossary search and SRS are not implemented yet.
-- Per-option drill explanations are not embedded yet, so feedback uses a clean placeholder and logs the missing detail.
+- Per-option drill explanations are not embedded yet, so feedback omits the weaker-options block and logs the missing detail.
 - No Wi-Fi, Bluetooth, API, cloud, audio, paid API, or LLM calls are used.
+
+## Later TODO
+
+- UTF-8/Japanese live text rendering.
+- Dynamic deck-defined categories.
+- Generic stages array.
+- Category cap increase.
+- Glossary search.
+- SRS/long-term history.
 
 ## Product Docs
 
@@ -111,6 +123,7 @@ Badge mode is static by default and uses e-ink as intended: render once, hold th
 - v3.6: compact footer/button geometry, keep the Home footer control icon-only, retain large invisible hitboxes, and left-align wrapped MCQ option text so answers are easier to compare on the e-ink panel.
 - v3.7: add a visual battery bar to Settings and Debug, expand power audit logs with static-badge and loop-delay state, document the conservative no-sleep policy, and keep adaptive refresh behavior focused on reading vs image/zoom transitions.
 - v3.8: add bolder hand-drawn primitive Back/Next icons, use icon + page-count Practice footer buttons, and add Debug -> Visual QA with the physical screenshot checklist and current typography/refresh/power settings.
+- v5.5: stabilize live headers with ASCII separators, simplify drill/exam/feedback chrome, remove dominant missing-explanation feedback text, loosen post-summary Results pagination, add static-screen light idle, expand Power Audit, and remove stale repo bloat.
 
 ## Hardware
 
@@ -215,15 +228,15 @@ v2.6 keeps the power policy conservative so the device does not become hard to w
 
 Power modes:
 
-- `Normal`: standard touch responsiveness. No idle entry while actively using PaperCoach.
+- `Normal`: standard touch responsiveness. Static reading/diagnostic screens can enter light idle after about 90 seconds of inactivity.
 - `Battery Saver`: keeps the same screens available, uses a slower loop delay, and enters a logged idle state after about 180 seconds of inactivity.
 - `Conference Badge`: intended for static badge use. After the badge is drawn and left untouched for about 30 seconds, firmware enters a logged idle state and slows the loop delay.
 
-The idle state is not ESP32 deep sleep or light sleep. M5Unified exposes deep/light sleep APIs and the ESP32-S3 reports wake causes, but PaperS3 touch wake behavior must be verified on the physical device before enabling sleep that could make the badge difficult to wake. Serial logs report the selected power mode, idle entry/exit, and boot wake reason.
+The PaperCoach static-screen idle state is not ESP32 deep sleep or light sleep; it slows the loop while leaving touch responsive. Badge Sleep Light remains a separate timer-based light-sleep experiment for static Badge mode only. M5Unified exposes deep/light sleep APIs and the ESP32-S3 reports wake causes, but PaperS3 touch wake behavior must be verified on the physical device before enabling sleep that could make the badge difficult to wake. Serial logs report the selected power mode, idle entry/exit, and boot wake reason.
 
 v3.7 shows power status only in diagnostic contexts: Settings has a compact battery/USB line plus a horizontal battery bar, and Debug shows the same bar with battery voltage, approximate percent, charge/discharge state, battery current, USB/VBUS status, current power mode, and the radio/peripheral policy. Badge, Practice, and Drills do not show a battery indicator. Percent is whatever M5Unified reports when available, with a conservative voltage estimate fallback.
 
-The power audit log confirms the app policy: Wi-Fi off, Bluetooth stopped, IMU disabled in `M5.config()`, speaker stopped, badge language mode/current language, auto-rotate interval, whether the badge is currently static, redraw count, loop delay, VBUS, battery voltage, charge state, and sleep deferred.
+The power audit log confirms the app policy: battery voltage/percent/current, USB/VBUS, Wi-Fi, Bluetooth, speaker, IMU, SD status, refresh mode, idle status, sleep mode/status, last wake reason, badge language mode/current language, auto-rotate interval, whether the badge is currently static, redraw count, loop delay, and last refresh reason.
 
 ## E-Ink Refresh Policy
 

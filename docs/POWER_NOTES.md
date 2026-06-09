@@ -22,7 +22,8 @@ PaperBadge/PaperCoach uses e-ink as a static display whenever possible. Badge mo
 - Badge language auto-rotation is disabled in Conference Badge power mode.
 - Battery, charge, and VBUS reads are cached for 45 seconds.
 - Render code logs repeated same-screen redraw warnings.
-- Debug -> Power Audit shows voltage, percent, USB/VBUS, charge state, Wi-Fi, Bluetooth, IMU, speaker, CPU frequency, power mode, Badge sleep setting, last sleep attempt, wake reason, boot millis, refresh count, badge redraw count, last refresh reason, and last input time.
+- Static Practice reading, Glossary term, Results, Settings, and Debug-family screens can enter a logged light idle state after about 90 seconds of inactivity. This slows the loop but keeps touch polling active.
+- Debug -> Power Audit shows voltage, percent, USB/VBUS, charge state, Wi-Fi, Bluetooth, IMU, speaker, SD status, refresh mode, idle status, CPU frequency, power mode, sleep mode/status, last sleep attempt, wake reason, boot millis, refresh count, badge redraw count, last refresh reason, and last input time.
 - Power Audit reports sleep as off, light experiment enabled, or deep blocked.
 - Badge sleep setting supports Off, Light, and Deep experiment.
 

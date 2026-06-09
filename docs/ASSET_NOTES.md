@@ -23,9 +23,7 @@ The asset builder renders the full English/Japanese badge from the JSON, profile
 
 ## Reference-only assets
 
-- `docs/assets/reference/completeBadge.png`: old full badge render kept only as a visual reference.
-
-Reference assets are not compiled into firmware and are not used by PlatformIO builds.
+The old `docs/assets/reference/completeBadge.png` full badge render was removed because it was a large visual reference, not a firmware input and not used by PlatformIO builds.
 
 ## Removed generated artifacts
 
