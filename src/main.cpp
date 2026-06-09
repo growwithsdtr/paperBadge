@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v4.7";
+constexpr const char* kFirmwareVersion = "v4.8";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -2896,13 +2896,13 @@ CoachTypography coachTypography() {
   switch (canonicalFontSizeMode(gSettings.fontSizeMode)) {
     case FontSizeMode::Medium:
       type.titlePx = 31;
-      type.metadataPx = 18;
-      type.footerPx = 18;
+      type.metadataPx = 24;
+      type.footerPx = 20;
       type.bodyPx = 24;
       type.buttonPx = 24;
       type.bodyLineHeight = 34;
-      type.metadataLineHeight = 24;
-      type.footerLineHeight = 24;
+      type.metadataLineHeight = 30;
+      type.footerLineHeight = 26;
       type.buttonHeight = 64;
       type.promptLines = 9;
       type.answerLines = 7;
@@ -2927,13 +2927,13 @@ CoachTypography coachTypography() {
     case FontSizeMode::Large:
     default:
       type.titlePx = 40;
-      type.metadataPx = 18;
-      type.footerPx = 18;
+      type.metadataPx = 24;
+      type.footerPx = 20;
       type.bodyPx = 31;
       type.buttonPx = 24;
       type.bodyLineHeight = 44;
-      type.metadataLineHeight = 24;
-      type.footerLineHeight = 24;
+      type.metadataLineHeight = 32;
+      type.footerLineHeight = 28;
       type.buttonHeight = 72;
       type.promptLines = 8;
       type.answerLines = 6;
@@ -4533,12 +4533,69 @@ uint8_t currentCoachReaderPageCount() {
   return totalReaderPages(stages, stageCount);
 }
 
+bool containsNonAscii(const String& text) {
+  for (size_t index = 0; index < text.length(); ++index) {
+    if (static_cast<uint8_t>(text[index]) >= 0x80) {
+      return true;
+    }
+  }
+  return false;
+}
+
+String compactHeaderCategory(const char* raw) {
+  String category = sanitizeCoachText(raw ? raw : "", "header-category");
+  category.trim();
+  category.replace("PaperCoach ", "");
+  category.replace("Motivation & Fit", "Motivation/Fit");
+  category.replace("Background, ", "Background / ");
+  category.replace(" and ", " & ");
+  category.replace(", ", " / ");
+  return category;
+}
+
+String fitHeaderText(String primary, const String& fallback, int32_t maxWidth) {
+  auto& display = M5.Display;
+  primary.trim();
+  if (primary.length() == 0) {
+    return "";
+  }
+  if (display.textWidth(primary) <= maxWidth) {
+    return primary;
+  }
+  String candidate = fallback;
+  candidate.trim();
+  if (candidate.length() > 0 && display.textWidth(candidate) <= maxWidth) {
+    return candidate;
+  }
+  if (containsNonAscii(primary)) {
+    return "";
+  }
+  while (primary.length() > 8 && display.textWidth(primary + "...") > maxWidth) {
+    primary.remove(primary.length() - 1);
+  }
+  primary.trim();
+  if (primary.length() <= 8) {
+    return "";
+  }
+  return primary + "...";
+}
+
+bool drawReadableHeaderLine(const String& primary, const String& fallback, int32_t x, int32_t y, int32_t width) {
+  const String line = fitHeaderText(primary, fallback, width);
+  if (line.length() == 0) {
+    return false;
+  }
+  M5.Display.drawString(line, x, y);
+  return true;
+}
+
 void drawCompactReaderHeader(const CoachItemView& item, const char* stageName, uint8_t pageNumber, uint8_t pageCount) {
   auto& display = M5.Display;
   const uint16_t darkGray = metadataTextColor();
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
   display.setTextColor(darkGray, TFT_WHITE);
+  const int32_t headerW = display.width() - kCoachMargin * 2;
   String line = sanitizeCoachText(coachDisplayId(item), "reader-id");
   line += " · ";
   if (item.type == CoachItemType::Glossary) {
@@ -4554,9 +4611,18 @@ void drawCompactReaderHeader(const CoachItemView& item, const char* stageName, u
   line += static_cast<unsigned>(pageNumber);
   line += "/";
   line += static_cast<unsigned>(pageCount);
-  display.drawString(line, kCoachMargin, 22);
+  String fallback = sanitizeCoachText(coachDisplayId(item), "reader-id-fallback");
+  fallback += " · ";
+  fallback += (gScreen == Screen::InterviewPractice || item.type == CoachItemType::Qa) ? (item.mustMaster ? "Must" : "Card")
+                                                                                       : stageName;
+  fallback += " ";
+  fallback += static_cast<unsigned>(pageNumber);
+  fallback += "/";
+  fallback += static_cast<unsigned>(pageCount);
+  drawReadableHeaderLine(line, fallback, kCoachMargin, 18, headerW);
   if (item.section && item.section[0] != '\0') {
-    display.drawString(sanitizeCoachText(item.section, "reader-section"), kCoachMargin, 52);
+    const String section = compactHeaderCategory(item.section);
+    drawReadableHeaderLine(section, "", kCoachMargin, 54, headerW);
   }
   display.setTextColor(TFT_BLACK, TFT_WHITE);
 }
@@ -4566,6 +4632,7 @@ void drawCompactDrillHeader(const CoachItemView& item, uint8_t pageNumber, uint8
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
   display.setTextColor(metadataTextColor(), TFT_WHITE);
+  const int32_t headerW = display.width() - kCoachMargin * 2;
   uint16_t position = 0;
   uint16_t total = 0;
   filteredItemPosition(gScreen, gCoachIndex, position, total);
@@ -4578,20 +4645,26 @@ void drawCompactDrillHeader(const CoachItemView& item, uint8_t pageNumber, uint8
     line += "/";
     line += static_cast<unsigned>(total);
   }
-  display.drawString(line, kCoachMargin, 22);
+  String fallback = sanitizeCoachText(coachDisplayId(item), "drill-id-fallback");
+  fallback += " · ";
+  fallback += drillHeaderLabel(item);
+  if (total > 0) {
+    fallback += " ";
+    fallback += static_cast<unsigned>(position);
+    fallback += "/";
+    fallback += static_cast<unsigned>(total);
+  }
+  drawReadableHeaderLine(line, fallback, kCoachMargin, 18, headerW);
   String categoryLine;
-  if (item.cardId && item.cardId[0] != '\0') {
+  if (item.cardId && item.cardId[0] != '\0' && strcmp(coachDisplayId(item), item.cardId) != 0) {
     categoryLine = String("Card ") + item.cardId;
+  } else if (item.category && item.category[0] != '\0' && strcmp(item.category, drillHeaderLabel(item)) != 0) {
+    categoryLine = item.category;
   } else if (item.section && item.section[0] != '\0' && strcmp(item.section, "PaperCoach Drills") != 0) {
     categoryLine = item.section;
   }
   if (categoryLine.length() > 0 && categoryLine != drillHeaderLabel(item)) {
-    display.drawString(sanitizeCoachText(categoryLine, "drill-category"), kCoachMargin, 52);
-  }
-  if (pageCount > 1) {
-    display.setTextDatum(textdatum_t::top_right);
-    display.drawString(String("page ") + pageNumber + "/" + pageCount, display.width() - kCoachMargin, 22);
-    display.setTextDatum(textdatum_t::top_left);
+    drawReadableHeaderLine(compactHeaderCategory(categoryLine.c_str()), "", kCoachMargin, 54, headerW);
   }
   display.setTextColor(TFT_BLACK, TFT_WHITE);
 }
@@ -4601,21 +4674,24 @@ void drawExamHeader(const CoachItemView& item, uint8_t pageNumber, uint8_t pageC
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
   display.setTextColor(metadataTextColor(), TFT_WHITE);
-  String line = sanitizeCoachText(coachDisplayId(item), "exam-id");
-  line += " · ";
-  line += drillHeaderLabel(item);
-  line += " · ";
+  const int32_t headerW = display.width() - kCoachMargin * 2;
+  String line = "Exam · Q";
   line += static_cast<unsigned>(gExamPosition + 1);
   line += "/";
   line += static_cast<unsigned>(gExamCount);
-  display.drawString(line, kCoachMargin, 22);
-  if (item.cardId && item.cardId[0] != '\0') {
-    display.drawString(String("Card ") + item.cardId, kCoachMargin, 52);
-  }
   if (pageCount > 1) {
-    display.setTextDatum(textdatum_t::top_right);
-    display.drawString(String("page ") + pageNumber + "/" + pageCount, display.width() - kCoachMargin, 22);
-    display.setTextDatum(textdatum_t::top_left);
+    line += " · ";
+    line += static_cast<unsigned>(pageNumber);
+    line += "/";
+    line += static_cast<unsigned>(pageCount);
+  }
+  drawReadableHeaderLine(line, "", kCoachMargin, 18, headerW);
+  String categoryLine = drillHeaderLabel(item);
+  if (item.category && item.category[0] != '\0' && strcmp(item.category, categoryLine.c_str()) != 0) {
+    categoryLine = item.category;
+  }
+  if (categoryLine.length() > 0 && categoryLine != "MCQ") {
+    drawReadableHeaderLine(compactHeaderCategory(categoryLine.c_str()), "", kCoachMargin, 54, headerW);
   }
   display.setTextColor(TFT_BLACK, TFT_WHITE);
 }
@@ -5220,7 +5296,7 @@ void renderExamMenu(const char* refreshReason = "mode switch") {
   display.drawString("Exam", 32, 34);
   applyCoachMetadataFont();
   display.setTextColor(metadataTextColor(), TFT_WHITE);
-  display.drawString("School test mode", 34, 92);
+  display.drawString("Mixed question mode", 34, 92);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
 
   const int32_t buttonX = 34;
