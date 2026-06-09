@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.0";
+constexpr const char* kFirmwareVersion = "v5.1";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -587,6 +587,7 @@ SessionResult gSessionResults[kMaxSessionResults];
 size_t gSessionResultCount = 0;
 uint32_t gSessionId = 0;
 String gResultsStorageStatus = "RAM session only";
+uint8_t gResultsPage = 0;
 size_t gExamItemIndices[kMaxExamQuestions];
 uint8_t gExamCount = 0;
 uint8_t gExamPosition = 0;
@@ -5831,59 +5832,123 @@ void drawResultBar(int32_t x, int32_t y, int32_t w, int32_t h, uint8_t percent) 
   }
 }
 
-void renderResultsScreen(const char* refreshReason = "mode switch") {
-  gScreen = Screen::Results;
-  applyAppRotation();
-  prepareFullRefresh(refreshReason, true);
+uint8_t resultsCategoryPageCount(uint8_t statCount) {
+  static constexpr uint8_t kResultsStatsPerPage = 4;
+  if (statCount == 0) {
+    return 1;
+  }
+  return static_cast<uint8_t>((statCount + kResultsStatsPerPage - 1) / kResultsStatsPerPage);
+}
 
+uint8_t resultsPageCountFor(uint8_t statCount) {
+  if (gSessionResultCount == 0) {
+    return 1;
+  }
+  return static_cast<uint8_t>(1 + resultsCategoryPageCount(statCount) + 2);
+}
+
+uint8_t currentResultsPageCount() {
+  CategoryStat stats[8];
+  const uint8_t statCount = buildCategoryStats(stats, countOf(stats));
+  return resultsPageCountFor(statCount);
+}
+
+void drawResultsFooter(uint8_t pageCount) {
+  if (pageCount > 1) {
+    drawCoachFooterNav(true, true);
+  } else {
+    drawCenteredHomeFooter();
+  }
+}
+
+void drawResultsPageLabel(const String& label, uint8_t pageNumber, uint8_t pageCount) {
   auto& display = M5.Display;
-  display.setTextDatum(textdatum_t::top_left);
-  applyCoachTitleFont();
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  String line = label;
+  if (pageCount > 1) {
+    line += " · ";
+    line += static_cast<unsigned>(pageNumber);
+    line += "/";
+    line += static_cast<unsigned>(pageCount);
+  }
+  display.drawString(line, 34, 92);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.drawString("Results", 32, 34);
+}
+
+void renderResultsSummaryPage(uint16_t total, uint16_t correct, uint8_t accuracy) {
+  auto& display = M5.Display;
+  int32_t y = 144;
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString(gResultsStorageStatus, 36, y);
+  y += 50;
+
+  applyCoachContentFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Answered", 36, y);
+  display.drawString("Correct", 306, y);
+  y += 48;
+
+  applyCoachTitleFont();
+  display.drawString(String(total), 36, y);
+  display.drawString(String(accuracy) + "%", 306, y);
+  y += 86;
 
   applyCoachMetadataFont();
   display.setTextColor(metadataTextColor(), TFT_WHITE);
-  display.drawString(gResultsStorageStatus, 34, 92);
+  display.drawString(String(static_cast<unsigned>(correct)) + " correct of " + static_cast<unsigned>(total), 36, y);
+  y += 42;
+  drawResultBar(36, y, display.width() - 72, 28, accuracy);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
+}
 
-  int32_t y = 134;
-  if (gSessionResultCount == 0) {
+void renderResultsCategoriesPage(const CategoryStat* stats, uint8_t statCount, uint8_t categoryPage,
+                                 uint8_t categoryPages) {
+  auto& display = M5.Display;
+  static constexpr uint8_t kResultsStatsPerPage = 4;
+  const uint8_t start = categoryPage * kResultsStatsPerPage;
+  const uint8_t end =
+      statCount < static_cast<uint8_t>(start + kResultsStatsPerPage) ? statCount : static_cast<uint8_t>(start + kResultsStatsPerPage);
+  int32_t y = 144;
+  if (statCount == 0) {
     applyCoachContentFont();
-    drawWrappedText("No results yet. Answer Drills or Exam questions to build a session summary.", kCoachMargin, y,
-                    display.width() - kCoachMargin * 2, coachLineHeight(), 5, "results-empty", 1);
-    gHomeButton = {34, display.height() - 110, display.width() - 68, 76};
-    drawButton(gHomeButton, "", IconType::Home);
-    finishDisplayRefresh();
-    Serial.println("Results screen shown: empty state.");
+    drawWrappedText("No category data yet.", 36, y, display.width() - 72, coachTypography().bodyLineHeight, 3,
+                    "results-no-categories", 1);
     return;
   }
 
-  const uint16_t total = static_cast<uint16_t>(gSessionResultCount);
-  const uint16_t correct = resultCorrectCount();
-  const uint8_t accuracy = resultAccuracyPercent(correct, total);
-  applyCoachContentFont();
-  display.drawString(String("Answered: ") + total, 34, y);
-  display.drawString(String("Correct: ") + accuracy + "%", 282, y);
-  y += 54;
-
-  CategoryStat stats[8];
-  const uint8_t statCount = buildCategoryStats(stats, countOf(stats));
-  applyCoachMetadataFont();
-  display.drawString("By category", 34, y);
-  y += 32;
-  const uint8_t visibleStats = statCount < 4 ? statCount : 4;
-  for (uint8_t index = 0; index < visibleStats; ++index) {
+  for (uint8_t index = start; index < end; ++index) {
     const uint8_t statAccuracy = resultAccuracyPercent(stats[index].correct, stats[index].total);
-    display.drawString(String(stats[index].name) + " " + statAccuracy + "%", 34, y);
-    drawResultBar(276, y + 4, 220, 18, statAccuracy);
-    y += 34;
+    applyCoachMetadataFont();
+    display.setTextColor(metadataTextColor(), TFT_WHITE);
+    drawWrappedText(stats[index].name, 36, y, display.width() - 170, coachTypography().metadataLineHeight, 1,
+                    "results-category-name", 1);
+    applyCoachContentFont();
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    display.setTextDatum(textdatum_t::top_right);
+    display.drawString(String(statAccuracy) + "%", display.width() - 36, y - 4);
+    display.setTextDatum(textdatum_t::top_left);
+    y += 42;
+    drawResultBar(36, y, display.width() - 72, 24, statAccuracy);
+    y += 60;
   }
 
-  y += 8;
-  display.drawString("Weakest areas", 34, y);
-  y += 30;
+  if (categoryPages > 1) {
+    applyCoachMetadataFont();
+    display.setTextColor(metadataTextColor(), TFT_WHITE);
+    display.drawString(String("Category page ") + static_cast<unsigned>(categoryPage + 1) + "/" +
+                           static_cast<unsigned>(categoryPages),
+                       36, display.height() - 148);
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+  }
+}
+
+void renderResultsWeakestPage(const CategoryStat* stats, uint8_t statCount) {
+  auto& display = M5.Display;
+  int32_t y = 148;
   bool pickedStats[8] = {};
+  uint8_t shown = 0;
   for (uint8_t rank = 0; rank < 3; ++rank) {
     int8_t weakestIndex = -1;
     uint8_t weakestAccuracy = 101;
@@ -5900,14 +5965,36 @@ void renderResultsScreen(const char* refreshReason = "mode switch") {
     if (weakestIndex < 0 || weakestIndex >= static_cast<int8_t>(statCount)) {
       break;
     }
-    display.drawString(String(rank + 1) + ". " + stats[weakestIndex].name + " " + weakestAccuracy + "%", 48, y);
-    pickedStats[weakestIndex] = true;
-    y += 28;
-  }
 
-  y += 8;
-  display.drawString("Recent misses", 34, y);
-  y += 30;
+    applyCoachContentFont();
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    display.drawString(String(rank + 1) + ". " + stats[weakestIndex].name, 36, y);
+    y += 46;
+    applyCoachMetadataFont();
+    display.setTextColor(metadataTextColor(), TFT_WHITE);
+    display.drawString(String(weakestAccuracy) + "% accuracy, " + static_cast<unsigned>(stats[weakestIndex].total) +
+                           " answered",
+                       58, y);
+    y += 58;
+    pickedStats[weakestIndex] = true;
+    ++shown;
+  }
+  if (shown == 0) {
+    applyCoachContentFont();
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    drawWrappedText("No weak areas yet. Answer more questions to build a useful pattern.", 36, y, display.width() - 72,
+                    coachTypography().bodyLineHeight, 4, "results-no-weak", 1);
+  }
+}
+
+void renderResultsRecentPage() {
+  auto& display = M5.Display;
+  int32_t y = 144;
+  applyCoachContentFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Recent misses", 36, y);
+  y += 54;
+
   uint8_t shownMisses = 0;
   for (size_t offset = 0; offset < gSessionResultCount && shownMisses < 3; ++offset) {
     const size_t index = gSessionResultCount - 1 - offset;
@@ -5915,26 +6002,85 @@ void renderResultsScreen(const char* refreshReason = "mode switch") {
     if (result.correct) {
       continue;
     }
-    String line = String(result.itemId) + " " + result.category + " -> " + static_cast<char>('A' + result.bestOption);
-    drawWrappedText(line, 48, y, display.width() - 96, coachTypography().metadataLineHeight, 1, "recent-miss", 1);
-    y += 28;
+    String line = String(result.itemId) + " · " + result.category + " · best " +
+                  static_cast<char>('A' + result.bestOption);
+    drawWrappedText(line, 42, y, display.width() - 84, coachTypography().metadataLineHeight, 2, "recent-miss", 1);
+    y += 72;
     ++shownMisses;
   }
   if (shownMisses == 0) {
-    display.drawString("No misses in this session.", 48, y);
-    y += 28;
+    applyCoachMetadataFont();
+    display.setTextColor(metadataTextColor(), TFT_WHITE);
+    display.drawString("No misses in this session.", 42, y);
+    y += 58;
   }
 
-  y += 8;
-  display.drawString("Next", 34, y);
-  y += 30;
-  drawWrappedText(recommendedNextPractice(), 48, y, display.width() - 96, coachTypography().metadataLineHeight, 2,
+  applyCoachContentFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Next", 36, y);
+  y += 52;
+  applyCoachMetadataFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  drawWrappedText(recommendedNextPractice(), 42, y, display.width() - 84, coachTypography().metadataLineHeight, 4,
                   "recommendation", 1);
+}
 
-  gHomeButton = {34, display.height() - 110, display.width() - 68, 76};
-  drawButton(gHomeButton, "", IconType::Home);
+void renderResultsScreen(const char* refreshReason = "mode switch") {
+  const bool enteringResults = gScreen != Screen::Results;
+  gScreen = Screen::Results;
+  if (enteringResults) {
+    gResultsPage = 0;
+  }
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachTitleFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Results", 32, 34);
+
+  if (gSessionResultCount == 0) {
+    drawResultsPageLabel("Session summary", 1, 1);
+    applyCoachContentFont();
+    drawWrappedText("No results yet. Answer Drills or Exam questions to build a session summary.", kCoachMargin, 154,
+                    display.width() - kCoachMargin * 2, coachLineHeight(), 5, "results-empty", 1);
+    drawResultsFooter(1);
+    finishDisplayRefresh();
+    Serial.println("Results screen shown: empty state.");
+    return;
+  }
+
+  const uint16_t total = static_cast<uint16_t>(gSessionResultCount);
+  const uint16_t correct = resultCorrectCount();
+  const uint8_t accuracy = resultAccuracyPercent(correct, total);
+  CategoryStat stats[8];
+  const uint8_t statCount = buildCategoryStats(stats, countOf(stats));
+  const uint8_t categoryPages = resultsCategoryPageCount(statCount);
+  const uint8_t pageCount = resultsPageCountFor(statCount);
+  if (gResultsPage >= pageCount) {
+    gResultsPage = pageCount - 1;
+  }
+  gReaderContentRect = {34, 132, display.width() - 68, coachFooterTop() - 132 - 10};
+
+  if (gResultsPage == 0) {
+    drawResultsPageLabel("Summary", gResultsPage + 1, pageCount);
+    renderResultsSummaryPage(total, correct, accuracy);
+  } else if (gResultsPage <= categoryPages) {
+    drawResultsPageLabel("Categories", gResultsPage + 1, pageCount);
+    renderResultsCategoriesPage(stats, statCount, gResultsPage - 1, categoryPages);
+  } else if (gResultsPage == categoryPages + 1) {
+    drawResultsPageLabel("Weakest areas", gResultsPage + 1, pageCount);
+    renderResultsWeakestPage(stats, statCount);
+  } else {
+    drawResultsPageLabel("Recent / next", gResultsPage + 1, pageCount);
+    renderResultsRecentPage();
+  }
+
+  drawResultsFooter(pageCount);
   finishDisplayRefresh();
-  Serial.printf("Results screen shown: total=%u correct=%u accuracy=%u storage=%s\n", total, correct, accuracy,
+  Serial.printf("Results screen shown: total=%u correct=%u accuracy=%u page=%u/%u storage=%s\n", total, correct,
+                accuracy, static_cast<unsigned>(gResultsPage + 1), static_cast<unsigned>(pageCount),
                 gResultsStorageStatus.c_str());
 }
 
@@ -6840,6 +6986,30 @@ void handleTouch() {
     if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
+      return;
+    }
+    const uint8_t pageCount = currentResultsPageCount();
+    if (pageCount > 1 && hitTarget(gFilterButton, "results previous page", tapX, tapY)) {
+      gResultsPage = static_cast<uint8_t>((gResultsPage + pageCount - 1) % pageCount);
+      renderResultsScreen("results previous page");
+      return;
+    }
+    if (pageCount > 1 && hitTarget(gNextButton, "results next page", tapX, tapY)) {
+      gResultsPage = static_cast<uint8_t>((gResultsPage + 1) % pageCount);
+      renderResultsScreen("results next page");
+      return;
+    }
+    if (pageCount > 1 && gReaderContentRect.contains(tapX, tapY)) {
+      if (tapY < gReaderContentRect.y + gReaderContentRect.h / 2) {
+        markHitTarget("results previous page", tapX, tapY);
+        gResultsPage = static_cast<uint8_t>((gResultsPage + pageCount - 1) % pageCount);
+        renderResultsScreen("results previous page");
+      } else {
+        markHitTarget("results next page", tapX, tapY);
+        gResultsPage = static_cast<uint8_t>((gResultsPage + 1) % pageCount);
+        renderResultsScreen("results next page");
+      }
+      return;
     }
     noteIgnoredIfNoHit(tapX, tapY);
     return;
