@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.2";
+constexpr const char* kFirmwareVersion = "v5.3";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -1188,6 +1188,18 @@ const char* chargingStateName(m5::Power_Class::is_charging_t state) {
   }
 }
 
+String sleepAuditStatusLine() {
+  switch (gSettings.badgeSleepMode) {
+    case BadgeSleepMode::Light:
+      return "enabled: light experiment after Badge idle";
+    case BadgeSleepMode::DeepExperiment:
+      return "blocked: deep wake not verified";
+    case BadgeSleepMode::Off:
+    default:
+      return "off: disabled by setting";
+  }
+}
+
 int32_t batteryLevelPercent() {
   const uint32_t now = millis();
   if (gLastPowerPollMs == 0 || now - gLastPowerPollMs >= kPowerPollIntervalMs) {
@@ -1316,6 +1328,7 @@ void logPowerAudit(const char* reason) {
   const int16_t batteryMv = gCachedBatteryMv;
   const int32_t currentMa = gCachedBatteryCurrentMa;
   const int16_t vbusMv = gCachedVbusMv;
+  const String sleepStatus = sleepAuditStatusLine();
   const bool wifiOff = WiFi.getMode() == WIFI_OFF;
   const bool bluetoothStarted = btStarted();
   const bool badgeStatic = gSettings.powerMode == PowerMode::ConferenceBadge ||
@@ -1329,15 +1342,15 @@ void logPowerAudit(const char* reason) {
   Serial.printf(
       "Power audit: reason=%s mode=%s idle=%s batteryMv=%d level=%ld charge=%s currentMa=%ld vbusMv=%d usb=%s "
       "wifi=%s bluetooth=%s imu=disabled speaker=stopped badgeMode=%s badgeLang=%s autoInterval=%s staticBadge=%s "
-      "cpuMhz=%u badgeSleep=%s sleepEnabled=%s lastSleep=\"%s\" lastWake=%s millis=%u redraws=%u refreshes=%u "
+      "cpuMhz=%u badgeSleep=%s sleepStatus=\"%s\" lastSleep=\"%s\" lastWake=%s millis=%u redraws=%u refreshes=%u "
       "badgeRedraws=%u lastRefreshReason=\"%s\" lastInputMs=%u loopDelayMs=%u\n",
       reason && reason[0] != '\0' ? reason : "audit", powerModeName(), gIdleModeActive ? "yes" : "no",
       static_cast<int>(batteryMv), static_cast<long>(level), chargingStateName(gCachedChargingState),
       static_cast<long>(currentMa), static_cast<int>(vbusMv), usbPowerName(vbusMv), wifiOff ? "off" : "on",
       bluetoothStarted ? "on" : "off", languageModeName(), languageName(gBadgeLanguage), autoRotateIntervalName(),
       badgeStatic ? "yes" : "no", static_cast<unsigned>(ESP.getCpuFreqMHz()), badgeSleepModeName(),
-      gSettings.badgeSleepMode == BadgeSleepMode::Off ? "no" : "yes", gLastSleepAttempt.c_str(),
-      gLastWakeReason.c_str(), static_cast<unsigned>(millis()), static_cast<unsigned>(gDisplayRefreshCount),
+      sleepStatus.c_str(), gLastSleepAttempt.c_str(), gLastWakeReason.c_str(), static_cast<unsigned>(millis()),
+      static_cast<unsigned>(gDisplayRefreshCount),
       static_cast<unsigned>(gDisplayRefreshCount), static_cast<unsigned>(gBadgeRedrawCount),
       gLastRefreshReason.c_str(), static_cast<unsigned>(gLastUserActivityMs), static_cast<unsigned>(activeLoopDelayMs));
 }
@@ -2538,8 +2551,10 @@ void prepareFullRefresh(const char* reason = nullptr, bool highQuality = false) 
   if (gScreen == gLastRenderedScreen && renderReason == gLastRenderedReason) {
     ++gRepeatedRenderCount;
     if (gRepeatedRenderCount >= 3) {
-      Serial.printf("Power redraw warning: repeated render screen=%s reason=%s count=%u no state change detected\n",
-                    screenName(gScreen), renderReason.c_str(), static_cast<unsigned>(gRepeatedRenderCount));
+      Serial.printf("Power redraw warning: repeated render screen=%s reason=%s count=%u refreshes=%u lastInputMs=%u "
+                    "no state change detected\n",
+                    screenName(gScreen), renderReason.c_str(), static_cast<unsigned>(gRepeatedRenderCount),
+                    static_cast<unsigned>(gDisplayRefreshCount), static_cast<unsigned>(gLastUserActivityMs));
     }
   } else {
     gLastRenderedScreen = gScreen;
@@ -6281,10 +6296,11 @@ void renderPowerAudit(const char* refreshReason = "mode switch") {
 
   applyCoachMetadataFont();
   int32_t y = 82;
-  const int32_t lineH = coachTypography().metadataLineHeight + 2;
+  const int32_t lineH = coachTypography().metadataLineHeight;
   auto row = [&](const String& text) {
-    display.drawString(text, 28, y);
-    y += lineH;
+    TextLayoutResult result =
+        drawWrappedText(text, 28, y, display.width() - 56, lineH, 2, "power-audit-row", 1);
+    y += result.height + 6;
   };
 
   row(String("Battery: ") + gCachedBatteryMv + "mV  " + level + "%");
@@ -6295,18 +6311,16 @@ void renderPowerAudit(const char* refreshReason = "mode switch") {
   row(String("CPU: ") + static_cast<unsigned>(ESP.getCpuFreqMHz()) + " MHz");
   row(String("Power mode: ") + powerModeName());
   row(String("Badge sleep: ") + badgeSleepModeName());
-  row(String("Sleep enabled: ") + (gSettings.badgeSleepMode == BadgeSleepMode::Off ? "no" : "yes"));
+  row(String("Sleep: ") + sleepAuditStatusLine());
   row(String("Last sleep: ") + gLastSleepAttempt);
   row(String("Wake reason: ") + gLastWakeReason);
   row(String("Millis since boot: ") + static_cast<unsigned>(millis()));
+  row(String("Redraw count: ") + static_cast<unsigned>(gDisplayRefreshCount));
   row(String("Refresh count: ") + static_cast<unsigned>(gDisplayRefreshCount));
-  row(String("Badge redraws: ") + static_cast<unsigned>(gBadgeRedrawCount));
+  row(String("Badge redraw count: ") + static_cast<unsigned>(gBadgeRedrawCount));
   row(String("Last refresh: ") + gLastRefreshReason);
-  row(String("Last input ms: ") + static_cast<unsigned>(gLastUserActivityMs));
+  row(String("Last input: ") + static_cast<unsigned>(gLastUserActivityMs) + " ms");
   row(String("Power poll age ms: ") + static_cast<unsigned>(millis() - gLastPowerPollMs));
-  if (gSettings.badgeSleepMode == BadgeSleepMode::DeepExperiment) {
-    row("Deep sleep: blocked until touch wake verified");
-  }
 
   gHomeButton = {26, display.height() - 94, display.width() - 52, 58};
   drawButton(gHomeButton, "Home");
