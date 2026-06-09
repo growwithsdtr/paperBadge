@@ -1,5 +1,7 @@
 # Content Schema
 
+PaperCoach is a generic offline learning engine. The current embedded deck is interview-focused, but the same schema shape is intended to support future grammar, vocabulary, kanji, certification, or other drill decks.
+
 ## SD Override Paths
 
 - Cards: `/papercoach/decks/interview_cards.json`
@@ -70,6 +72,8 @@ Supported drill types:
 
 Current limitation: per-option explanations are not embedded yet. Firmware shows a clean placeholder and logs the missing detail.
 
+For future language-learning decks, MCQ options can be short answers, readings, meanings, grammar choices, or example-sentence completions. UI labels should remain generic; deck categories provide the subject-specific meaning.
+
 ## Glossary Schema
 
 ```json
@@ -94,6 +98,8 @@ Supported categories:
 - `Metrics`
 - `Product`
 - `Interview`
+
+Future SD glossary categories may be deck-specific. Firmware currently has a fixed category grid for the embedded PaperCoach set, so new category grids require a firmware-side mapping update.
 
 ## Results Schema
 

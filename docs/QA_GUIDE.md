@@ -10,6 +10,14 @@
 
 ## Physical QA After Each Firmware Update
 
+- Use these settings unless the test says otherwise:
+  - Reader M
+  - High Contrast
+  - Balanced refresh
+  - Battery Saver
+  - Badge language Manual toggle
+  - Auto interval Off
+
 - Badge English render.
 - Badge Japanese render.
 - Home/Menu, confirming no subtitle under PaperBadge.
@@ -32,11 +40,18 @@
 
 ## Photo Batches
 
-- Batch 1: Badge, Home, Settings, Debug Power Audit.
-- Batch 2: Practice entry, Question, Answer, Anchor/Watch-out.
-- Batch 3: Drills question/options, split options if visible, feedback.
-- Batch 4: Exam entry, one exam question, exam summary.
-- Batch 5: Glossary grid, one term page, Results page.
+Maximum 10 photos after v5.3/v5.4:
+
+1. Static Badge.
+2. Home menu.
+3. Settings with QA settings visible.
+4. Practice entry screen.
+5. Practice large Answer page.
+6. Drill question/options at Reader M.
+7. Drill feedback page.
+8. Glossary term page with Definition / Why it matters / Example.
+9. Results Summary or Categories page after at least one answer.
+10. Debug Power Audit.
 
 ## Render Trace
 
@@ -71,3 +86,11 @@ docs/embedded_deck_dump.md
 - Text wrapping inside buttons at Reader L.
 - Small icon strokes fading after partial refresh.
 - Repeated redraws of static Badge mode wasting battery.
+
+## Current UX Decisions To Verify
+
+- Buttons should be outlined by default, not large black-filled blocks.
+- Header text should be readable or absent; tiny metadata should not become visual noise.
+- Drill and Exam questions should use the same readable question/option layout.
+- Results should paginate rather than shrink everything onto one screen.
+- Badge mode should not redraw or rotate language when Manual toggle and Auto interval Off are selected.

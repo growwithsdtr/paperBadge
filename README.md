@@ -6,9 +6,11 @@ The firmware is intentionally simple and compile-checked in milestones. It does 
 
 ## Current Overview
 
-PaperBadge is also PaperCoach: an offline e-ink interview preparation device for senior AI/Product Manager practice. It boots into a static conference badge and exposes a normal-orientation Home menu with Badge, Practice, Drills, Exam, Glossary, Results, Settings, and Debug.
+PaperBadge is also PaperCoach: a generic offline e-ink learning engine. The current embedded deck is senior AI/Product Manager interview content, but the UI, navigation, glossary, drills, exam, and results model are intended to work later with other offline decks such as Japanese grammar, vocabulary, or kanji drills.
 
-Current firmware version in source: `v4.7`.
+It boots into a static conference badge and exposes a normal-orientation Home menu with Badge, Practice, Drills, Exam, Glossary, Results, Settings, and Debug.
+
+Current firmware version in source: `v5.4`.
 
 ## Quick Commands
 
@@ -34,11 +36,20 @@ Default upload and monitor port: `/dev/tty.usbmodem1101`.
 ## PaperCoach Modes
 
 - Practice: choose Must cards, All cards, Continue last card, or Help/Legend; read cards with content taps for page turns and footer arrows for previous/next card.
-- Drills: answer MCQ-style weak answer, metric precision, framework, and follow-up drills; question and choices render together when they fit.
+- Drills: answer MCQ-style drill items; question and choices render together when they fit, and split choice pages repeat question context.
 - Exam: run a 5- or 10-question mixed exam with no immediate feedback; summary appears at the end.
 - Glossary: category grid for AI/RAG, Evals, Metrics, Product, and Interview terms.
-- Results: session total, accuracy, category bars, weakest areas, recent misses, and recommended next practice.
+- Results: paginated e-ink summary, category bars, weakest areas, recent misses, and recommended next practice.
 - Debug: render trace export, deck export, visual QA, font lab, and power audit.
+
+## Current UX Decisions
+
+- Outlined buttons are preferred over black-filled buttons because large black fills ghost on e-ink.
+- Reader M is the recommended default for QA.
+- High Contrast is the recommended default text style.
+- Balanced refresh is the recommended default: clean refresh for major transitions/feedback/badge, faster refresh for ordinary page turns.
+- Badge language should use Manual toggle during QA; Auto interval should stay Off unless explicitly testing auto-rotate.
+- Deep sleep is not enabled by default because PaperS3 touch wake is not physically verified.
 
 ## Badge And Power Behavior
 
@@ -58,6 +69,7 @@ Badge mode is static by default and uses e-ink as intended: render once, hold th
 - [QA Guide](docs/QA_GUIDE.md)
 - [Content Schema](docs/CONTENT_SCHEMA.md)
 - [Power Notes](docs/POWER_NOTES.md)
+- [Asset Notes](docs/ASSET_NOTES.md)
 
 ## Version Status
 
@@ -175,7 +187,7 @@ v3.1 keeps that shared template but renders only three text lines on the public 
 
 Current selected repo assets:
 
-- Full badge: `sample-data/paperbadge/completeBadge.png`
+- Reference-only full badge: `docs/assets/reference/completeBadge.png`
 - Generated English badge: `generated-assets/embedded/badge_en.png` at `540x960`
 - Generated Japanese badge: `generated-assets/embedded/badge_ja.png` at `540x960`
 - Profile photo: `sample-data/paperbadge/profilePhoto.png`
@@ -247,7 +259,7 @@ v2.2 Home/Menu entries:
 - Settings
 - Debug
 
-Practice uses the real embedded or SD interview deck and supports page-based study. Drills contains All Drills, Weak Answer, Metric Precision, Follow-up Defense, Framework Choice, and Maturity Claim categories. Exam is a placeholder for a future 10-question readiness test. Results is a placeholder and shows no session results yet. There is no progress writing, spaced repetition, RTC scheduling, Wi-Fi, Bluetooth, or AI/API call behavior.
+Practice uses the embedded or SD deck and supports page-based study. Drills contains All Drills plus current deck-specific categories. Exam runs 5- or 10-question mixed sessions without immediate feedback. Results shows RAM/SD-backed session analytics. There is no spaced repetition, RTC scheduling, Wi-Fi, Bluetooth, or AI/API call behavior.
 
 ## Visual QA
 
@@ -358,7 +370,7 @@ Supported item types:
 - `hostile_followup`
 - `metric_precision`
 
-PaperCoach modes use normal handheld orientation. Screens are page-based with large touch targets: bottom-left Home returns to Home/Menu, bottom-right Next advances to the next item, and tapping the page reveals the next read-only answer/rubric stage. MCQ screens reveal the explanation after an option tap.
+PaperCoach modes use normal handheld orientation. Screens are page-based with large touch targets. Practice uses content taps for within-card pages and footer arrows for previous/next card. Drills and Exam try to keep question plus choices together; split choice pages repeat a compact question reminder. Drill feedback appears after option selection; Exam suppresses immediate feedback until the end summary.
 
 ## SD Asset Preparation
 

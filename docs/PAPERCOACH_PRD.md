@@ -2,11 +2,15 @@
 
 ## Product Goal
 
-PaperCoach turns PaperBadge into a focused, offline e-ink interview preparation device for senior AI/Product Manager interviews. It should make prepared answers easier to rehearse, expose weak areas through drills and exams, and keep the experience readable, low-distraction, low-ghosting, and low-power.
+PaperCoach turns PaperBadge into a focused, offline e-ink learning engine. The current embedded content is senior AI/Product Manager interview preparation, but the product should also support future decks such as Japanese grammar, vocabulary, kanji, certification drills, or other compact study sets.
+
+It should make prepared cards easier to rehearse, expose weak areas through drills and exams, and keep the experience readable, low-distraction, low-ghosting, and low-power.
 
 ## Target User
 
-Primary user: Daniel, preparing for senior AI/Product Manager interviews, especially roles involving AI product strategy, RAG, evaluation, metrics, and executive communication.
+Primary current user: Daniel, preparing for senior AI/Product Manager interviews, especially roles involving AI product strategy, RAG, evaluation, metrics, and executive communication.
+
+Future user shape: a learner using offline deck content where items can be practiced, drilled, tested, reviewed, and explained without network access.
 
 ## Use Cases
 
@@ -16,6 +20,7 @@ Primary user: Daniel, preparing for senior AI/Product Manager interviews, especi
 - See session results, weak areas, recent misses, and next-practice recommendations.
 - Check AI/PM/interview glossary terms offline.
 - Use static badge mode at conferences without periodic redraws or radios.
+- Reuse the same Practice/Drills/Exam/Glossary/Results shell for non-interview decks.
 
 ## Design Principles
 
@@ -24,6 +29,16 @@ Primary user: Daniel, preparing for senior AI/Product Manager interviews, especi
 - Readable under pressure: compact headers, high contrast, stable footer controls, and no decorative clutter.
 - Clear navigation model: content taps page within the current item; footer arrows move between items.
 - Safe power behavior: no Wi-Fi, Bluetooth, cloud, audio, or LLM calls; deep sleep remains experimental until wake behavior is physically verified.
+- Generic learning language: chrome should say Practice, Drills, Exam, Glossary, Results, Category, Question, Answer, Explanation, and Weak areas rather than hardcoding interview labels.
+
+## Current UX Decisions
+
+- Outlined buttons are preferred over black-filled buttons because large black regions ghost heavily on e-ink.
+- Reader M is the recommended QA size; Reader L can be useful for short Practice cards but may reduce fit.
+- High Contrast is the recommended default style.
+- Balanced refresh is the recommended default: clean refresh for major transitions, feedback, badge, and image zoom; faster refresh for ordinary page turns.
+- Deep sleep is not automatic until PaperS3 wake behavior is physically verified.
+- Results are paginated instead of compressed into a tiny dashboard.
 
 ## Mode Definitions
 

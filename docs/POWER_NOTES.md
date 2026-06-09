@@ -4,6 +4,15 @@
 
 PaperBadge/PaperCoach uses e-ink as a static display whenever possible. Badge mode renders once and holds the image without periodic refresh. Coach modes redraw only on explicit navigation or mode changes.
 
+## Current UX Decisions
+
+- Use outlined controls instead of large black-filled buttons to reduce ghosting.
+- Use Reader M, High Contrast, and Balanced refresh as the default QA baseline.
+- Force clean refreshes for major transitions, feedback, badge, and QR/photo zoom.
+- Do not force clean refreshes for every ordinary page turn.
+- Keep Badge language on Manual toggle and Auto interval Off for static conference use.
+- Do not enable deep sleep by default until PaperS3 wake behavior is physically verified.
+
 ## Implemented
 
 - Wi-Fi is disconnected and set to `WIFI_OFF`.
@@ -14,6 +23,7 @@ PaperBadge/PaperCoach uses e-ink as a static display whenever possible. Badge mo
 - Battery, charge, and VBUS reads are cached for 45 seconds.
 - Render code logs repeated same-screen redraw warnings.
 - Debug -> Power Audit shows voltage, percent, USB/VBUS, charge state, Wi-Fi, Bluetooth, IMU, speaker, CPU frequency, power mode, Badge sleep setting, last sleep attempt, wake reason, boot millis, refresh count, badge redraw count, last refresh reason, and last input time.
+- Power Audit reports sleep as off, light experiment enabled, or deep blocked.
 - Badge sleep setting supports Off, Light, and Deep experiment.
 
 ## Badge Sleep
