@@ -13,6 +13,7 @@ SOURCE_PATH = REPO_ROOT / "generated" / "papercoach" / "interview_cards.json"
 DRILLS_PATH = REPO_ROOT / "generated" / "papercoach" / "drills.json"
 GLOSSARY_PATH = REPO_ROOT / "generated" / "papercoach" / "glossary.json"
 HEADER_PATH = REPO_ROOT / "src" / "embedded_papercoach_deck.h"
+MAX_EMBEDDED_OPTIONS = 4
 
 
 def raw_string(text: Any) -> str:
@@ -22,6 +23,36 @@ def raw_string(text: Any) -> str:
         if f"){delim}\"" not in value:
             return f'R"{delim}({value}){delim}"'
     return json.dumps(value, ensure_ascii=False)
+
+
+def embedded_options_for(drill: dict[str, Any]) -> tuple[list[str], int, bool]:
+    """Limit options while keeping the correct answer addressable."""
+    source_options = list(drill.get("options", []))
+    if not source_options:
+        return [], 0, False
+
+    source_correct = int(drill.get("correct_index", 0))
+    if source_correct < 0 or source_correct >= len(source_options):
+        return source_options[:MAX_EMBEDDED_OPTIONS], source_correct, False
+
+    if len(source_options) <= MAX_EMBEDDED_OPTIONS:
+        return source_options, source_correct, False
+
+    keep_indices: list[int] = []
+    for index in range(len(source_options)):
+        if index == source_correct:
+            continue
+        keep_indices.append(index)
+        if len(keep_indices) >= MAX_EMBEDDED_OPTIONS - 1:
+            break
+
+    if source_correct not in keep_indices:
+        keep_indices.append(source_correct)
+    keep_indices = sorted(keep_indices)
+
+    selected_options = [source_options[index] for index in keep_indices]
+    remapped_correct = keep_indices.index(source_correct)
+    return selected_options, remapped_correct, True
 
 
 def main() -> None:
@@ -120,9 +151,19 @@ def main() -> None:
         ]
     )
 
+    remapped_drills: list[tuple[str, int, int, int, int]] = []
+    invalid_source_keys: list[tuple[str, int, int]] = []
+
     for drill in drills:
-        options = list(drill.get("options", []))[:4]
-        while len(options) < 4:
+        source_options = list(drill.get("options", []))
+        source_correct = int(drill.get("correct_index", 0))
+        options, correct_index, remapped = embedded_options_for(drill)
+        option_count = len(options)
+        if option_count > 0 and (correct_index < 0 or correct_index >= option_count):
+            invalid_source_keys.append((str(drill.get("id", "")), option_count, correct_index))
+        if remapped:
+            remapped_drills.append((str(drill.get("id", "")), len(source_options), source_correct, option_count, correct_index))
+        while len(options) < MAX_EMBEDDED_OPTIONS:
             options.append("")
         lines.extend(
             [
@@ -137,8 +178,8 @@ def main() -> None:
                 f"      {raw_string(options[2])},",
                 f"      {raw_string(options[3])},",
                 "    },",
-                f"    {len([option for option in options if option])},",
-                f"    {int(drill.get('correct_index', 0))},",
+                f"    {option_count},",
+                f"    {correct_index},",
                 f"    {raw_string(drill.get('explanation'))},",
                 "  },",
             ]
@@ -178,6 +219,17 @@ def main() -> None:
     print(f"Embedded PaperCoach cards: {len(cards)}")
     print(f"Must-master cards: {payload.get('must_master_count', 0)}")
     print(f"Embedded PaperCoach drills: {len(drills)}")
+    print(f"Drill option remaps: {len(remapped_drills)}")
+    for drill_id, original_count, original_correct, embedded_count, embedded_correct in remapped_drills:
+        print(
+            "  remapped "
+            f"{drill_id}: original options={original_count} correct={original_correct} "
+            f"embedded options={embedded_count} correct={embedded_correct}"
+        )
+    if invalid_source_keys:
+        print(f"Invalid source drill keys after remap: {len(invalid_source_keys)}")
+        for drill_id, option_count, correct_index in invalid_source_keys:
+            print(f"  invalid {drill_id}: optionCount={option_count} correctIndex={correct_index}")
     print(f"Embedded PaperCoach glossary terms: {len(glossary)}")
     print(f"Source JSON bytes: {SOURCE_PATH.stat().st_size}")
     print(f"Drills JSON bytes: {DRILLS_PATH.stat().st_size}")

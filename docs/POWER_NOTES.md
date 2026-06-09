@@ -7,7 +7,7 @@ PaperBadge/PaperCoach uses e-ink as a static display whenever possible. Badge mo
 ## Current UX Decisions
 
 - Use outlined controls instead of large black-filled buttons to reduce ghosting.
-- Use Reader M, High Contrast, and Balanced refresh as the default QA baseline.
+- Use Reader M, Sans Bold-like or High Contrast, and Balanced refresh as the default QA baseline.
 - Force clean refreshes for major transitions, feedback, badge, and QR/photo zoom.
 - Do not force clean refreshes for every ordinary page turn.
 - Keep Badge language on Manual toggle and Auto interval Off for static conference use.
@@ -23,7 +23,8 @@ PaperBadge/PaperCoach uses e-ink as a static display whenever possible. Badge mo
 - Battery, charge, and VBUS reads are cached for 45 seconds.
 - Render code logs repeated same-screen redraw warnings.
 - Static Practice reading, Glossary term, Results, Settings, and Debug-family screens can enter a logged light idle state after about 90 seconds of inactivity. This slows the loop but keeps touch polling active.
-- Debug -> Power Audit shows voltage, percent, USB/VBUS, charge state, Wi-Fi, Bluetooth, IMU, speaker, SD status, refresh mode, idle status, CPU frequency, power mode, sleep mode/status, last sleep attempt, wake reason, boot millis, refresh count, badge redraw count, last refresh reason, and last input time.
+- Guarded idle CPU scaling can lower static idle screens to 80 MHz and restores 240 MHz on user activity, display refresh, SD writes, and debug/export work.
+- Debug -> Power Audit shows voltage, percent, USB/VBUS, charge state, Wi-Fi, Bluetooth, IMU, speaker, SD status, refresh mode, idle status, CPU frequency, whether idle CPU scaling is active, power mode, sleep mode/status, last sleep attempt, wake reason, boot millis, refresh count, badge redraw count, last refresh reason, answer-key validation status, and last input time.
 - Power Audit reports sleep as off, light experiment enabled, or deep blocked.
 - Badge sleep setting supports Off, Light, and Deep experiment.
 

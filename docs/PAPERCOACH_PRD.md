@@ -36,9 +36,10 @@ Future user shape: a learner using offline deck content where items can be pract
 
 - Outlined buttons are preferred over black-filled buttons because large black regions ghost heavily on e-ink.
 - Reader M is the recommended QA size; Reader L can be useful for short Practice cards but may reduce fit.
-- High Contrast is the recommended default style.
+- Sans Bold-like is the recommended English default style; High Contrast remains available for maximum density/contrast. Both use the same FreeSansBold bucket, with visual differences coming from density/layout rather than a separate font engine.
 - Balanced refresh is the recommended default: clean refresh for major transitions, feedback, badge, and image zoom; faster refresh for ordinary page turns.
 - Deep sleep is not automatic until PaperS3 wake behavior is physically verified.
+- Japanese live rendering is deferred to a future N3 architecture pass.
 - Results are paginated instead of compressed into a tiny dashboard.
 
 ## Mode Definitions

@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.5";
+constexpr const char* kFirmwareVersion = "v5.6";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -37,6 +37,9 @@ constexpr uint32_t kConferenceBadgeIdleMs = 30000;
 constexpr uint32_t kStaticScreenIdleMs = 90000;
 constexpr uint32_t kBadgeLightSleepIdleMs = 30000;
 constexpr uint32_t kBadgeLightSleepDurationUs = 2000000;
+constexpr bool kEnableIdleCpuScaling = true;
+constexpr uint32_t kActiveCpuMhz = 240;
+constexpr uint32_t kIdleCpuMhz = 80;
 constexpr uint32_t kPowerPollIntervalMs = 45000;
 constexpr uint32_t kPostTouchIdleGuardMs = 5000;
 constexpr uint32_t kHardCleanTransitionLimit = 14;
@@ -328,7 +331,9 @@ struct PracticeLayout {
   int32_t footerY = 878;
   int32_t buttonH = 58;
   int32_t lineHeight = 44;
+  int32_t questionLineHeight = 48;
   uint8_t linesPerPage = 12;
+  uint8_t questionLinesPerPage = 11;
   FontSizeMode renderSize = FontSizeMode::Large;
   bool autoFit = false;
 };
@@ -454,6 +459,8 @@ struct GlossaryRenderLine {
 uint8_t interviewStageCount(const CoachItemView& item);
 PracticeLayout practiceLayoutFor(FontSizeMode renderSize);
 uint8_t glossaryPageCountFor(const CoachItemView& item, const PracticeLayout& layout);
+uint8_t paginateGlossaryLines(const std::vector<GlossaryRenderLine>& lines, const PracticeLayout& layout,
+                              uint16_t* pageStarts, uint8_t maxPages);
 
 BadgeConfig gBadgeConfig;
 Settings gSettings;
@@ -613,6 +620,9 @@ String gLastSleepAttempt = "none";
 String gLastWakeReason = "not sleep";
 uint32_t gLastSleepAttemptMs = 0;
 uint32_t gLastLightSleepMs = 0;
+bool gIdleCpuScaled = false;
+uint32_t gInvalidAnswerKeyCount = 0;
+String gLastAnswerKeyWarning = "none";
 Screen gLastRenderedScreen = Screen::Badge;
 String gLastRenderedReason = "";
 uint8_t gRepeatedRenderCount = 0;
@@ -628,15 +638,21 @@ void applyPowerPolicy(const char* reason);
 void recordUserActivity(const char* reason);
 void maybeEnterPowerIdle();
 uint32_t loopDelayMs();
+void validateCoachAnswerKeys(const char* source);
 void applyCoachButtonFont();
+void applyCoachQuestionFont();
 CoachTypography coachTypography();
 const char* coachDisplayId(const CoachItemView& item);
+bool itemUsesAnswerKey(const CoachItemView& item);
+bool hasValidAnswerKey(const CoachItemView& item);
+void logInvalidAnswerKey(const CoachItemView& item, const char* context);
 TextLayoutResult wrapTextToLines(const String& text, int32_t width, int32_t lineHeight, uint8_t maxLines,
                                  String* lines);
 void logLayoutBox(const char* field, const Rect& box, int32_t usedHeight, uint8_t pageCount, bool overflow);
 int32_t coachFooterTop();
 void logCurrentLayoutDiagnostics(const char* reason);
 void dumpCurrentRenderTraceToSd();
+void restoreActiveCpu(const char* reason);
 
 struct EmbeddedCoachItem {
   CoachItemType type;
@@ -1129,6 +1145,18 @@ const char* powerModeName() {
   }
 }
 
+const char* powerModeButtonLabel() {
+  switch (gSettings.powerMode) {
+    case PowerMode::BatterySaver:
+      return "Battery Saver";
+    case PowerMode::ConferenceBadge:
+      return "Conf. Badge";
+    case PowerMode::Normal:
+    default:
+      return "Normal";
+  }
+}
+
 const char* badgeSleepModeName() {
   switch (gSettings.badgeSleepMode) {
     case BadgeSleepMode::Light:
@@ -1285,6 +1313,27 @@ String idleAuditStatusLine() {
   return status;
 }
 
+void restoreActiveCpu(const char* reason) {
+  if (!gIdleCpuScaled) {
+    return;
+  }
+  setCpuFrequencyMhz(kActiveCpuMhz);
+  gIdleCpuScaled = false;
+  Serial.printf("Power CPU scale: active %uMHz reason=%s\n", static_cast<unsigned>(ESP.getCpuFreqMHz()),
+                reason && reason[0] != '\0' ? reason : "active");
+}
+
+void maybeScaleIdleCpu(const char* reason) {
+  if (!kEnableIdleCpuScaling || gIdleCpuScaled || !isStaticIdleScreen(gScreen)) {
+    return;
+  }
+  setCpuFrequencyMhz(kIdleCpuMhz);
+  gIdleCpuScaled = ESP.getCpuFreqMHz() <= kIdleCpuMhz;
+  Serial.printf("Power CPU scale: idle requested=%uMHz actual=%uMHz reason=%s active=%s\n",
+                static_cast<unsigned>(kIdleCpuMhz), static_cast<unsigned>(ESP.getCpuFreqMHz()),
+                reason && reason[0] != '\0' ? reason : "idle", gIdleCpuScaled ? "yes" : "no");
+}
+
 String chargeStatusLine() {
   batteryLevelPercent();
   String status = "charge: ";
@@ -1370,7 +1419,7 @@ void logPowerAudit(const char* reason) {
   Serial.printf(
       "Power audit: reason=%s mode=%s idle=%s batteryMv=%d level=%ld charge=%s currentMa=%ld vbusMv=%d usb=%s "
       "wifi=%s bluetooth=%s imu=disabled speaker=stopped sd=%s refreshMode=%s idleStatus=\"%s\" badgeMode=%s "
-      "badgeLang=%s autoInterval=%s staticBadge=%s cpuMhz=%u badgeSleep=%s sleepStatus=\"%s\" lastSleep=\"%s\" "
+      "badgeLang=%s autoInterval=%s staticBadge=%s cpuMhz=%u idleCpuScaled=%s badgeSleep=%s sleepStatus=\"%s\" lastSleep=\"%s\" "
       "lastWake=%s millis=%u redraws=%u refreshes=%u badgeRedraws=%u lastRefreshReason=\"%s\" lastInputMs=%u "
       "loopDelayMs=%u\n",
       reason && reason[0] != '\0' ? reason : "audit", powerModeName(), gIdleModeActive ? "yes" : "no",
@@ -1378,7 +1427,8 @@ void logPowerAudit(const char* reason) {
       static_cast<long>(currentMa), static_cast<int>(vbusMv), usbPowerName(vbusMv), wifiOff ? "off" : "on",
       bluetoothStarted ? "on" : "off", gSdMounted ? "mounted" : "missing", refreshModeName(),
       idleAuditStatusLine().c_str(), languageModeName(), languageName(gBadgeLanguage), autoRotateIntervalName(),
-      badgeStatic ? "yes" : "no", static_cast<unsigned>(ESP.getCpuFreqMHz()), badgeSleepModeName(),
+      badgeStatic ? "yes" : "no", static_cast<unsigned>(ESP.getCpuFreqMHz()), gIdleCpuScaled ? "yes" : "no",
+      badgeSleepModeName(),
       sleepStatus.c_str(), gLastSleepAttempt.c_str(), gLastWakeReason.c_str(), static_cast<unsigned>(millis()),
       static_cast<unsigned>(gDisplayRefreshCount),
       static_cast<unsigned>(gDisplayRefreshCount), static_cast<unsigned>(gBadgeRedrawCount),
@@ -1410,6 +1460,7 @@ void disableUnusedRadiosAndPeripherals(const char* reason) {
 }
 
 void applyPowerPolicy(const char* reason) {
+  restoreActiveCpu(reason);
   disableUnusedRadiosAndPeripherals(reason);
   if (gSettings.powerMode == PowerMode::Normal && gIdleModeActive) {
     gIdleModeActive = false;
@@ -1422,6 +1473,7 @@ void applyPowerPolicy(const char* reason) {
 }
 
 void recordUserActivity(const char* reason) {
+  restoreActiveCpu(reason);
   gLastUserActivityMs = millis();
   if (gIdleModeActive) {
     gIdleModeActive = false;
@@ -1439,6 +1491,7 @@ void enterIdleMode(const char* reason) {
   disableUnusedRadiosAndPeripherals(reason);
   Serial.printf("Power idle entry: mode=%s reason=%s count=%u sleep=deferred\n", powerModeName(),
                 reason && reason[0] != '\0' ? reason : "inactivity", static_cast<unsigned>(gIdleEntryCount));
+  maybeScaleIdleCpu(reason);
   logPowerAudit(reason);
 }
 
@@ -2179,6 +2232,7 @@ void loadCoachDeck() {
     loadEmbeddedCoachDeck();
   }
   loadGlossaryFromSd();
+  validateCoachAnswerKeys(gCoachDeckLoadedFromSd ? "SD" : "embedded");
 }
 
 CoachItemView coachItemAt(size_t index) {
@@ -2306,6 +2360,9 @@ bool itemMatchesScreen(const CoachItemView& item, Screen screen) {
     return item.type == CoachItemType::Qa;
   }
   if (screen == Screen::Drills) {
+    if (itemUsesAnswerKey(item) && !hasValidAnswerKey(item)) {
+      return false;
+    }
     if (gDrillCategory == DrillCategory::All) {
       return item.type == CoachItemType::Mcq || item.type == CoachItemType::WeakAnswer ||
              item.type == CoachItemType::MetricPrecision || item.type == CoachItemType::HostileFollowup;
@@ -2330,13 +2387,13 @@ bool itemMatchesScreen(const CoachItemView& item, Screen screen) {
     return false;
   }
   if (screen == Screen::BlitzQuiz) {
-    return item.type == CoachItemType::Mcq && item.optionCount > 0;
+    return item.type == CoachItemType::Mcq && hasValidAnswerKey(item);
   }
   if (screen == Screen::WeakAnswerDetector) {
-    return item.type == CoachItemType::WeakAnswer;
+    return item.type == CoachItemType::WeakAnswer && hasValidAnswerKey(item);
   }
   if (screen == Screen::MetricPrecision) {
-    return item.type == CoachItemType::MetricPrecision;
+    return item.type == CoachItemType::MetricPrecision && hasValidAnswerKey(item);
   }
   if (screen == Screen::HostileFollowup) {
     return item.type == CoachItemType::HostileFollowup;
@@ -2349,6 +2406,23 @@ bool itemMatchesScreen(const CoachItemView& item, Screen screen) {
            item.type == CoachItemType::MetricPrecision;
   }
   return false;
+}
+
+void validateCoachAnswerKeys(const char* source) {
+  uint32_t invalid = 0;
+  for (size_t index = 0; index < gCoachItemCount; ++index) {
+    const CoachItemView item = coachItemAt(index);
+    if (!itemUsesAnswerKey(item)) {
+      continue;
+    }
+    if (!hasValidAnswerKey(item)) {
+      ++invalid;
+      logInvalidAnswerKey(item, source);
+    }
+  }
+  Serial.printf("Answer key validation: source=%s invalid=%u totalWarnings=%u\n",
+                source && source[0] != '\0' ? source : "deck", static_cast<unsigned>(invalid),
+                static_cast<unsigned>(gInvalidAnswerKeyCount));
 }
 
 size_t findCoachItem(Screen screen, size_t startIndex) {
@@ -2579,6 +2653,7 @@ void updateInputLock() {
 }
 
 void prepareFullRefresh(const char* reason = nullptr, bool highQuality = false) {
+  restoreActiveCpu(reason && reason[0] != '\0' ? reason : "display refresh");
   auto& display = M5.Display;
   if (reason && reason[0] != '\0') {
     Serial.printf("Refresh requested: %s\n", reason);
@@ -3122,6 +3197,12 @@ void applyCoachContentFont() {
   applyTypographyFont(coachTypography().bodyPx);
 }
 
+void applyCoachQuestionFont() {
+  const CoachTypography type = coachTypography();
+  const uint8_t questionPx = type.bodyPx >= 34 ? type.bodyPx : static_cast<uint8_t>(type.bodyPx + 4);
+  applyTypographyFont(questionPx > 36 ? 36 : questionPx);
+}
+
 void applyCoachButtonFont() {
   applyTypographyFont(coachTypography().buttonPx);
 }
@@ -3644,8 +3725,8 @@ TextLayoutResult drawWrappedText(const String& text, int32_t x, int32_t y, int32
   return result;
 }
 
-void appendReaderLine(std::vector<String>& lines, const String& line) {
-  if (line.length() > 0) {
+void appendReaderLine(std::vector<String>& lines, const String& line, bool allowEmpty = false) {
+  if (line.length() > 0 || allowEmpty) {
     lines.push_back(line);
   }
 }
@@ -3653,7 +3734,7 @@ void appendReaderLine(std::vector<String>& lines, const String& line) {
 void appendReaderWrappedWord(std::vector<String>& lines, const String& word, int32_t width) {
   auto& display = M5.Display;
   if (display.textWidth(word) <= width) {
-    appendReaderLine(lines, word);
+      appendReaderLine(lines, word);
     return;
   }
 
@@ -3666,7 +3747,7 @@ void appendReaderWrappedWord(std::vector<String>& lines, const String& word, int
     if (end > start + 1) {
       --end;
     }
-    appendReaderLine(lines, word.substring(start, end));
+      appendReaderLine(lines, word.substring(start, end));
     start = end;
   }
 }
@@ -3708,7 +3789,7 @@ void wrapSanitizedReaderTextToLines(const String& text, int32_t width, std::vect
     }
 
     if (ch == '\n') {
-      appendReaderLine(lines, line);
+      appendReaderLine(lines, line, true);
       line = "";
     }
   }
@@ -3867,6 +3948,7 @@ void recordRenderTrace(const CoachItemView& item, const char* stageName, const S
   if (!gSdMounted) {
     return;
   }
+  restoreActiveCpu("render trace append");
   SD.mkdir("/papercoach");
   SD.mkdir("/papercoach/debug");
   File file = SD.open(kRenderTracePath, FILE_APPEND);
@@ -3882,6 +3964,7 @@ void recordRenderTrace(const CoachItemView& item, const char* stageName, const S
 }
 
 void dumpCurrentRenderTraceToSd() {
+  restoreActiveCpu("render trace dump");
   if (gLastRenderTrace.length() == 0) {
     gLastRenderTrace = "Render trace\nNo rendered card/stage trace available yet.\n";
   }
@@ -3983,6 +4066,7 @@ void writeDeckDumpItem(File& file, size_t index) {
 }
 
 void exportDeckTextToSd() {
+  restoreActiveCpu("deck export");
   if (!gSdMounted) {
     gLastDeckExportStatus = "SD missing";
     Serial.printf("Deck export: SD missing path=%s\n", kEmbeddedDeckDumpPath);
@@ -4022,8 +4106,12 @@ void drawReaderPage(const ReaderPageSet& pages, uint8_t pageIndex, int32_t x, in
   auto& display = M5.Display;
   const size_t startLine = static_cast<size_t>(pageIndex) * pages.linesPerPage;
   const size_t endLine = min(startLine + pages.linesPerPage, pages.lines.size());
+  int32_t currentY = y;
   for (size_t line = startLine; line < endLine; ++line) {
-    display.drawString(pages.lines[line], x, y + static_cast<int32_t>(line - startLine) * lineHeight);
+    if (pages.lines[line].length() > 0) {
+      display.drawString(pages.lines[line], x, currentY);
+    }
+    currentY += pages.lines[line].length() == 0 ? lineHeight / 2 : lineHeight;
   }
 }
 
@@ -4131,10 +4219,43 @@ String coachOptionLabelFor(const CoachItemView& item, uint8_t option) {
   return option < item.optionCount ? String(item.options[option]) : String("");
 }
 
+bool itemUsesAnswerKey(const CoachItemView& item) {
+  return item.type == CoachItemType::Mcq || item.type == CoachItemType::WeakAnswer ||
+         item.type == CoachItemType::MetricPrecision;
+}
+
+bool hasValidAnswerKey(const CoachItemView& item) {
+  return itemUsesAnswerKey(item) && item.optionCount > 0 && item.optionCount <= kMaxOptions &&
+         item.correctIndex < item.optionCount;
+}
+
+String optionLetterOrDash(uint8_t option, uint8_t optionCount) {
+  if (option < optionCount && option < kMaxOptions) {
+    return String(static_cast<char>('A' + option));
+  }
+  return "-";
+}
+
+String optionLabelWithSafeLetter(const CoachItemView& item, uint8_t option) {
+  if (option >= item.optionCount || option >= kMaxOptions) {
+    return String("- ");
+  }
+  return String(static_cast<char>('A' + option)) + ". " + coachOptionLabelFor(item, option);
+}
+
+void logInvalidAnswerKey(const CoachItemView& item, const char* context) {
+  ++gInvalidAnswerKeyCount;
+  gLastAnswerKeyWarning = String(coachDisplayId(item)) + " options=" + static_cast<unsigned>(item.optionCount) +
+                          " correct=" + static_cast<unsigned>(item.correctIndex);
+  Serial.printf("Answer key invalid: context=%s item=%s type=%s optionCount=%u correctIndex=%u\n",
+                context && context[0] != '\0' ? context : "validation", coachDisplayId(item), coachTypeName(item.type),
+                static_cast<unsigned>(item.optionCount), static_cast<unsigned>(item.correctIndex));
+}
+
 bool isOptionDrillScreen(Screen screen, const CoachItemView& item) {
   return (screen == Screen::Drills || screen == Screen::BlitzQuiz || screen == Screen::WeakAnswerDetector ||
           screen == Screen::MetricPrecision) &&
-         item.optionCount > 0;
+         hasValidAnswerKey(item);
 }
 
 bool isChoiceQuestionScreen(Screen screen, const CoachItemView& item) {
@@ -4142,9 +4263,7 @@ bool isChoiceQuestionScreen(Screen screen, const CoachItemView& item) {
 }
 
 bool isExamEligibleItem(const CoachItemView& item) {
-  return item.optionCount > 0 &&
-         (item.type == CoachItemType::Mcq || item.type == CoachItemType::WeakAnswer ||
-          item.type == CoachItemType::MetricPrecision);
+  return hasValidAnswerKey(item);
 }
 
 const char* coachDisplayId(const CoachItemView& item) {
@@ -4183,7 +4302,7 @@ FontSizeMode coachReaderSizeFor(const CoachItemView& item) {
 }
 
 String optionLabelWithLetter(const CoachItemView& item, uint8_t option) {
-  return String(static_cast<char>('A' + option)) + ". " + coachOptionLabelFor(item, option);
+  return optionLabelWithSafeLetter(item, option);
 }
 
 int32_t optionLineHeight(uint8_t optionPx) {
@@ -4255,7 +4374,8 @@ String compactQuestionReminder(const String& prompt) {
 
 DrillPagePlan buildDrillPagePlan(const CoachItemView& item, const PracticeLayout& layout) {
   DrillPagePlan plan;
-  plan.questionPages = buildReaderPages(item.prompt, layout.contentW, layout.linesPerPage, "Question");
+  applyCoachQuestionFont();
+  plan.questionPages = buildReaderPages(item.prompt, layout.contentW, layout.questionLinesPerPage, "Question");
   plan.optionPageCount = 0;
   plan.reminder = compactQuestionReminder(item.prompt);
 
@@ -4283,7 +4403,7 @@ DrillPagePlan buildDrillPagePlan(const CoachItemView& item, const PracticeLayout
   }
 
   plan.questionLineCount = static_cast<uint8_t>(min(plan.questionPages.lines.size(), static_cast<size_t>(layout.linesPerPage)));
-  plan.questionBlockHeight = static_cast<int32_t>(plan.questionLineCount) * layout.lineHeight;
+  plan.questionBlockHeight = static_cast<int32_t>(plan.questionLineCount) * layout.questionLineHeight;
   const int32_t combinedGap = 14;
   if (plan.questionPages.pageCount == 1 &&
       plan.questionBlockHeight + combinedGap + allOptionsHeight <= layout.contentH) {
@@ -4338,13 +4458,13 @@ DrillPagePlan buildDrillPagePlan(const CoachItemView& item, const PracticeLayout
 
 String selectedOptionExplanationText(const CoachItemView& item) {
   String result = "Selected\n";
-  result += static_cast<char>('A' + gSelectedOption);
-  result += ". ";
-  result += coachOptionLabelFor(item, static_cast<uint8_t>(gSelectedOption));
+  result += optionLabelWithSafeLetter(item, static_cast<uint8_t>(gSelectedOption));
   result += "\n\nBest\n";
-  result += static_cast<char>('A' + item.correctIndex);
-  result += ". ";
-  result += coachOptionLabelFor(item, item.correctIndex);
+  if (hasValidAnswerKey(item)) {
+    result += optionLabelWithSafeLetter(item, item.correctIndex);
+  } else {
+    result += "-";
+  }
   result += "\n\nWhy this is best\n";
   if (strlen(item.explanation) > 0) {
     result += item.explanation;
@@ -4353,8 +4473,9 @@ String selectedOptionExplanationText(const CoachItemView& item) {
   } else {
     result += "Explanation not available.";
   }
-  Serial.printf("Render trace warning: item=%s missing per-option explanations selected=%c best=%c\n",
-                coachDisplayId(item), static_cast<char>('A' + gSelectedOption), static_cast<char>('A' + item.correctIndex));
+  Serial.printf("Render trace warning: item=%s missing per-option explanations selected=%c best=%s\n",
+                coachDisplayId(item), static_cast<char>('A' + gSelectedOption),
+                optionLetterOrDash(item.correctIndex, item.optionCount).c_str());
   return result;
 }
 
@@ -4368,6 +4489,7 @@ bool resultHasPriorAttempt(const char* itemId, const char* mode) {
 }
 
 void persistSessionResults() {
+  restoreActiveCpu("results persist");
   if (!gSdMounted) {
     gResultsStorageStatus = "RAM session only";
     return;
@@ -4412,7 +4534,8 @@ void persistSessionResults() {
     file.print(",\"selected_option\":");
     printJsonEscaped(file, String(static_cast<char>('A' + result.selectedOption)).c_str());
     file.print(",\"best_option\":");
-    printJsonEscaped(file, String(static_cast<char>('A' + result.bestOption)).c_str());
+    String bestOptionText = result.bestOption < kMaxOptions ? String(static_cast<char>('A' + result.bestOption)) : "-";
+    printJsonEscaped(file, bestOptionText.c_str());
     file.print(",\"correct\":");
     file.print(result.correct ? "true" : "false");
     file.print(",\"first_attempt\":");
@@ -4457,14 +4580,16 @@ void recordDrillAnswer(const CoachItemView& item, uint8_t selectedOption) {
   copyToBuffer(result.type, sizeof(result.type), coachTypeName(item.type));
   copyToBuffer(result.category, sizeof(result.category), drillHeaderLabel(item));
   result.selectedOption = selectedOption;
-  result.bestOption = item.correctIndex;
-  result.correct = selectedOption == item.correctIndex;
+  const bool validKey = hasValidAnswerKey(item);
+  result.bestOption = validKey ? item.correctIndex : 255;
+  result.correct = validKey && selectedOption == item.correctIndex;
   result.firstAttempt = firstAttempt;
   copyToBuffer(result.reader, sizeof(result.reader), fontSizeModeName());
 
-  Serial.printf("Result recorded: session=%u item=%s mode=%s category=%s selected=%c best=%c correct=%s first=%s count=%u\n",
+  const String bestLetter = optionLetterOrDash(result.bestOption, item.optionCount);
+  Serial.printf("Result recorded: session=%u item=%s mode=%s category=%s selected=%c best=%s correct=%s first=%s count=%u\n",
                 static_cast<unsigned>(gSessionId), result.itemId, result.mode, result.category,
-                static_cast<char>('A' + result.selectedOption), static_cast<char>('A' + result.bestOption),
+                static_cast<char>('A' + result.selectedOption), bestLetter.c_str(),
                 result.correct ? "true" : "false", result.firstAttempt ? "true" : "false",
                 static_cast<unsigned>(gSessionResultCount));
   persistSessionResults();
@@ -4670,6 +4795,50 @@ void buildGlossaryLines(const CoachItemView& item, const PracticeLayout& layout,
   }
 }
 
+void appendFeedbackSection(std::vector<GlossaryRenderLine>& lines, const char* label, const String& body,
+                           int32_t width) {
+  String sectionBody = sanitizeCoachText(body, "feedback-section");
+  sectionBody.trim();
+  if (sectionBody.length() == 0) {
+    return;
+  }
+  if (!lines.empty()) {
+    appendGlossarySpace(lines, 12);
+  }
+  GlossaryRenderLine labelLine;
+  labelLine.text = label;
+  labelLine.kind = GlossaryLineKind::Label;
+  labelLine.height = coachTypography().metadataLineHeight + 2;
+  lines.push_back(labelLine);
+  appendGlossaryWrappedBody(lines, sectionBody, width);
+}
+
+String feedbackExplanationFor(const CoachItemView& item) {
+  if (strlen(item.explanation) > 0) {
+    return item.explanation;
+  }
+  if (strlen(item.answer) > 0) {
+    return item.answer;
+  }
+  return "No explanation available.";
+}
+
+void buildFeedbackLines(const CoachItemView& item, const PracticeLayout& layout, std::vector<GlossaryRenderLine>& lines) {
+  lines.clear();
+  const uint8_t selected = gSelectedOption >= 0 ? static_cast<uint8_t>(gSelectedOption) : 255;
+  appendFeedbackSection(lines, "Selected", optionLabelWithSafeLetter(item, selected), layout.contentW);
+  appendFeedbackSection(lines, "Best", hasValidAnswerKey(item) ? optionLabelWithSafeLetter(item, item.correctIndex) : "-",
+                        layout.contentW);
+  appendFeedbackSection(lines, "Why this is best", feedbackExplanationFor(item), layout.contentW);
+}
+
+uint8_t feedbackPageCountFor(const CoachItemView& item, const PracticeLayout& layout) {
+  std::vector<GlossaryRenderLine> lines;
+  buildFeedbackLines(item, layout, lines);
+  uint16_t pageStarts[kMaxReaderPageCount] = {};
+  return paginateGlossaryLines(lines, layout, pageStarts, countOf(pageStarts));
+}
+
 uint8_t paginateGlossaryLines(const std::vector<GlossaryRenderLine>& lines, const PracticeLayout& layout,
                               uint16_t* pageStarts, uint8_t maxPages) {
   if (maxPages == 0) {
@@ -4720,6 +4889,11 @@ uint8_t currentCoachReaderPageCount() {
   applyCoachContentFont();
   if (item.type == CoachItemType::Glossary) {
     const uint8_t pageCount = glossaryPageCountFor(item, layout);
+    gSettings.fontSizeMode = savedSize;
+    return pageCount;
+  }
+  if (isOptionDrillScreen(gScreen, item) && gSelectedOption >= 0) {
+    const uint8_t pageCount = feedbackPageCountFor(item, layout);
     gSettings.fontSizeMode = savedSize;
     return pageCount;
   }
@@ -5015,6 +5189,55 @@ void drawGlossaryTermPage(const CoachItemView& item, const PracticeLayout& layou
   recordRenderTrace(item, "Glossary", String(item.term), tracePages, gCoachStage, pageCount > 1);
 }
 
+void drawFeedbackPage(const CoachItemView& item, const PracticeLayout& layout) {
+  auto& display = M5.Display;
+  std::vector<GlossaryRenderLine> lines;
+  buildFeedbackLines(item, layout, lines);
+  uint16_t pageStarts[kMaxReaderPageCount] = {};
+  const uint8_t pageCount = paginateGlossaryLines(lines, layout, pageStarts, countOf(pageStarts));
+  if (gCoachStage >= pageCount) {
+    gCoachStage = pageCount - 1;
+  }
+
+  drawFeedbackHeader(item, gCoachStage + 1, pageCount);
+  gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
+
+  const size_t start = pageStarts[gCoachStage];
+  const size_t end = gCoachStage + 1 < pageCount ? pageStarts[gCoachStage + 1] : lines.size();
+  int32_t y = layout.contentY;
+  String traceBody;
+  for (size_t index = start; index < end && index < lines.size(); ++index) {
+    const GlossaryRenderLine& line = lines[index];
+    if (line.kind != GlossaryLineKind::Space && line.text.length() > 0) {
+      if (traceBody.length() > 0) {
+        traceBody += "\n";
+      }
+      traceBody += line.text;
+    }
+    switch (line.kind) {
+      case GlossaryLineKind::Label:
+        applyCoachMetadataFont();
+        display.setTextColor(metadataTextColor(), TFT_WHITE);
+        display.drawString(line.text, layout.contentX, y);
+        break;
+      case GlossaryLineKind::Body:
+        applyCoachContentFont();
+        display.setTextColor(TFT_BLACK, TFT_WHITE);
+        display.drawString(line.text, layout.contentX, y);
+        break;
+      case GlossaryLineKind::Term:
+      case GlossaryLineKind::Space:
+        break;
+    }
+    y += line.height;
+  }
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  ReaderPageSet tracePages = buildReaderPages(traceBody, layout.contentW, layout.linesPerPage, "Feedback");
+  const char* warning = hasValidAnswerKey(item) ? "per-option explanations unavailable; omitted from live feedback"
+                                                : "invalid answer key reached feedback";
+  recordRenderTrace(item, "Feedback", traceBody, tracePages, 0, pageCount > 1, warning);
+}
+
 int32_t wrappedButtonHeightFor(const String& label, int32_t buttonWidth) {
   applyCoachButtonFont();
   String lines[2];
@@ -5039,7 +5262,9 @@ PracticeLayout practiceLayoutFor(FontSizeMode renderSize) {
   layout.footerY = display.height() - layout.buttonH - 18;
   layout.contentH = layout.footerY - layout.contentY - 16;
   layout.lineHeight = type.bodyLineHeight;
+  layout.questionLineHeight = type.bodyLineHeight + 4;
   layout.linesPerPage = linesThatFit(layout.contentH, layout.lineHeight, 3, kMaxWrappedLines);
+  layout.questionLinesPerPage = linesThatFit(layout.contentH, layout.questionLineHeight, 3, kMaxWrappedLines);
 
   gSettings.fontSizeMode = savedSize;
   return layout;
@@ -5278,8 +5503,8 @@ void renderCoachScreen() {
     gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
 
     if (plan.combinedQuestionOptions) {
-      applyCoachContentFont();
-      drawReaderPage(plan.questionPages, 0, layout.contentX, layout.contentY, layout.lineHeight);
+      applyCoachQuestionFont();
+      drawReaderPage(plan.questionPages, 0, layout.contentX, layout.contentY, layout.questionLineHeight);
       logReaderPagination("Question", plan.questionPages, layout);
       int32_t y = layout.contentY + plan.questionBlockHeight + 14;
       const int32_t optionGap = 8;
@@ -5298,8 +5523,8 @@ void renderCoachScreen() {
       Serial.printf("Drill combined shown: item=%s options=%u totalPages=%u\n", coachDisplayId(item), item.optionCount,
                     plan.totalPages);
     } else if (gCoachStage < plan.questionPages.pageCount) {
-      applyCoachContentFont();
-      drawReaderPage(plan.questionPages, gCoachStage, layout.contentX, layout.contentY, layout.lineHeight);
+      applyCoachQuestionFont();
+      drawReaderPage(plan.questionPages, gCoachStage, layout.contentX, layout.contentY, layout.questionLineHeight);
       if (gCoachStage + 1 == plan.questionPages.pageCount) {
         applyCoachMetadataFont();
         display.setTextColor(metadataTextColor(), TFT_WHITE);
@@ -5346,6 +5571,17 @@ void renderCoachScreen() {
     drawCoachFooterNav(hasPreviousCoachItem(), hasNextCoachItem());
     gSettings.fontSizeMode = savedSize;
     finishDisplayRefresh();
+    return;
+  }
+
+  if (optionDrill && gSelectedOption >= 0) {
+    drawFeedbackPage(item, layout);
+    drawCoachFooterNav(hasPreviousCoachItem(), hasNextCoachItem());
+    gSettings.fontSizeMode = savedSize;
+    finishDisplayRefresh();
+    Serial.printf("Feedback shown: item=%s page=%u/%u validKey=%s\n", coachDisplayId(item),
+                  static_cast<unsigned>(gCoachStage + 1), static_cast<unsigned>(currentCoachReaderPageCount()),
+                  hasValidAnswerKey(item) ? "yes" : "no");
     return;
   }
 
@@ -5786,7 +6022,8 @@ void renderExamQuestion(const char* refreshReason = "exam question") {
   gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
 
   if (plan.combinedQuestionOptions) {
-    drawReaderPage(plan.questionPages, 0, layout.contentX, layout.contentY, layout.lineHeight);
+    applyCoachQuestionFont();
+    drawReaderPage(plan.questionPages, 0, layout.contentX, layout.contentY, layout.questionLineHeight);
     int32_t y = layout.contentY + plan.questionBlockHeight + 14;
     const int32_t optionGap = 8;
     String traceBody = String(item.prompt) + "\n";
@@ -5802,7 +6039,8 @@ void renderExamQuestion(const char* refreshReason = "exam question") {
     ReaderPageSet combinedTrace = buildReaderPages(traceBody, layout.contentW, layout.linesPerPage, "ExamQuestion");
     recordRenderTrace(item, "ExamQuestion", traceBody, combinedTrace, 0, false);
   } else if (gCoachStage < plan.questionPages.pageCount) {
-    drawReaderPage(plan.questionPages, gCoachStage, layout.contentX, layout.contentY, layout.lineHeight);
+    applyCoachQuestionFont();
+    drawReaderPage(plan.questionPages, gCoachStage, layout.contentX, layout.contentY, layout.questionLineHeight);
     if (gCoachStage + 1 == plan.questionPages.pageCount) {
       applyCoachMetadataFont();
       display.setTextColor(metadataTextColor(), TFT_WHITE);
@@ -6067,11 +6305,30 @@ void renderResultsRecentPage() {
     if (result.correct) {
       continue;
     }
-    String best = "best ";
-    best += static_cast<char>('A' + result.bestOption);
-    String line = headerJoin3(result.itemId, result.category, best);
-    drawWrappedText(line, 42, y, display.width() - 84, coachTypography().metadataLineHeight, 2, "recent-miss", 1);
-    y += 72;
+    String itemLine = result.cardId[0] != '\0' ? String(result.cardId) : String(result.itemId);
+    String resultId = result.itemId;
+    if (resultId.indexOf("-watch") >= 0) {
+      itemLine += " - Watch";
+    } else if (resultId.indexOf("-confidence") >= 0) {
+      itemLine += " - Confidence";
+    } else if (resultId.indexOf("-metric") >= 0) {
+      itemLine += " - Metric";
+    }
+    applyCoachMetadataFont();
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    TextLayoutResult itemLayout =
+        drawWrappedText(itemLine, 42, y, display.width() - 84, coachTypography().metadataLineHeight, 2,
+                        "recent-miss-item", 1);
+    y += itemLayout.height + 4;
+    display.setTextColor(metadataTextColor(), TFT_WHITE);
+    TextLayoutResult categoryLayout =
+        drawWrappedText(result.category, 42, y, display.width() - 84, coachTypography().metadataLineHeight, 1,
+                        "recent-miss-category", 1);
+    y += categoryLayout.height + 4;
+    String best = "Best: ";
+    best += result.bestOption < kMaxOptions ? String(static_cast<char>('A' + result.bestOption)) : "-";
+    drawWrappedText(best, 42, y, display.width() - 84, coachTypography().metadataLineHeight, 1, "recent-miss-best", 1);
+    y += coachTypography().metadataLineHeight + 18;
     ++shownMisses;
   }
   if (shownMisses == 0) {
@@ -6206,7 +6463,7 @@ void renderSettings(const char* refreshReason = "mode switch") {
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
   display.drawString("Power / Badge sleep", 36, 792);
-  drawButton(gPowerModeButton, powerModeName());
+  drawButton(gPowerModeButton, powerModeButtonLabel());
   drawButton(gBadgeSleepButton, badgeSleepModeName());
   drawButton(gHomeButton, "Home");
 
@@ -6291,6 +6548,8 @@ void renderDebug(const char* refreshReason = "mode switch") {
   y += 24;
   display.drawString(String("trace: ") + gLastRenderTraceStatus, 26, y);
   y += 24;
+  display.drawString(String("answer keys invalid: ") + static_cast<unsigned>(gInvalidAnswerKeyCount), 26, y);
+  y += 24;
   display.drawString(String("deck export: ") + gLastDeckExportStatus, 26, y);
 
   const int32_t actionX = 26;
@@ -6362,7 +6621,8 @@ void renderPowerAudit(const char* refreshReason = "mode switch") {
   row(String("SD: ") + (gSdMounted ? "mounted" : "missing"));
   row(String("Refresh mode: ") + refreshModeName());
   row(String("Idle: ") + idleAuditStatusLine());
-  row(String("CPU: ") + static_cast<unsigned>(ESP.getCpuFreqMHz()) + " MHz");
+  row(String("CPU: ") + static_cast<unsigned>(ESP.getCpuFreqMHz()) + " MHz  idle scale: " +
+      (gIdleCpuScaled ? "on" : "off"));
   row(String("Power mode: ") + powerModeName());
   row(String("Sleep mode: ") + badgeSleepModeName());
   row(String("Sleep status: ") + sleepAuditStatusLine());
@@ -6373,6 +6633,8 @@ void renderPowerAudit(const char* refreshReason = "mode switch") {
   row(String("Refresh count: ") + static_cast<unsigned>(gDisplayRefreshCount));
   row(String("Badge redraw count: ") + static_cast<unsigned>(gBadgeRedrawCount));
   row(String("Last refresh: ") + gLastRefreshReason);
+  row(String("Answer keys invalid: ") + static_cast<unsigned>(gInvalidAnswerKeyCount));
+  row(String("Last key warning: ") + gLastAnswerKeyWarning);
   row(String("Last input: ") + static_cast<unsigned>(gLastUserActivityMs) + " ms");
   row(String("Power poll age ms: ") + static_cast<unsigned>(millis() - gLastPowerPollMs));
 
@@ -6471,9 +6733,15 @@ void renderHelpLegend(const char* refreshReason = "mode switch") {
   applyCoachMetadataFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   int32_t y = 92;
+  const int32_t lineH = coachTypography().metadataLineHeight;
+  const int32_t contentW = display.width() - 68;
   for (size_t index = 0; index < countOf(lines); ++index) {
-    display.drawString(lines[index], 34, y);
-    y += coachTypography().metadataLineHeight + 6;
+    TextLayoutResult result = drawWrappedText(lines[index], 34, y, contentW, lineH, 2, "help-line", 1);
+    y += result.height + 6;
+    if (y > display.height() - 130) {
+      Serial.printf("Help legend fit warning: stopped at line=%u\n", static_cast<unsigned>(index));
+      break;
+    }
   }
 
   gHomeButton = {26, display.height() - 94, display.width() - 52, 58};

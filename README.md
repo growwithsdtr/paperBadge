@@ -12,7 +12,7 @@ The current embedded PaperCoach content pack is senior AI/Product Manager interv
 
 It boots into a static conference badge and exposes a normal-orientation Home menu with Badge, Practice, Drills, Exam, Glossary, Results, Settings, and Debug.
 
-Current firmware version in source: `v5.5`.
+Current firmware version in source: `v5.6`.
 
 ## Quick Commands
 
@@ -48,7 +48,7 @@ Default upload and monitor port: `/dev/tty.usbmodem1101`.
 
 - Outlined buttons are preferred over black-filled buttons because large black fills ghost on e-ink.
 - Reader M is the recommended default for QA.
-- High Contrast is the recommended default text style.
+- Sans Bold-like is the recommended English default text style. High Contrast remains useful when maximum density/contrast is needed.
 - Balanced refresh is the recommended default: clean refresh for major transitions/feedback/badge, faster refresh for ordinary page turns.
 - Badge language should use Manual toggle during QA; Auto interval should stay Off unless explicitly testing auto-rotate.
 - Deep sleep is not enabled by default because PaperS3 touch wake is not physically verified.
@@ -124,6 +124,7 @@ Badge mode is static by default and uses e-ink as intended: render once, hold th
 - v3.7: add a visual battery bar to Settings and Debug, expand power audit logs with static-badge and loop-delay state, document the conservative no-sleep policy, and keep adaptive refresh behavior focused on reading vs image/zoom transitions.
 - v3.8: add bolder hand-drawn primitive Back/Next icons, use icon + page-count Practice footer buttons, and add Debug -> Visual QA with the physical screenshot checklist and current typography/refresh/power settings.
 - v5.5: stabilize live headers with ASCII separators, simplify drill/exam/feedback chrome, remove dominant missing-explanation feedback text, loosen post-summary Results pagination, add static-screen light idle, expand Power Audit, and remove stale repo bloat.
+- v5.6: fix embedded drill answer-key remapping so trimmed options retain the correct answer, add runtime answer-key validation, improve feedback/results/help/settings readability, add prompt-specific drill/exam typography, preserve paragraph gaps in Practice answers, and add guarded idle CPU scaling.
 
 ## Hardware
 
@@ -304,6 +305,8 @@ v2.3 adds typography presets:
 - `Debug Mono`: real `FreeMonoBold`, intended for diagnostics only.
 
 Font Lab is available from Debug and cycles font style, font size, and contrast directly on-device. Japanese sample text uses `lgfxJapanGothic_*` because the FreeSans/FreeMono GFX fonts are ASCII/Latin-oriented.
+
+For English PaperCoach content, `Sans Bold-like` is the recommended default style. `Sans Bold-like` and `High Contrast` both use the same `FreeSansBold` font bucket; the visible difference is density, spacing, and metadata contrast, not a different font engine. Japanese live text rendering remains deferred to a future N3 architecture pass.
 
 v2.8 changes the recommended new-device typography default to `High Contrast` + `XXL` + `Max` contrast. Existing Preferences/NVS values are preserved; use `Debug -> Reset typography` to force the new default. PaperCoach line spacing is tighter than v2.7, especially for Practice and Drills. Font Lab now shows direct comparison rows for High Contrast XL, High Contrast XXL, High Contrast Huge, Sans Bold-like XXL, and Large Reader XXL. Serial typography logs include font style, size, body/button pixels, line height, and button height.
 

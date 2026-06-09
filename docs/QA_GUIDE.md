@@ -12,7 +12,7 @@
 
 - Use these settings unless the test says otherwise:
   - Reader M
-  - High Contrast
+  - Sans Bold-like or High Contrast
   - Balanced refresh
   - Battery Saver
   - Badge language Manual toggle
@@ -40,17 +40,17 @@
 
 ## Photo Batches
 
-Maximum 10 photos after v5.5:
+Maximum 10 photos after v5.6:
 
 1. Static Badge.
-2. Home menu.
-3. Settings with QA settings visible.
-4. Practice entry screen.
-5. Practice large Answer page.
-6. Drill question/options at Reader M.
-7. Drill feedback page.
-8. Glossary term page with Definition / Why it matters / Example.
-9. Results Summary plus one post-summary Results page after at least one answer.
+2. Settings power row showing `Conf. Badge` / Badge sleep labels.
+3. Practice large Answer page with paragraph spacing.
+4. Weak Answer A01 question/options at Reader M.
+5. Metric Precision metric-01 question/options at Reader M.
+6. A longer Exam question, plus options page if split.
+7. Drill feedback page with Selected / Best / Why this is best blocks.
+8. Help / Legend showing wrapped long lines.
+9. Results Recent misses page after at least one miss.
 10. Debug Power Audit.
 
 ## Render Trace

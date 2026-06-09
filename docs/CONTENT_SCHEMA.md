@@ -72,6 +72,8 @@ Supported drill types:
 
 Current limitation: per-option explanations are not embedded yet. Firmware omits the weaker-options block and logs the missing detail.
 
+Embedded firmware caps drill options at four choices. The build script now keeps the correct option when trimming longer source option lists, selects up to three distractors, and remaps `correct_index` to the embedded 0-3 index. Runtime validation also skips invalid keyed MCQ/weak-answer/metric drills from Drill and Exam pools.
+
 For future language-learning decks, MCQ options can be short answers, readings, meanings, grammar choices, or example-sentence completions. UI labels should remain generic; deck categories provide the subject-specific meaning.
 
 ## Glossary Schema
