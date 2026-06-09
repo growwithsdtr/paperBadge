@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v4.8";
+constexpr const char* kFirmwareVersion = "v4.9";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -436,8 +436,22 @@ struct CategoryStat {
   uint16_t correct = 0;
 };
 
+enum class GlossaryLineKind : uint8_t {
+  Term,
+  Label,
+  Body,
+  Space,
+};
+
+struct GlossaryRenderLine {
+  String text;
+  GlossaryLineKind kind = GlossaryLineKind::Body;
+  int32_t height = 0;
+};
+
 uint8_t interviewStageCount(const CoachItemView& item);
 PracticeLayout practiceLayoutFor(FontSizeMode renderSize);
+uint8_t glossaryPageCountFor(const CoachItemView& item, const PracticeLayout& layout);
 
 BadgeConfig gBadgeConfig;
 Settings gSettings;
@@ -4507,6 +4521,106 @@ uint8_t totalReaderPages(const CoachReaderStage* stages, uint8_t stageCount) {
   return static_cast<uint8_t>(total);
 }
 
+int32_t glossaryTermLineHeight() {
+  return coachTypography().titlePx + 18;
+}
+
+int32_t glossarySectionGap() {
+  return 14;
+}
+
+void appendGlossarySpace(std::vector<GlossaryRenderLine>& lines, int32_t height) {
+  GlossaryRenderLine line;
+  line.kind = GlossaryLineKind::Space;
+  line.height = height;
+  lines.push_back(line);
+}
+
+void appendGlossaryWrappedBody(std::vector<GlossaryRenderLine>& lines, const String& text, int32_t width) {
+  if (text.length() == 0) {
+    return;
+  }
+  applyCoachContentFont();
+  std::vector<String> wrapped;
+  wrapReaderTextToLines(text, width, wrapped, "glossary-body");
+  const int32_t lineH = coachTypography().bodyLineHeight;
+  for (const String& wrappedLine : wrapped) {
+    GlossaryRenderLine line;
+    line.text = wrappedLine;
+    line.kind = GlossaryLineKind::Body;
+    line.height = lineH;
+    lines.push_back(line);
+  }
+}
+
+void appendGlossarySection(std::vector<GlossaryRenderLine>& lines, const char* label, const char* body,
+                           int32_t width) {
+  String sectionBody = sanitizeCoachText(body ? body : "", "glossary-section");
+  sectionBody.trim();
+  if (sectionBody.length() == 0) {
+    return;
+  }
+  if (!lines.empty()) {
+    appendGlossarySpace(lines, glossarySectionGap());
+  }
+  GlossaryRenderLine labelLine;
+  labelLine.text = label;
+  labelLine.kind = GlossaryLineKind::Label;
+  labelLine.height = coachTypography().metadataLineHeight + 2;
+  lines.push_back(labelLine);
+  appendGlossaryWrappedBody(lines, sectionBody, width);
+}
+
+void buildGlossaryLines(const CoachItemView& item, const PracticeLayout& layout, std::vector<GlossaryRenderLine>& lines) {
+  lines.clear();
+  GlossaryRenderLine term;
+  term.text = sanitizeCoachText(item.term, "glossary-term");
+  term.kind = GlossaryLineKind::Term;
+  term.height = glossaryTermLineHeight();
+  lines.push_back(term);
+  appendGlossarySpace(lines, 10);
+  appendGlossarySection(lines, "Definition", item.definition, layout.contentW);
+  appendGlossarySection(lines, "Why it matters", item.explanation, layout.contentW);
+  appendGlossarySection(lines, "Example", item.answer, layout.contentW);
+  if (lines.size() <= 2) {
+    appendGlossarySection(lines, "Definition", "No glossary definition available.", layout.contentW);
+  }
+}
+
+uint8_t paginateGlossaryLines(const std::vector<GlossaryRenderLine>& lines, const PracticeLayout& layout,
+                              uint16_t* pageStarts, uint8_t maxPages) {
+  if (maxPages == 0) {
+    return 0;
+  }
+  pageStarts[0] = 0;
+  uint8_t pageCount = 1;
+  int32_t used = 0;
+  for (size_t index = 0; index < lines.size(); ++index) {
+    const GlossaryRenderLine& line = lines[index];
+    int32_t required = line.height;
+    if (line.kind == GlossaryLineKind::Label && index + 1 < lines.size() &&
+        lines[index + 1].kind == GlossaryLineKind::Body) {
+      required += lines[index + 1].height;
+    }
+    if (used > 0 && used + required > layout.contentH && pageCount < maxPages) {
+      pageStarts[pageCount++] = static_cast<uint16_t>(index);
+      used = 0;
+    } else if (used > 0 && used + line.height > layout.contentH && pageCount < maxPages) {
+      pageStarts[pageCount++] = static_cast<uint16_t>(index);
+      used = 0;
+    }
+    used += line.height;
+  }
+  return pageCount == 0 ? 1 : pageCount;
+}
+
+uint8_t glossaryPageCountFor(const CoachItemView& item, const PracticeLayout& layout) {
+  std::vector<GlossaryRenderLine> lines;
+  buildGlossaryLines(item, layout, lines);
+  uint16_t pageStarts[kMaxReaderPageCount] = {};
+  return paginateGlossaryLines(lines, layout, pageStarts, countOf(pageStarts));
+}
+
 uint8_t currentCoachReaderPageCount() {
   if (gCoachItemCount == 0) {
     return 1;
@@ -4521,6 +4635,11 @@ uint8_t currentCoachReaderPageCount() {
   gSettings.fontSizeMode = renderSize;
   const PracticeLayout layout = practiceLayoutFor(renderSize);
   applyCoachContentFont();
+  if (item.type == CoachItemType::Glossary) {
+    const uint8_t pageCount = glossaryPageCountFor(item, layout);
+    gSettings.fontSizeMode = savedSize;
+    return pageCount;
+  }
   if (isOptionDrillScreen(gScreen, item) && gSelectedOption < 0) {
     applyCoachButtonFont();
     const DrillPagePlan plan = buildDrillPagePlan(item, layout);
@@ -4694,6 +4813,112 @@ void drawExamHeader(const CoachItemView& item, uint8_t pageNumber, uint8_t pageC
     drawReadableHeaderLine(compactHeaderCategory(categoryLine.c_str()), "", kCoachMargin, 54, headerW);
   }
   display.setTextColor(TFT_BLACK, TFT_WHITE);
+}
+
+void drawCompactGlossaryHeader(const CoachItemView& item, uint8_t pageNumber, uint8_t pageCount) {
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  const int32_t headerW = display.width() - kCoachMargin * 2;
+  uint16_t position = 0;
+  uint16_t total = 0;
+  filteredItemPosition(Screen::Glossary, gCoachIndex, position, total);
+  String line = "Glossary · ";
+  line += glossaryCategoryName(gGlossaryCategory);
+  if (total > 0) {
+    line += " · ";
+    line += static_cast<unsigned>(position);
+    line += "/";
+    line += static_cast<unsigned>(total);
+  }
+  String fallback = "Glossary";
+  if (total > 0) {
+    fallback += " ";
+    fallback += static_cast<unsigned>(position);
+    fallback += "/";
+    fallback += static_cast<unsigned>(total);
+  }
+  drawReadableHeaderLine(line, fallback, kCoachMargin, 18, headerW);
+  if (pageCount > 1) {
+    String pageLine = "Page ";
+    pageLine += static_cast<unsigned>(pageNumber);
+    pageLine += "/";
+    pageLine += static_cast<unsigned>(pageCount);
+    drawReadableHeaderLine(pageLine, "", kCoachMargin, 54, headerW);
+  }
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+}
+
+ReaderPageSet glossaryTracePages(const std::vector<GlossaryRenderLine>& lines, const uint16_t* pageStarts,
+                                 uint8_t pageCount) {
+  ReaderPageSet trace;
+  trace.linesPerPage = 1;
+  trace.pageCount = pageCount == 0 ? 1 : pageCount;
+  trace.sourceLength = 0;
+  for (uint8_t page = 0; page < trace.pageCount; ++page) {
+    const size_t start = pageStarts[page];
+    const size_t end = page + 1 < trace.pageCount ? pageStarts[page + 1] : lines.size();
+    String visible;
+    for (size_t index = start; index < end && index < lines.size(); ++index) {
+      if (lines[index].kind == GlossaryLineKind::Space || lines[index].text.length() == 0) {
+        continue;
+      }
+      if (visible.length() > 0) {
+        visible += "\n";
+      }
+      visible += lines[index].text;
+      trace.sourceLength += lines[index].text.length();
+    }
+    trace.lines.push_back(visible);
+  }
+  trace.sanitizedLength = trace.sourceLength;
+  return trace;
+}
+
+void drawGlossaryTermPage(const CoachItemView& item, const PracticeLayout& layout) {
+  auto& display = M5.Display;
+  std::vector<GlossaryRenderLine> lines;
+  buildGlossaryLines(item, layout, lines);
+  uint16_t pageStarts[kMaxReaderPageCount] = {};
+  const uint8_t pageCount = paginateGlossaryLines(lines, layout, pageStarts, countOf(pageStarts));
+  if (gCoachStage >= pageCount) {
+    gCoachStage = pageCount - 1;
+  }
+
+  drawCompactGlossaryHeader(item, gCoachStage + 1, pageCount);
+  gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
+
+  const size_t start = pageStarts[gCoachStage];
+  const size_t end = gCoachStage + 1 < pageCount ? pageStarts[gCoachStage + 1] : lines.size();
+  int32_t y = layout.contentY;
+  for (size_t index = start; index < end && index < lines.size(); ++index) {
+    const GlossaryRenderLine& line = lines[index];
+    switch (line.kind) {
+      case GlossaryLineKind::Term:
+        applyCoachTitleFont();
+        display.setTextColor(TFT_BLACK, TFT_WHITE);
+        display.drawString(line.text, layout.contentX, y);
+        break;
+      case GlossaryLineKind::Label:
+        applyCoachMetadataFont();
+        display.setTextColor(metadataTextColor(), TFT_WHITE);
+        display.drawString(line.text, layout.contentX, y);
+        break;
+      case GlossaryLineKind::Body:
+        applyCoachContentFont();
+        display.setTextColor(TFT_BLACK, TFT_WHITE);
+        display.drawString(line.text, layout.contentX, y);
+        break;
+      case GlossaryLineKind::Space:
+        break;
+    }
+    y += line.height;
+  }
+
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  const ReaderPageSet tracePages = glossaryTracePages(lines, pageStarts, pageCount);
+  recordRenderTrace(item, "Glossary", String(item.term), tracePages, gCoachStage, pageCount > 1);
 }
 
 int32_t wrappedButtonHeightFor(const String& label, int32_t buttonWidth) {
@@ -4933,6 +5158,16 @@ void renderCoachScreen() {
   gSettings.fontSizeMode = renderSize;
   layout = practiceLayoutFor(renderSize);
   logTypographySettings("coach item screen");
+  if (item.type == CoachItemType::Glossary) {
+    drawGlossaryTermPage(item, layout);
+    drawCoachFooterNav(hasPreviousCoachItem(), hasNextCoachItem());
+    gSettings.fontSizeMode = savedSize;
+    finishDisplayRefresh();
+    Serial.printf("Glossary shown: term=%s index=%u page=%u/%u source=%s\n", item.term,
+                  static_cast<unsigned>(gCoachIndex), static_cast<unsigned>(gCoachStage + 1),
+                  static_cast<unsigned>(currentCoachReaderPageCount()), gGlossarySource.c_str());
+    return;
+  }
   if (gScreen == Screen::MockInterview) {
     applyCoachMetadataFont();
     display.drawString(String("Prompt ") + (gMockStep + 1) + "/5", kCoachMargin, 76);
