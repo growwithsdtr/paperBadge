@@ -1,4 +1,4 @@
-# PaperBadge Project State — v5.8-dev Handoff
+# PaperBadge Project State — v5.8-dev2 Handoff
 
 _Last updated: 2026-06-10_
 
@@ -16,99 +16,179 @@ _Last updated: 2026-06-10_
 
 ## Firmware
 
-- **Version:** `v5.8-dev` (`src/main.cpp:20`)
-- **Build:** SUCCESS — RAM 49.4% · Flash 47.4% · 10.76 s
+- **Version:** `v5.8-dev2` (`src/main.cpp:20`)
+- **Build:** SUCCESS — RAM 49.4% · Flash 47.4% · 10.70 s
 - **Upload:** SUCCESS — `/dev/tty.usbmodem1101`, 28.2 s
 
 ---
 
-## What Changed in v5.8-dev
+## What Changed in v5.8-dev2
 
-### Phase 1+2+4 — Unified Structured Practice Reader
+### Phase 1 — Compact Practice Header
 
-Replaced the four separate stages (Question / Answer / Anchor / Watch-out) with a single continuous structured card renderer using the `GlossaryRenderLine` infrastructure already used by Glossary and Feedback screens.
+Practice header now follows the curated UI-label spec:
 
-**Sections per card type:**
-- QA card: Question, Confidence, Answer, Anchor, Watch-out, Follow-up (explanation if present)
-- HostileFollowup: Follow-up, Defense, Anchor
-- WeakAnswer: Question, Explanation
+**Line 1:** `{id} | {Must/Card} | {compact section}`
+**Line 2:** compact synthesized title (NOT raw question, NOT stage name, NOT page count)
+**Divider:** thin horizontal line at y=84 between header and body
 
-**Typography:**
-- Section labels: `applyCoachMetadataFont()` — small bold, metadata color
-- Body lines: `applyCoachBodyFont()` — regular/non-bold, large readable
-- Empty sections are skipped automatically
+New functions:
+- `compactHeaderCategory(raw)` — extended with explicit mappings for all known sections:
+  - "Background, Motivation & Fit" → "Background / Fit"
+  - "Product Strategy & Discovery" → "Product Strategy"
+  - "Stakeholder Management & Influence" → "Stakeholder Mgmt"
+  - "Execution / Delivery / Tradeoffs" → "Execution / Tradeoffs"
+  - "Data, Metrics & Analytics" → "Data & Metrics"
+  - "Cross-functional Leadership" → "Cross-func Leadership"
+  - "Technical Depth & AI/ML" → "Technical / AI/ML"
+- `compactPracticeTitle(rawTitle)` — synthesizes compact display title:
+  1. Checks known mapping table first (C23, A01, A04, etc.)
+  2. Strips common question starters ("How do you", "Tell me about a time", etc.)
+  3. Removes trailing "?"
+  4. Falls back to sanitized raw title (truncated by `fitHeaderText` if too long)
 
-**Header:**
-- Line 1: `{id} | {Must/Card} | {category}` (no stage name)
-- Line 2: card title/question (if present and fits)
-- Page number shown in header when >1 page
+**Page count removed from header line 1.** Pagination is still available via page taps.
 
-**Navigation:**
-- Content tap top half = previous page
-- Content tap bottom half = next page
-- Footer left/right = previous/next card
-- Home = home (unchanged)
+### Phase 3 — Drill/Exam Option Typography
 
-**Confidence wrapping:**
-- Confidence is now a proper section in the structured card (label + wrapped body)
-- No longer clipped: paginated as part of the continuous reader
+Option buttons now use `applyBodyFont` (regular FreeSans) instead of `applyTypographyFont` (bold).
+- Outlined buttons preserved
+- Text is lighter/less visually heavy
+- Applies to Drills, BlitzQuiz, WeakAnswerDetector, MetricPrecision, and Exam screens
 
-### Phase 3 — Tighter Margins
+### Phase 5 — Settings Footer Cleanup
 
-| Item | Before | After |
-|------|--------|-------|
-| `kCoachMargin` | 28 | 20 |
+Removed the "Advanced: Debug > Power Audit" text line from Settings.
+It was positioned at y=916 which overlapped with the Home button at y=900 (display height 960).
+Settings now ends cleanly with the Battery Saver button and Home button.
+Power Audit remains accessible via Debug menu.
 
-All content uses `kCoachMargin = 20` now. Headers and body aligned at x=20.
+### Phase 6 — Power Audit Footer Simplified
 
-### Phase 5 — Drill/Exam Prompt Formatter
+Power Audit footer replaced with standard 3-button layout:
 
-Added `formatDrillPrompt()`: inserts a `\n` after `: ` when the text following the colon is ≥16 chars and contains a space. Prevents long prompts like "What is the risk in a weak answer to: Self-introduction / career & recent work?" from running inline.
+```
+[ < Prev ]   [ Home ]   [ Next > ]
+```
 
-Applied in `buildDrillPagePlan()`.
+Removed from footer: "Power: mode", "Sleep: mode", "Profile: mode" toggle buttons.
+These were visually crowded and created unnecessary power-cycling risk in the footer.
+Power profile and sleep mode remain accessible via Settings and future Debug > Power Lab.
 
-### Phase 6 — Settings Power Wording
+### Phase 7 — Power Audit Observability (page 1)
 
-Settings screen "Power" section now shows:
-- `Battery Saver` button (toggles Normal ↔ BatterySaver, shows `*` when active)
-- `Advanced: Debug > Power Audit` text hint below
+Power Audit page 1 CPU row now shows:
+- `CPU: 240 MHz [active]` — at full speed
+- `CPU: 80 MHz [idle-scaled]` — after idle threshold
+- `Profile: Balanced  idle after: 60s` row added below CPU row
+- Reordered for readability: CPU → Profile → Idle → Static → Loop delay → Refresh → Redraw → Last refresh → Poll age
 
-Previously was a read-only status line. Now tappable.
+Power profiles and CPU scaling implementation unchanged (already complete in v5.8-dev).
 
-### Phase 7 — Power Audit Pagination (4 pages)
+### Phase 8 — Ghosting Fix: Clean Refresh on Card Change
 
-Power Audit is now paginated into 4 pages, navigable with `< Page` / `Page >` buttons:
+`nextCoachItem()` and `previousCoachItem()` now always trigger `gCoachNeedsCleanEntryRefresh = true` when on `Screen::InterviewPractice`.
 
-| Page | Contents |
-|------|----------|
-| 1 | Battery/USB/radios/peripherals, Power mode, Profile |
-| 2 | CPU MHz / idle scale, profile threshold, Refresh, Redraw count, Loop delay, Static screen status |
-| 3 | Sleep mode/status, last sleep/wake, deep sleep block notice |
-| 4 | Answer key warnings, sanitizer, touch diagnostics, deck info, firmware version |
+Previously, card navigation only triggered clean refresh when leaving feedback (after answering a drill). Now any card change in Practice triggers a full clean entry refresh to clear ghosting.
 
-Footer buttons on page 2: `Power: <mode>` + `Profile: <profile>` + `< Page` + `Page >` + `Home`
-Footer buttons on other pages: `Power: <mode>` + `Sleep: <mode>` + `< Page` + `Page >` + `Home`
+---
 
-### Phase 8 — Experimental Power Profiles
+## Practice Header Compact Title Examples
 
-Added `PowerProfile` enum: **Balanced** (default), **Aggressive**, **BadgeMax**.
+| Card | Raw title | Compact title |
+|------|-----------|---------------|
+| A01 | Self-introduction / career & recent work | Self-introduction, career & recent work |
+| A04 | Success / 90-day impact & successful traits | 90-day impact & successful traits |
+| C23 | How do you QA/test a non-deterministic chatbot or AI output | QA/testing non-deterministic AI output |
+| C24 | Guardrails against hallucinations / PII leaks | Hallucination & PII guardrails |
+| A02 | Why leave consulting for an in-house role | Leave consulting for in-house role |
+| A03 | Why this company and industry | This company and industry |
 
-| Profile | Idle scale threshold | Loop delay on static | Notes |
-|---------|---------------------|---------------------|-------|
-| Balanced | 60 s | 50 ms | Default, safe |
-| Aggressive | 25 s | 100 ms idle / 400 ms active-idle | Lower CPU sooner |
-| Badge Max | 20 s | 200 ms on badge | Badge-only, strongest safe experiment |
+---
 
-- Profiles do **not** enable deep sleep by default
-- Deep sleep remains blocked (touch wake unverified on PaperS3)
-- Light sleep allowed only in Aggressive/BadgeMax (BadgeSleepMode.Light must be explicitly set)
-- CPU restores to 240 MHz on any input event before display refresh
-- Profile saved to Preferences key `"powerProfile"`
-- Cycled via `Profile: <name>` button on Power Audit page 2
+## Current UX Decisions (v5.8-dev2)
 
-### Phase 9 — v6 Architecture Notes (docs only)
+| Decision | Value |
+|----------|-------|
+| Practice header line 1 | id &#124; Must/Card &#124; compact section |
+| Practice header line 2 | compact synthesized title |
+| Practice header divider | yes, at y=84 |
+| Page count in header | no (removed in dev2) |
+| Stage name in header | no (removed in dev) |
+| Option button font | regular (non-bold) |
+| Settings "Advanced" hint | removed (no space above Home) |
+| Power Audit footer | 3-button: prev / home / next |
+| Ghosting on card change | clean refresh forced |
+| Default power profile | Balanced |
+| Deep sleep | blocked (touch wake unverified) |
 
-Intended v6 main menu structure:
+---
+
+## Power Profiles (v5.8-dev / still current)
+
+| Profile | Idle scale threshold | Loop delay idle | Notes |
+|---------|---------------------|-----------------|-------|
+| Balanced | 60 s | 250 ms | Default, safe |
+| Aggressive | 25 s | 400 ms | Lower CPU sooner |
+| Badge Max | 20 s | 200 ms (badge) | Badge-first, strongest safe |
+
+All profiles: CPU 240→80 MHz on static screens after threshold, restore to 240 before any refresh/SD/input.
+No deep sleep in any profile by default.
+
+---
+
+## Recommended Settings
+
+| Setting | Value |
+|---------|-------|
+| Font size | Reader M |
+| Font style | High Contrast |
+| Refresh mode | Balanced refresh |
+| Power | Battery Saver (toggle in Settings > Power) |
+| Power Profile | Balanced (change in Debug > Power Audit) |
+
+---
+
+## Font Summary
+
+- **English body text:** `FreeSans9/12/18/24pt7b` (regular, non-bold) — body roles, option buttons
+- **English labels/titles:** `FreeSansBold9/12/18/24pt7b` — metadata, labels, headers, question prompts
+- **Future Japanese:** `M5GFX lgfxJapanGothic_*` — **not** FreeSans (no CJK). Requires UTF-8-safe sanitizer.
+
+---
+
+## Remaining Known Issues
+
+1. **Power Audit toggle buttons removed from footer** — Power mode/sleep/profile toggles are no longer in Power Audit footer. Currently accessible via Settings (power mode) and Debug (profile via Power Audit). A future "Debug > Power Lab" screen could consolidate these.
+2. **SD deck-dump Best: letter** — unguarded `'A' + item.correctIndex` in debug SD dump path. Low priority.
+3. **`docs/embedded_deck_dump.md` stale** — regenerate after next device QA session.
+4. **Japanese / UTF-8** — no CJK font, no UTF-8 sanitizer. Out of scope.
+5. **Dynamic deck categories** — firmware-hardcoded; new grids require firmware change.
+6. **SRS / long-term history** — not implemented.
+7. **Glossary search** — not implemented.
+8. **Deep sleep** — remains blocked (touch wake unverified on PaperS3).
+
+---
+
+## QA Photo Checklist (v5.8-dev2)
+
+1. Practice A01 — confirm header: `A01 | Must | Background / Fit` on line 1, "Self-introduction, career & recent work" on line 2, divider visible
+2. Practice C23 — confirm header: `C23 | Must | AI/ML Evaluation & QA` on line 1, "QA/testing non-deterministic AI output" on line 2
+3. Practice A04 — confirm Confidence is a section (not inline), no clip; compact title "90-day impact & successful traits"
+4. Practice B16, C24, E33, F41 — confirm confidence wrapping on long cards, compact title on each
+5. Practice multi-page — confirm page navigation works via content taps; footer left/right for cards; NO page count in header
+6. Practice card change — confirm no ghosting (clean refresh fires on every card change)
+7. Drill screen — confirm option buttons use regular (lighter) font, not bold
+8. Settings screen — confirm no "Advanced: Debug > Power Audit" text; power section shows Battery Saver button then Home
+9. Power Audit page 1 — confirm battery/USB/radios rows
+10. Power Audit page 1 — confirm `CPU: 240 MHz [active]` row and `Profile: Balanced  idle after: 60s` row
+11. Power Audit navigation — confirm 3-button footer: < Prev, Home icon, Next >
+12. Power Audit page 2 → idle on page for 60s → re-enter → confirm `CPU: 80 MHz [idle-scaled]` shows
+
+---
+
+## Intended v6 Structure (not yet implemented)
+
 ```
 Main Menu:
   Badge
@@ -120,59 +200,10 @@ Main Menu:
 
 Japanese readiness requirements (not yet implemented):
 - Font: M5GFX `lgfxJapanGothic_*` or efontJA_*
-- Sanitizer must be made UTF-8 safe before enabling
-- Japanese wrapping without spaces
-- Generic section blocks (Prompt / Meaning / Grammar / Example / Answer / Explanation)
-
-Navigation model (long-press Home → main home) — not yet changed.
-
----
-
-## Recommended Settings (for QA and normal use)
-
-| Setting | Value |
-|---------|-------|
-| Font size | Reader M |
-| Font style | High Contrast |
-| Refresh mode | Balanced refresh |
-| Power | Battery Saver (toggle in Settings > Power) |
-| Power Profile | Balanced (change in Debug > Power Audit page 2) |
-
----
-
-## Font Summary
-
-- **English body text:** `FreeSans9/12/18/24pt7b` (regular, non-bold) — body roles
-- **English labels/titles:** `FreeSansBold9/12/18/24pt7b` — metadata, labels, headers, question prompts, option buttons
-- **Future Japanese:** `M5GFX lgfxJapanGothic_*` — **not** FreeSans (no CJK). Requires UTF-8-safe sanitizer.
-
----
-
-## Remaining Known Issues
-
-1. **SD deck-dump Best: letter** — unguarded `'A' + item.correctIndex` in debug SD dump path. Low priority.
-2. **`docs/embedded_deck_dump.md` stale** — regenerate after next device QA session.
-3. **Japanese / UTF-8** — no CJK font, no UTF-8 sanitizer. Out of scope.
-4. **Dynamic deck categories** — firmware-hardcoded; new grids require firmware change.
-5. **SRS / long-term history** — not implemented.
-6. **Glossary search** — not implemented.
-7. **Deep sleep** — remains blocked (touch wake unverified on PaperS3).
-8. **Power Audit page 2 CPU idle shows post-scale value** — CPU only scales after idle threshold; during active use will show 240 MHz.
-
----
-
-## QA Photo Checklist (v5.8-dev)
-
-1. Practice A04 — confirm unified reader, Confidence is a section (not inline), no clip
-2. Practice B16, C23, C24, E33, F41 — confirm confidence wrapping on long cards
-3. Practice any card — confirm header shows `{id} | {Must/Card} | {category}` (no stage name)
-4. Practice multi-page card — confirm `< page >` navigation works, footer left/right for cards
-5. Drill Weak Answer — confirm prompt breaks after `:` when applicable
-6. Drill feedback page — confirm label bold, body regular
-7. Settings screen — confirm Battery Saver button, `Advanced: Debug > Power Audit` hint
-8. Power Audit page 1 — battery/USB/radios/profile row
-9. Power Audit page 2 — CPU MHz, `Profile: Balanced` button, idle threshold
-10. Power Audit page 3 — sleep status, deep sleep blocked notice
+- UTF-8-safe sanitizer before enabling
+- Japanese text wrapping without spaces
+- Generic section/category deck schema
+- Future decks should provide explicit `compact_title` field instead of relying on raw question text synthesis
 
 ---
 
@@ -185,3 +216,4 @@ Navigation model (long-press Home → main home) — not yet changed.
 - New drill or card content
 - Broad UI redesign
 - Deep sleep by default
+- Full v6 app split

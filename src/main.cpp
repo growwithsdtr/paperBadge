@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.8-dev";
+constexpr const char* kFirmwareVersion = "v5.8-dev2";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -2615,7 +2615,8 @@ void nextCoachItem() {
   gCoachIndex = nextIndex;
   gCoachStage = 0;
   gSelectedOption = -1;
-  if (leavingFeedback) {
+  // Always clean refresh on card change in Practice to prevent ghosting (v5.8-dev2)
+  if (leavingFeedback || gScreen == Screen::InterviewPractice) {
     gCoachNeedsCleanEntryRefresh = true;
   }
   if (gScreen == Screen::MockInterview) {
@@ -2637,7 +2638,8 @@ void previousCoachItem() {
   gCoachIndex = previousIndex;
   gCoachStage = 0;
   gSelectedOption = -1;
-  if (leavingFeedback) {
+  // Always clean refresh on card change in Practice to prevent ghosting (v5.8-dev2)
+  if (leavingFeedback || gScreen == Screen::InterviewPractice) {
     gCoachNeedsCleanEntryRefresh = true;
   }
 }
@@ -4447,7 +4449,8 @@ void drawOptionButton(const Rect& rect, const String& label) {
   display.drawRoundRect(rect.x, rect.y, rect.w, rect.h, 8, TFT_BLACK);
   display.drawRoundRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 7, TFT_BLACK);
   const uint8_t optionPx = optionTextPxFor(label, rect.w);
-  applyTypographyFont(optionPx);
+  // Use regular (non-bold) body font for option text per v5.8-dev2 spec
+  applyBodyFont(optionPx);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.setTextDatum(textdatum_t::top_left);
 
@@ -5114,12 +5117,66 @@ bool containsNonAscii(const String& text) {
 String compactHeaderCategory(const char* raw) {
   String category = sanitizeCoachText(raw ? raw : "", "header-category");
   category.trim();
+  // Known compact section mappings (checked before generic replacements)
+  if (category == "Background, Motivation & Fit") return "Background / Fit";
+  if (category == "Product Strategy & Discovery") return "Product Strategy";
+  if (category == "Stakeholder Management & Influence") return "Stakeholder Mgmt";
+  if (category == "Execution / Delivery / Tradeoffs") return "Execution / Tradeoffs";
+  if (category == "Execution, Delivery & Tradeoffs") return "Execution / Tradeoffs";
+  if (category == "Data, Metrics & Analytics") return "Data & Metrics";
+  if (category == "Cross-functional Leadership") return "Cross-func Leadership";
+  if (category == "Technical Depth & AI/ML") return "Technical / AI/ML";
+  // Generic fallbacks
   category.replace("PaperCoach ", "");
   category.replace("Motivation & Fit", "Motivation/Fit");
   category.replace("Background, ", "Background / ");
   category.replace(" and ", " & ");
   category.replace(", ", " / ");
   return category;
+}
+
+String compactPracticeTitle(const char* rawTitle) {
+  if (!rawTitle || rawTitle[0] == '\0') return "";
+  String title = sanitizeCoachText(rawTitle, "practice-title-compact");
+  title.trim();
+  if (title.length() == 0) return "";
+  // Known mappings for verbose titles
+  struct CompactMap { const char* raw; const char* compact; };
+  static const CompactMap kMap[] = {
+    {"How do you QA/test a non-deterministic chatbot or AI output", "QA/testing non-deterministic AI output"},
+    {"Success / 90-day impact & successful traits",                "90-day impact & successful traits"},
+    {"Self-introduction / career & recent work",                   "Self-introduction, career & recent work"},
+    {"Why are you interested in this product area, and why payments","Product area / payments motivation"},
+    {"Tell me about a time you used metrics to make a product decision","Metrics-based product decision"},
+    {"Guardrails against hallucinations / PII leaks",              "Hallucination & PII guardrails"},
+  };
+  for (size_t i = 0; i < sizeof(kMap) / sizeof(kMap[0]); ++i) {
+    if (title.startsWith(kMap[i].raw)) return kMap[i].compact;
+  }
+  // Strip common verbose question starters
+  static const char* kPrefixes[] = {
+    "How would you ", "How do you ", "How do ", "How did ",
+    "Tell me about a time ", "Tell me about ",
+    "Why are you ", "Why did ", "Why do ", "Why have ", "Why is ",
+    "What is the ", "What is ", "What are ", "What would ", "What was ",
+    "Walk me through ", "Describe ", "Can you ", "Have you ",
+  };
+  for (size_t i = 0; i < sizeof(kPrefixes) / sizeof(kPrefixes[0]); ++i) {
+    const size_t plen = strlen(kPrefixes[i]);
+    if (title.length() > plen + 4 && title.startsWith(kPrefixes[i])) {
+      String rest = title.substring(static_cast<unsigned>(plen));
+      rest.trim();
+      if (rest.length() > 0) rest[0] = static_cast<char>(toupper(static_cast<unsigned char>(rest[0])));
+      title = rest;
+      break;
+    }
+  }
+  // Remove trailing "?"
+  while (title.length() > 0 && title[title.length() - 1] == '?') {
+    title.remove(title.length() - 1);
+    title.trim();
+  }
+  return title;
 }
 
 String headerJoin2(const String& first, const String& second) {
@@ -5572,6 +5629,7 @@ void renderInterviewPracticeScreen() {
   const int32_t headerW = display.width() - kCoachMargin * 2;
   applyCoachMetadataFont();
   display.setTextColor(metadataTextColor(), TFT_WHITE);
+  // Header line 1: id | Must/Card | compact section (no page count per v5.8-dev2)
   String headerLine = sanitizeCoachText(coachDisplayId(item), "practice-id");
   headerLine = headerJoin2(headerLine, item.mustMaster ? "Must" : "Card");
   if (item.section && item.section[0] != '\0') {
@@ -5580,15 +5638,15 @@ void renderInterviewPracticeScreen() {
       headerLine = headerJoin2(headerLine, section);
     }
   }
-  if (pageCount > 1) {
-    headerLine = headerJoin2(headerLine, headerPageText(gCoachStage + 1, pageCount));
-  }
   drawReadableHeaderLine(headerLine, sanitizeCoachText(coachDisplayId(item), "practice-id-fallback"),
                          kCoachMargin, 18, headerW);
-  String titleLine = sanitizeCoachText(item.title, "practice-title");
-  if (titleLine.length() > 0) {
-    drawReadableHeaderLine(titleLine, "", kCoachMargin, 54, headerW);
+  // Header line 2: compact synthesized title
+  const String compactTitle = compactPracticeTitle(item.title);
+  if (compactTitle.length() > 0) {
+    drawReadableHeaderLine(compactTitle, "", kCoachMargin, 54, headerW);
   }
+  // Thin divider below header
+  display.drawLine(kCoachMargin, 84, kCoachMargin + headerW, 84, metadataTextColor());
   display.setTextColor(TFT_BLACK, TFT_WHITE);
 
   gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
@@ -6631,9 +6689,6 @@ void renderSettings(const char* refreshReason = "mode switch") {
   applyCoachMetadataFont();
   display.drawString("Power", 36, 792);
   drawButton(gPowerModeButton, String(gSettings.powerMode == PowerMode::BatterySaver ? "Battery Saver *" : "Battery Saver"));
-  display.setTextDatum(textdatum_t::top_left);
-  applyCoachMetadataFont();
-  display.drawString("Advanced: Debug > Power Audit", 36, 916);
   drawButton(gHomeButton, "Home");
 
   finishDisplayRefresh();
@@ -6799,17 +6854,17 @@ void renderPowerAudit(const char* refreshReason = "mode switch") {
     row(String("Power mode: ") + powerModeName());
     row(String("Profile: ") + powerProfileName());
   } else if (gPowerAuditPage == 1) {
-    row(String("CPU: ") + static_cast<unsigned>(ESP.getCpuFreqMHz()) + " MHz  idle scale: " +
-        (gIdleCpuScaled ? "on" : "off"));
-    row(String("Profile idle threshold: ") + static_cast<unsigned>(profileIdleScaleThresholdMs() / 1000) + "s");
+    row(String("CPU: ") + static_cast<unsigned>(ESP.getCpuFreqMHz()) + " MHz [" +
+        (gIdleCpuScaled ? "idle-scaled" : "active") + "]");
+    row(String("Profile: ") + powerProfileName() + "  idle after: " +
+        static_cast<unsigned>(profileIdleScaleThresholdMs() / 1000) + "s");
+    row(String("Idle: ") + idleAuditStatusLine());
+    row(String("Static screen: ") + (isStaticIdleScreen(gScreen) ? "yes" : "no"));
+    row(String("Loop delay: ") + static_cast<unsigned>(loopDelayMs()) + "ms");
     row(String("Refresh mode: ") + refreshModeName());
     row(String("Redraw count: ") + static_cast<unsigned>(gDisplayRefreshCount));
-    row(String("Badge redraw count: ") + static_cast<unsigned>(gBadgeRedrawCount));
     row(String("Last refresh: ") + gLastRefreshReason);
-    row(String("Idle: ") + idleAuditStatusLine());
-    row(String("Loop delay: ") + static_cast<unsigned>(loopDelayMs()) + "ms");
     row(String("Power poll age: ") + static_cast<unsigned>(millis() - gLastPowerPollMs) + "ms");
-    row(String("Static screen: ") + (isStaticIdleScreen(gScreen) ? "yes" : "no"));
   } else if (gPowerAuditPage == 2) {
     row(String("Sleep mode: ") + badgeSleepModeName());
     row(String("Sleep status: ") + sleepAuditStatusLine());
@@ -6831,31 +6886,20 @@ void renderPowerAudit(const char* refreshReason = "mode switch") {
     row(String("Firmware: ") + kFirmwareVersion);
   }
 
+  // Standard 3-button footer: prev / home / next
+  const int32_t paFooterH = 58;
+  const int32_t paFooterY = display.height() - paFooterH - 10;
   const int32_t paGap = 10;
-  const int32_t paW = (display.width() - 52 - paGap) / 2;
-  const int32_t paH = 48;
-  const int32_t paRightX = 26 + paW + paGap;
-  const int32_t paButtonsY = display.height() - 58 - paH - paGap - paH - 10;
-  gPowerModeButton = {26, paButtonsY, paW, paH};
+  const int32_t paW = (display.width() - 52 - 2 * paGap) / 3;
+  gFilterButton = {26, paFooterY, paW, paFooterH};
+  gHomeButton = {26 + paW + paGap, paFooterY, paW, paFooterH};
+  gNextButton = {26 + 2 * (paW + paGap), paFooterY, paW, paFooterH};
+  gPowerModeButton = {};
   gPowerProfileButton = {};
   gBadgeSleepButton = {};
-  if (gPowerAuditPage == 1) {
-    gPowerProfileButton = {paRightX, paButtonsY, paW, paH};
-  } else {
-    gBadgeSleepButton = {paRightX, paButtonsY, paW, paH};
-  }
-  gFilterButton = {26, paButtonsY + paH + paGap, paW, paH};
-  gNextButton = {paRightX, paButtonsY + paH + paGap, paW, paH};
-  gHomeButton = {26, display.height() - 68, display.width() - 52, 58};
-  drawButton(gPowerModeButton, String("Power: ") + powerModeName());
-  if (gPowerAuditPage == 1) {
-    drawButton(gPowerProfileButton, String("Profile: ") + powerProfileName());
-  } else {
-    drawButton(gBadgeSleepButton, String("Sleep: ") + badgeSleepModeName());
-  }
-  drawButton(gFilterButton, String("< Page ") + (gPowerAuditPage + 1) + "/" + kPowerAuditPageCount);
-  drawButton(gNextButton, String("Page >"));
-  drawButton(gHomeButton, "Home");
+  drawButton(gFilterButton, "< Prev");
+  drawButton(gHomeButton, "", IconType::Home);
+  drawButton(gNextButton, "Next >");
 
   finishDisplayRefresh();
   logPowerAudit("power audit screen");
