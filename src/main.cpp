@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.6";
+constexpr const char* kFirmwareVersion = "v5.7";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -52,7 +52,7 @@ constexpr size_t kMaxExamPool = 180;
 constexpr uint8_t kMaxOptions = 4;
 constexpr uint8_t kMaxWrappedLines = 18;
 constexpr uint8_t kMaxReaderPageCount = 32;
-constexpr int32_t kCoachMargin = 34;
+constexpr int32_t kCoachMargin = 28;
 constexpr int32_t kCoachHeaderBottom = 132;
 constexpr const char* kHeaderSep = " | ";
 
@@ -3148,6 +3148,20 @@ void applySansBoldFont(uint8_t px) {
   display.setTextSize(1);
 }
 
+void applySansFont(uint8_t px) {
+  auto& display = M5.Display;
+  if (px >= 40) {
+    display.setFont(&fonts::FreeSans24pt7b);
+  } else if (px >= 31) {
+    display.setFont(&fonts::FreeSans18pt7b);
+  } else if (px >= 24) {
+    display.setFont(&fonts::FreeSans12pt7b);
+  } else {
+    display.setFont(&fonts::FreeSans9pt7b);
+  }
+  display.setTextSize(1);
+}
+
 void applyMonoBoldFont(uint8_t px) {
   auto& display = M5.Display;
   if (px >= 34) {
@@ -3174,6 +3188,20 @@ void applyTypographyFont(uint8_t px) {
   applyGothicFont(px);
 }
 
+void applyBodyFont(uint8_t px) {
+  if (gSettings.fontStyleMode == FontStyleMode::DebugMono) {
+    applyMonoBoldFont(px);
+    return;
+  }
+  if (gSettings.fontStyleMode == FontStyleMode::LargeReader ||
+      gSettings.fontStyleMode == FontStyleMode::SansBoldLike ||
+      gSettings.fontStyleMode == FontStyleMode::HighContrast) {
+    applySansFont(px);
+    return;
+  }
+  applyGothicFont(px);
+}
+
 uint16_t metadataTextColor() {
   auto& display = M5.Display;
   if (gSettings.contrastMode == ContrastMode::Max || gSettings.fontStyleMode == FontStyleMode::HighContrast) {
@@ -3195,6 +3223,10 @@ void applyCoachMetadataFont() {
 
 void applyCoachContentFont() {
   applyTypographyFont(coachTypography().bodyPx);
+}
+
+void applyCoachBodyFont() {
+  applyBodyFont(coachTypography().bodyPx);
 }
 
 void applyCoachQuestionFont() {
@@ -4748,7 +4780,7 @@ void appendGlossaryWrappedBody(std::vector<GlossaryRenderLine>& lines, const Str
   if (text.length() == 0) {
     return;
   }
-  applyCoachContentFont();
+  applyCoachBodyFont();
   std::vector<String> wrapped;
   wrapReaderTextToLines(text, width, wrapped, "glossary-body");
   const int32_t lineH = coachTypography().bodyLineHeight;
@@ -5174,7 +5206,7 @@ void drawGlossaryTermPage(const CoachItemView& item, const PracticeLayout& layou
         display.drawString(line.text, layout.contentX, y);
         break;
       case GlossaryLineKind::Body:
-        applyCoachContentFont();
+        applyCoachBodyFont();
         display.setTextColor(TFT_BLACK, TFT_WHITE);
         display.drawString(line.text, layout.contentX, y);
         break;
@@ -5221,7 +5253,7 @@ void drawFeedbackPage(const CoachItemView& item, const PracticeLayout& layout) {
         display.drawString(line.text, layout.contentX, y);
         break;
       case GlossaryLineKind::Body:
-        applyCoachContentFont();
+        applyCoachBodyFont();
         display.setTextColor(TFT_BLACK, TFT_WHITE);
         display.drawString(line.text, layout.contentX, y);
         break;
@@ -5255,9 +5287,9 @@ PracticeLayout practiceLayoutFor(FontSizeMode renderSize) {
 
   PracticeLayout layout;
   layout.renderSize = renderSize;
-  layout.contentX = 38;
+  layout.contentX = kCoachMargin;
   layout.contentY = 92;
-  layout.contentW = display.width() - 76;
+  layout.contentW = display.width() - kCoachMargin * 2;
   layout.buttonH = 58;
   layout.footerY = display.height() - layout.buttonH - 18;
   layout.contentH = layout.footerY - layout.contentY - 16;
@@ -5319,6 +5351,7 @@ PracticePageCounts practicePageCountsFor(const CoachItemView& item, const Practi
   gSettings.fontSizeMode = layout.renderSize;
   applyCoachContentFont();
   const ReaderPageSet prompt = buildReaderPages(practicePromptText(item), layout.contentW, layout.linesPerPage, "count-prompt");
+  applyCoachBodyFont();
   const ReaderPageSet spoken = buildReaderPages(item.spoken, layout.contentW, layout.linesPerPage, "count-spoken");
   const ReaderPageSet anchor = buildReaderPages(item.anchor, layout.contentW, layout.linesPerPage, "count-anchor");
   const ReaderPageSet watch = buildReaderPages(item.watch, layout.contentW, layout.linesPerPage, "count-watch");
@@ -5395,7 +5428,12 @@ void renderInterviewPracticeScreen() {
   } else {
     body = item.watch;
   }
-  applyCoachContentFont();
+  const bool isQuestion = strcmp(stageName, "Question") == 0;
+  if (isQuestion) {
+    applyCoachContentFont();
+  } else {
+    applyCoachBodyFont();
+  }
   ReaderPageSet pages = buildReaderPages(body, layout.contentW, layout.linesPerPage, stageName);
   if (localPage >= pages.pageCount) {
     localPage = pages.pageCount - 1;
@@ -5406,20 +5444,39 @@ void renderInterviewPracticeScreen() {
   auto& display = M5.Display;
   drawCompactReaderHeader(item, stageName, localPage + 1, localCount);
 
-  applyCoachContentFont();
+  if (isQuestion) {
+    applyCoachContentFont();
+  } else {
+    applyCoachBodyFont();
+  }
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
   drawReaderPage(pages, localPage, layout.contentX, layout.contentY, layout.lineHeight);
-  if (strcmp(stageName, "Question") == 0 && localPage == 0 && strlen(item.confidence) > 0) {
+  if (isQuestion && localPage == 0 && strlen(item.confidence) > 0) {
     const size_t startLine = static_cast<size_t>(localPage) * pages.linesPerPage;
     const size_t endLine = min(startLine + pages.linesPerPage, pages.lines.size());
-    const int32_t tagY = layout.contentY + static_cast<int32_t>(endLine - startLine) * layout.lineHeight + 14;
-    if (tagY + coachTypography().metadataLineHeight < layout.footerY - 8) {
+    const int32_t textBlockH = static_cast<int32_t>(endLine - startLine) * layout.lineHeight;
+    const int32_t labelH = coachTypography().metadataLineHeight + 2;
+    int32_t tagY = layout.contentY + textBlockH + 16;
+    const int32_t spaceLeft = layout.footerY - 12 - tagY;
+    if (spaceLeft >= labelH) {
       applyCoachMetadataFont();
       display.setTextColor(metadataTextColor(), TFT_WHITE);
-      display.drawString(sanitizeCoachText(String("Confidence: ") + item.confidence, "practice-confidence"),
-                         layout.contentX, tagY);
-      applyCoachContentFont();
+      display.drawString("Confidence", layout.contentX, tagY);
+      tagY += labelH;
+      applyCoachBodyFont();
+      display.setTextColor(TFT_BLACK, TFT_WHITE);
+      const String confText = sanitizeCoachText(item.confidence, "practice-confidence");
+      std::vector<String> confLines;
+      wrapReaderTextToLines(confText, layout.contentW, confLines, "confidence-wrap");
+      const int32_t bodyLineH = coachTypography().bodyLineHeight;
+      for (const String& cl : confLines) {
+        if (tagY + bodyLineH > layout.footerY - 4) {
+          break;
+        }
+        display.drawString(cl, layout.contentX, tagY);
+        tagY += bodyLineH;
+      }
       display.setTextColor(TFT_BLACK, TFT_WHITE);
     }
   }
@@ -6435,8 +6492,8 @@ void renderSettings(const char* refreshReason = "mode switch") {
   gFontHugeButton = {};
   gFontStyleButton = {36, 614, width - 72, 54};
   gRefreshModeButton = {36, 718, width - 72, 54};
-  gPowerModeButton = {36, 822, halfW, 54};
-  gBadgeSleepButton = {52 + halfW, 822, halfW, 54};
+  gPowerModeButton = {};
+  gBadgeSleepButton = {};
   gHomeButton = {36, display.height() - 60, 178, 50};
 
   drawButton(gOrientationButton, gSettings.orientationMode == OrientationMode::Strap ? "Strap 180" : "Handheld 0");
@@ -6462,9 +6519,8 @@ void renderSettings(const char* refreshReason = "mode switch") {
   drawButton(gRefreshModeButton, String(refreshModeName()) + " *");
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
-  display.drawString("Power / Badge sleep", 36, 792);
-  drawButton(gPowerModeButton, powerModeButtonLabel());
-  drawButton(gBadgeSleepButton, badgeSleepModeName());
+  display.drawString("Power", 36, 792);
+  display.drawString(String("  ") + powerModeName() + "  (change in Debug > Power Audit)", 36, 824);
   drawButton(gHomeButton, "Home");
 
   finishDisplayRefresh();
@@ -6638,6 +6694,15 @@ void renderPowerAudit(const char* refreshReason = "mode switch") {
   row(String("Last input: ") + static_cast<unsigned>(gLastUserActivityMs) + " ms");
   row(String("Power poll age ms: ") + static_cast<unsigned>(millis() - gLastPowerPollMs));
 
+  const int32_t paActionGap = 10;
+  const int32_t paActionW = (display.width() - 52 - paActionGap) / 2;
+  const int32_t paActionH = 50;
+  const int32_t paRightX = 26 + paActionW + paActionGap;
+  const int32_t paButtonsY = display.height() - 94 - paActionH - 12;
+  gPowerModeButton = {26, paButtonsY, paActionW, paActionH};
+  gBadgeSleepButton = {paRightX, paButtonsY, paActionW, paActionH};
+  drawButton(gPowerModeButton, String("Power: ") + powerModeName());
+  drawButton(gBadgeSleepButton, String("Sleep: ") + badgeSleepModeName());
   gHomeButton = {26, display.height() - 94, display.width() - 52, 58};
   drawButton(gHomeButton, "Home");
 
@@ -7109,7 +7174,17 @@ void handleTouch() {
   }
 
   if (gScreen == Screen::PowerAudit) {
-    if (hitTarget(gHomeButton, "home", tapX, tapY)) {
+    if (hitTarget(gPowerModeButton, "power mode", tapX, tapY)) {
+      cyclePowerMode();
+      saveSettings();
+      applyPowerPolicy("power mode switch");
+      renderPowerAudit("power mode switch");
+    } else if (hitTarget(gBadgeSleepButton, "badge sleep", tapX, tapY)) {
+      cycleBadgeSleepMode();
+      saveSettings();
+      applyPowerPolicy("badge sleep switch");
+      renderPowerAudit("badge sleep switch");
+    } else if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
     }
@@ -7461,16 +7536,6 @@ void handleTouch() {
       cycleRefreshMode();
       saveSettings();
       renderSettings("refresh mode switch");
-    } else if (hitTarget(gPowerModeButton, "power mode", tapX, tapY)) {
-      cyclePowerMode();
-      saveSettings();
-      applyPowerPolicy("power mode switch");
-      renderSettings("power mode switch");
-    } else if (hitTarget(gBadgeSleepButton, "badge sleep", tapX, tapY)) {
-      cycleBadgeSleepMode();
-      saveSettings();
-      applyPowerPolicy("badge sleep switch");
-      renderSettings("badge sleep switch");
     } else if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();

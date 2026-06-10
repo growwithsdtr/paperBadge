@@ -1,5 +1,7 @@
 # PaperCoach Embedded Deck Dump
 
+> **STALE — generated pre-v5.6 remap fix.** `Best: E/F` entries visible below reflect the old 6-option source indices before `tools/build_embedded_papercoach.py` began remapping `correct_index` to the embedded 4-option window. The live firmware (v5.6+) and `src/embedded_papercoach_deck.h` are correct. This file is regenerated on-device via SD dump; re-run only after a hardware QA session.
+
 Generated from `generated/papercoach/interview_cards.json`, `generated/papercoach/drills.json`, and `generated/papercoach/glossary.json`.
 
 Cards: 71
