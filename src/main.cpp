@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.7";
+constexpr const char* kFirmwareVersion = "v5.8-dev";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -52,7 +52,7 @@ constexpr size_t kMaxExamPool = 180;
 constexpr uint8_t kMaxOptions = 4;
 constexpr uint8_t kMaxWrappedLines = 18;
 constexpr uint8_t kMaxReaderPageCount = 32;
-constexpr int32_t kCoachMargin = 28;
+constexpr int32_t kCoachMargin = 20;
 constexpr int32_t kCoachHeaderBottom = 132;
 constexpr const char* kHeaderSep = " | ";
 
@@ -172,6 +172,12 @@ enum class BadgeSleepMode : uint8_t {
   Off = 0,
   Light = 1,
   DeepExperiment = 2,
+};
+
+enum class PowerProfile : uint8_t {
+  Balanced = 0,
+  Aggressive = 1,
+  BadgeMax = 2,
 };
 
 enum class FontStyleMode : uint8_t {
@@ -461,6 +467,11 @@ PracticeLayout practiceLayoutFor(FontSizeMode renderSize);
 uint8_t glossaryPageCountFor(const CoachItemView& item, const PracticeLayout& layout);
 uint8_t paginateGlossaryLines(const std::vector<GlossaryRenderLine>& lines, const PracticeLayout& layout,
                               uint16_t* pageStarts, uint8_t maxPages);
+void buildPracticeLines(const CoachItemView& item, const PracticeLayout& layout,
+                        std::vector<GlossaryRenderLine>& lines);
+uint8_t practiceStructuredPageCount(const CoachItemView& item, const PracticeLayout& layout);
+const char* powerProfileName();
+uint32_t profileIdleScaleThresholdMs();
 
 BadgeConfig gBadgeConfig;
 Settings gSettings;
@@ -527,6 +538,7 @@ Rect gLayoutDebugButton;
 Rect gRenderTraceButton;
 Rect gExportDeckButton;
 Rect gPowerAuditButton;
+Rect gPowerProfileButton;
 Rect gHelpButton;
 Rect gFontLabButton;
 Rect gVisualQaButton;
@@ -621,6 +633,8 @@ String gLastWakeReason = "not sleep";
 uint32_t gLastSleepAttemptMs = 0;
 uint32_t gLastLightSleepMs = 0;
 bool gIdleCpuScaled = false;
+PowerProfile gPowerProfile = PowerProfile::Balanced;
+uint8_t gPowerAuditPage = 0;
 uint32_t gInvalidAnswerKeyCount = 0;
 String gLastAnswerKeyWarning = "none";
 Screen gLastRenderedScreen = Screen::Badge;
@@ -1327,11 +1341,14 @@ void maybeScaleIdleCpu(const char* reason) {
   if (!kEnableIdleCpuScaling || gIdleCpuScaled || !isStaticIdleScreen(gScreen)) {
     return;
   }
+  if (gPowerProfile == PowerProfile::BadgeMax && gScreen != Screen::Badge) {
+    return;
+  }
   setCpuFrequencyMhz(kIdleCpuMhz);
   gIdleCpuScaled = ESP.getCpuFreqMHz() <= kIdleCpuMhz;
-  Serial.printf("Power CPU scale: idle requested=%uMHz actual=%uMHz reason=%s active=%s\n",
+  Serial.printf("Power CPU scale: idle requested=%uMHz actual=%uMHz profile=%s reason=%s active=%s\n",
                 static_cast<unsigned>(kIdleCpuMhz), static_cast<unsigned>(ESP.getCpuFreqMHz()),
-                reason && reason[0] != '\0' ? reason : "idle", gIdleCpuScaled ? "yes" : "no");
+                powerProfileName(), reason && reason[0] != '\0' ? reason : "idle", gIdleCpuScaled ? "yes" : "no");
 }
 
 String chargeStatusLine() {
@@ -1417,12 +1434,12 @@ void logPowerAudit(const char* reason) {
   const uint32_t activeLoopDelayMs = loopDelayMs();
 
   Serial.printf(
-      "Power audit: reason=%s mode=%s idle=%s batteryMv=%d level=%ld charge=%s currentMa=%ld vbusMv=%d usb=%s "
+      "Power audit: reason=%s mode=%s profile=%s idle=%s batteryMv=%d level=%ld charge=%s currentMa=%ld vbusMv=%d usb=%s "
       "wifi=%s bluetooth=%s imu=disabled speaker=stopped sd=%s refreshMode=%s idleStatus=\"%s\" badgeMode=%s "
       "badgeLang=%s autoInterval=%s staticBadge=%s cpuMhz=%u idleCpuScaled=%s badgeSleep=%s sleepStatus=\"%s\" lastSleep=\"%s\" "
       "lastWake=%s millis=%u redraws=%u refreshes=%u badgeRedraws=%u lastRefreshReason=\"%s\" lastInputMs=%u "
       "loopDelayMs=%u\n",
-      reason && reason[0] != '\0' ? reason : "audit", powerModeName(), gIdleModeActive ? "yes" : "no",
+      reason && reason[0] != '\0' ? reason : "audit", powerModeName(), powerProfileName(), gIdleModeActive ? "yes" : "no",
       static_cast<int>(batteryMv), static_cast<long>(level), chargingStateName(gCachedChargingState),
       static_cast<long>(currentMa), static_cast<int>(vbusMv), usbPowerName(vbusMv), wifiOff ? "off" : "on",
       bluetoothStarted ? "on" : "off", gSdMounted ? "mounted" : "missing", refreshModeName(),
@@ -1505,7 +1522,8 @@ void maybeEnterPowerIdle() {
     return;
   }
 
-  if (isStaticIdleScreen(gScreen) && elapsedMs >= kStaticScreenIdleMs) {
+  const uint32_t profileThresholdMs = profileIdleScaleThresholdMs();
+  if (isStaticIdleScreen(gScreen) && elapsedMs >= profileThresholdMs) {
     enterIdleMode("static screen light idle");
   } else if (gSettings.powerMode == PowerMode::BatterySaver && elapsedMs >= kBatterySaverIdleMs) {
     enterIdleMode("battery saver inactivity");
@@ -1554,10 +1572,16 @@ uint32_t loopDelayMs() {
     return 500;
   }
   if (gIdleModeActive && isStaticIdleScreen(gScreen)) {
-    return 250;
+    return gPowerProfile == PowerProfile::Aggressive ? 400 : 250;
   }
   if (gSettings.powerMode == PowerMode::BatterySaver || gSettings.powerMode == PowerMode::ConferenceBadge) {
     return 120;
+  }
+  if (gPowerProfile == PowerProfile::Aggressive && isStaticIdleScreen(gScreen)) {
+    return 100;
+  }
+  if (gPowerProfile == PowerProfile::BadgeMax && gScreen == Screen::Badge) {
+    return 200;
   }
   return 50;
 }
@@ -1587,6 +1611,45 @@ const char* contrastModeName() {
     case ContrastMode::Dark:
     default:
       return "Dark";
+  }
+}
+
+const char* powerProfileName() {
+  switch (gPowerProfile) {
+    case PowerProfile::Aggressive:
+      return "Aggressive";
+    case PowerProfile::BadgeMax:
+      return "Badge Max";
+    case PowerProfile::Balanced:
+    default:
+      return "Balanced";
+  }
+}
+
+void cyclePowerProfile() {
+  switch (gPowerProfile) {
+    case PowerProfile::Balanced:
+      gPowerProfile = PowerProfile::Aggressive;
+      break;
+    case PowerProfile::Aggressive:
+      gPowerProfile = PowerProfile::BadgeMax;
+      break;
+    case PowerProfile::BadgeMax:
+    default:
+      gPowerProfile = PowerProfile::Balanced;
+      break;
+  }
+}
+
+uint32_t profileIdleScaleThresholdMs() {
+  switch (gPowerProfile) {
+    case PowerProfile::Aggressive:
+      return 25000;
+    case PowerProfile::BadgeMax:
+      return 20000;
+    case PowerProfile::Balanced:
+    default:
+      return 60000;
   }
 }
 
@@ -1746,6 +1809,7 @@ void loadSettings() {
   const uint8_t refreshMode = gPrefs.getUChar("refresh", static_cast<uint8_t>(RefreshMode::Balanced));
   const uint8_t powerMode = gPrefs.getUChar("power", static_cast<uint8_t>(PowerMode::Normal));
   const uint8_t badgeSleepMode = gPrefs.getUChar("badgeSleep", static_cast<uint8_t>(BadgeSleepMode::Off));
+  const uint8_t powerProfile = gPrefs.getUChar("powerProfile", static_cast<uint8_t>(PowerProfile::Balanced));
   gPrefs.end();
 
   gSettings.orientationMode = orientation == static_cast<uint8_t>(OrientationMode::Handheld) ? OrientationMode::Handheld
@@ -1846,11 +1910,19 @@ void loadSettings() {
     gSettings.badgeSleepMode = BadgeSleepMode::Off;
   }
 
+  if (powerProfile == static_cast<uint8_t>(PowerProfile::Aggressive)) {
+    gPowerProfile = PowerProfile::Aggressive;
+  } else if (powerProfile == static_cast<uint8_t>(PowerProfile::BadgeMax)) {
+    gPowerProfile = PowerProfile::BadgeMax;
+  } else {
+    gPowerProfile = PowerProfile::Balanced;
+  }
+
   Serial.printf("Settings loaded: orientation=%s badgeLanguage=%s languageMode=%s autoInterval=%s font=%s style=%s "
-                "contrast=%s lineSpacing=%s refresh=%s power=%s badgeSleep=%s\n",
+                "contrast=%s lineSpacing=%s refresh=%s power=%s badgeSleep=%s profile=%s\n",
                 orientationModeName(), languageName(gBadgeLanguage), languageModeName(), autoRotateIntervalName(),
                 fontSizeModeName(), fontStyleModeName(), contrastModeName(), lineSpacingModeName(), refreshModeName(),
-                powerModeName(), badgeSleepModeName());
+                powerModeName(), badgeSleepModeName(), powerProfileName());
 }
 
 void saveSettings() {
@@ -1869,6 +1941,7 @@ void saveSettings() {
   gPrefs.putUChar("refreshV", 1);
   gPrefs.putUChar("power", static_cast<uint8_t>(gSettings.powerMode));
   gPrefs.putUChar("badgeSleep", static_cast<uint8_t>(gSettings.badgeSleepMode));
+  gPrefs.putUChar("powerProfile", static_cast<uint8_t>(gPowerProfile));
   gPrefs.end();
   Serial.printf("Settings saved: orientation=%s badgeLanguage=%s languageMode=%s autoInterval=%s font=%s style=%s "
                 "contrast=%s lineSpacing=%s refresh=%s power=%s badgeSleep=%s\n",
@@ -4404,10 +4477,29 @@ String compactQuestionReminder(const String& prompt) {
   return String("Q: ") + safe;
 }
 
+String formatDrillPrompt(const char* rawPrompt) {
+  if (!rawPrompt || rawPrompt[0] == '\0') {
+    return "";
+  }
+  const String text = rawPrompt;
+  const int colonPos = text.indexOf(": ");
+  if (colonPos < 0) {
+    return text;
+  }
+  String after = text.substring(colonPos + 2);
+  after.trim();
+  if (after.length() < 16 || after.indexOf(' ') < 0) {
+    return text;
+  }
+  const String before = text.substring(0, colonPos + 1);
+  return before + "\n" + after;
+}
+
 DrillPagePlan buildDrillPagePlan(const CoachItemView& item, const PracticeLayout& layout) {
   DrillPagePlan plan;
+  const String formattedPrompt = formatDrillPrompt(item.prompt);
   applyCoachQuestionFont();
-  plan.questionPages = buildReaderPages(item.prompt, layout.contentW, layout.questionLinesPerPage, "Question");
+  plan.questionPages = buildReaderPages(formattedPrompt, layout.contentW, layout.questionLinesPerPage, "Question");
   plan.optionPageCount = 0;
   plan.reminder = compactQuestionReminder(item.prompt);
 
@@ -4809,6 +4901,75 @@ void appendGlossarySection(std::vector<GlossaryRenderLine>& lines, const char* l
   labelLine.height = coachTypography().metadataLineHeight + 2;
   lines.push_back(labelLine);
   appendGlossaryWrappedBody(lines, sectionBody, width);
+}
+
+void buildPracticeLines(const CoachItemView& item, const PracticeLayout& layout,
+                        std::vector<GlossaryRenderLine>& lines) {
+  lines.clear();
+  if (item.type == CoachItemType::HostileFollowup) {
+    appendGlossarySection(lines, "Follow-up", coachPromptFor(item).c_str(), layout.contentW);
+    appendGlossarySection(lines, "Defense", item.answer, layout.contentW);
+    appendGlossarySection(lines, "Anchor", item.rubric, layout.contentW);
+  } else if (item.type == CoachItemType::WeakAnswer) {
+    appendGlossarySection(lines, "Question", coachPromptFor(item).c_str(), layout.contentW);
+    appendGlossarySection(lines, "Explanation", coachAnswerFor(item).c_str(), layout.contentW);
+  } else {
+    String questionText = sanitizeCoachText(item.title, "practice-title");
+    if (questionText.length() == 0) {
+      questionText = sanitizeCoachText(item.prompt, "practice-prompt");
+    }
+    appendGlossarySection(lines, "Question", questionText.c_str(), layout.contentW);
+    appendGlossarySection(lines, "Confidence", item.confidence, layout.contentW);
+    appendGlossarySection(lines, "Answer", item.spoken, layout.contentW);
+    appendGlossarySection(lines, "Anchor", item.anchor, layout.contentW);
+    appendGlossarySection(lines, "Watch-out", item.watch, layout.contentW);
+    appendGlossarySection(lines, "Follow-up", item.explanation, layout.contentW);
+  }
+  if (lines.empty()) {
+    appendGlossarySection(lines, "Card", "No content available.", layout.contentW);
+  }
+}
+
+uint8_t practiceStructuredPageCount(const CoachItemView& item, const PracticeLayout& layout) {
+  std::vector<GlossaryRenderLine> lines;
+  buildPracticeLines(item, layout, lines);
+  uint16_t pageStarts[kMaxReaderPageCount] = {};
+  return paginateGlossaryLines(lines, layout, pageStarts, countOf(pageStarts));
+}
+
+void drawPracticeStructuredPage(const CoachItemView& item, const PracticeLayout& layout,
+                                const std::vector<GlossaryRenderLine>& lines, uint8_t pageIndex,
+                                uint8_t pageCount) {
+  auto& display = M5.Display;
+  uint16_t pageStarts[kMaxReaderPageCount] = {};
+  const uint8_t computedPageCount = paginateGlossaryLines(lines, layout, pageStarts, countOf(pageStarts));
+  const uint8_t safePage = pageIndex < computedPageCount ? pageIndex : (computedPageCount > 0 ? computedPageCount - 1 : 0);
+  const size_t start = pageStarts[safePage];
+  const size_t end = safePage + 1 < computedPageCount ? pageStarts[safePage + 1] : lines.size();
+  display.setTextDatum(textdatum_t::top_left);
+  int32_t y = layout.contentY;
+  for (size_t index = start; index < end && index < lines.size(); ++index) {
+    const GlossaryRenderLine& gl = lines[index];
+    if (gl.kind == GlossaryLineKind::Space) {
+      y += gl.height;
+      continue;
+    }
+    if (gl.kind == GlossaryLineKind::Label) {
+      applyCoachMetadataFont();
+      display.setTextColor(metadataTextColor(), TFT_WHITE);
+      display.drawString(gl.text, layout.contentX, y);
+      y += gl.height;
+      continue;
+    }
+    applyCoachBodyFont();
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    if (gl.text.length() > 0) {
+      display.drawString(gl.text, layout.contentX, y);
+    }
+    y += gl.height;
+  }
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  (void)pageCount;
 }
 
 void buildGlossaryLines(const CoachItemView& item, const PracticeLayout& layout, std::vector<GlossaryRenderLine>& lines) {
@@ -5311,35 +5472,16 @@ FontSizeMode choosePracticeReaderSize(const CoachItemView& item, bool logDecisio
   const FontSizeMode savedSize = gSettings.fontSizeMode;
   gSettings.fontSizeMode = FontSizeMode::XL;
   PracticeLayout layout = practiceLayoutFor(FontSizeMode::XL);
-  applyCoachContentFont();
-  struct AutoFitProbe {
-    const char* name;
-    String body;
-  };
-  AutoFitProbe probes[] = {
-      {"Question", practicePromptText(item)},
-      {"Answer", item.spoken},
-      {"Anchor", item.anchor},
-      {"Watch-out", item.watch},
-  };
-  const char* crowdedStage = "Answer";
-  uint8_t crowdedPages = 0;
-  for (size_t index = 0; index < countOf(probes); ++index) {
-    ReaderPageSet pages = buildReaderPages(probes[index].body, layout.contentW, layout.linesPerPage, probes[index].name);
-    if (pages.pageCount > crowdedPages) {
-      crowdedPages = pages.pageCount;
-      crowdedStage = probes[index].name;
-    }
-  }
+  applyCoachBodyFont();
+  const uint8_t totalPages = practiceStructuredPageCount(item, layout);
+  const bool tooFewLines = layout.linesPerPage < 8;
   gSettings.fontSizeMode = savedSize;
 
-  const bool tooManyPages = crowdedPages > 4;
-  const bool tooFewLines = layout.linesPerPage < 8;
+  const bool tooManyPages = totalPages > 8;
   if (tooManyPages || tooFewLines) {
     if (logDecision) {
-      Serial.printf("Reader auto-fit: card=%s from=Reader L to=Reader M reason=%s stage=%s pages=%u linesPerPage=%u\n",
-                    item.id, tooManyPages ? "too-many-pages" : "too-few-lines", crowdedStage, crowdedPages,
-                    layout.linesPerPage);
+      Serial.printf("Reader auto-fit: card=%s from=Reader L to=Reader M reason=%s pages=%u linesPerPage=%u\n",
+                    item.id, tooManyPages ? "too-many-pages" : "too-few-lines", totalPages, layout.linesPerPage);
     }
     return FontSizeMode::Large;
   }
@@ -5370,9 +5512,13 @@ PracticePageCounts practicePageCountsFor(const CoachItemView& item, const Practi
 }
 
 uint8_t interviewStageCount(const CoachItemView& item) {
+  const FontSizeMode savedSize = gSettings.fontSizeMode;
   const FontSizeMode renderSize = choosePracticeReaderSize(item, false);
+  gSettings.fontSizeMode = renderSize;
   const PracticeLayout layout = practiceLayoutFor(renderSize);
-  return practicePageCountsFor(item, layout).totalPages;
+  const uint8_t count = practiceStructuredPageCount(item, layout);
+  gSettings.fontSizeMode = savedSize;
+  return count;
 }
 
 const char* practiceStageName(uint8_t stage, const PracticePageCounts& counts, uint8_t& localPage, uint8_t& localCount) {
@@ -5410,85 +5556,49 @@ void renderInterviewPracticeScreen() {
   const FontSizeMode renderSize = choosePracticeReaderSize(item, true);
   gSettings.fontSizeMode = renderSize;
   const PracticeLayout layout = practiceLayoutFor(renderSize);
-  const PracticePageCounts pageCounts = practicePageCountsFor(item, layout);
-  if (gCoachStage >= pageCounts.totalPages) {
-    gCoachStage = pageCounts.totalPages - 1;
-  }
 
-  uint8_t localPage = 0;
-  uint8_t localCount = 1;
-  const char* stageName = practiceStageName(gCoachStage, pageCounts, localPage, localCount);
-  String body;
-  if (strcmp(stageName, "Question") == 0) {
-    body = practicePromptText(item);
-  } else if (strcmp(stageName, "Answer") == 0) {
-    body = item.spoken;
-  } else if (strcmp(stageName, "Anchor") == 0) {
-    body = item.anchor;
-  } else {
-    body = item.watch;
+  std::vector<GlossaryRenderLine> practiceLines;
+  buildPracticeLines(item, layout, practiceLines);
+  uint16_t pageStarts[kMaxReaderPageCount] = {};
+  const uint8_t pageCount = paginateGlossaryLines(practiceLines, layout, pageStarts, countOf(pageStarts));
+
+  if (gCoachStage >= pageCount) {
+    gCoachStage = pageCount > 0 ? pageCount - 1 : 0;
   }
-  const bool isQuestion = strcmp(stageName, "Question") == 0;
-  if (isQuestion) {
-    applyCoachContentFont();
-  } else {
-    applyCoachBodyFont();
-  }
-  ReaderPageSet pages = buildReaderPages(body, layout.contentW, layout.linesPerPage, stageName);
-  if (localPage >= pages.pageCount) {
-    localPage = pages.pageCount - 1;
-  }
-  logReaderPagination(stageName, pages, layout);
-  recordRenderTrace(item, stageName, body, pages, localPage);
 
   auto& display = M5.Display;
-  drawCompactReaderHeader(item, stageName, localPage + 1, localCount);
+  display.setTextDatum(textdatum_t::top_left);
 
-  if (isQuestion) {
-    applyCoachContentFont();
-  } else {
-    applyCoachBodyFont();
-  }
-  display.setTextColor(TFT_BLACK, TFT_WHITE);
-  gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
-  drawReaderPage(pages, localPage, layout.contentX, layout.contentY, layout.lineHeight);
-  if (isQuestion && localPage == 0 && strlen(item.confidence) > 0) {
-    const size_t startLine = static_cast<size_t>(localPage) * pages.linesPerPage;
-    const size_t endLine = min(startLine + pages.linesPerPage, pages.lines.size());
-    const int32_t textBlockH = static_cast<int32_t>(endLine - startLine) * layout.lineHeight;
-    const int32_t labelH = coachTypography().metadataLineHeight + 2;
-    int32_t tagY = layout.contentY + textBlockH + 16;
-    const int32_t spaceLeft = layout.footerY - 12 - tagY;
-    if (spaceLeft >= labelH) {
-      applyCoachMetadataFont();
-      display.setTextColor(metadataTextColor(), TFT_WHITE);
-      display.drawString("Confidence", layout.contentX, tagY);
-      tagY += labelH;
-      applyCoachBodyFont();
-      display.setTextColor(TFT_BLACK, TFT_WHITE);
-      const String confText = sanitizeCoachText(item.confidence, "practice-confidence");
-      std::vector<String> confLines;
-      wrapReaderTextToLines(confText, layout.contentW, confLines, "confidence-wrap");
-      const int32_t bodyLineH = coachTypography().bodyLineHeight;
-      for (const String& cl : confLines) {
-        if (tagY + bodyLineH > layout.footerY - 4) {
-          break;
-        }
-        display.drawString(cl, layout.contentX, tagY);
-        tagY += bodyLineH;
-      }
-      display.setTextColor(TFT_BLACK, TFT_WHITE);
+  const int32_t headerW = display.width() - kCoachMargin * 2;
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  String headerLine = sanitizeCoachText(coachDisplayId(item), "practice-id");
+  headerLine = headerJoin2(headerLine, item.mustMaster ? "Must" : "Card");
+  if (item.section && item.section[0] != '\0') {
+    const String section = compactHeaderCategory(item.section);
+    if (section.length() > 0 && section != "Card") {
+      headerLine = headerJoin2(headerLine, section);
     }
   }
-
+  if (pageCount > 1) {
+    headerLine = headerJoin2(headerLine, headerPageText(gCoachStage + 1, pageCount));
+  }
+  drawReadableHeaderLine(headerLine, sanitizeCoachText(coachDisplayId(item), "practice-id-fallback"),
+                         kCoachMargin, 18, headerW);
+  String titleLine = sanitizeCoachText(item.title, "practice-title");
+  if (titleLine.length() > 0) {
+    drawReadableHeaderLine(titleLine, "", kCoachMargin, 54, headerW);
+  }
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  drawCoachFooterNav(hasPreviousCoachItem(), hasNextCoachItem());
 
+  gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
+  drawPracticeStructuredPage(item, layout, practiceLines, gCoachStage, pageCount);
+
+  drawCoachFooterNav(hasPreviousCoachItem(), hasNextCoachItem());
   gSettings.fontSizeMode = savedSize;
   finishDisplayRefresh();
-  Serial.printf("Practice shown: card=%s stage=%u/%u local=%s %u/%u reader=%s autoFit=%s\n", item.id, gCoachStage + 1,
-                pageCounts.totalPages, stageName, localPage + 1, localCount, shortFontSizeModeName(renderSize),
-                renderSize != canonicalFontSizeMode(savedSize) ? "yes" : "no");
+  Serial.printf("Practice shown: card=%s page=%u/%u reader=%s\n", item.id, gCoachStage + 1,
+                pageCount, shortFontSizeModeName(renderSize));
 }
 
 void renderCoachScreen() {
@@ -6492,7 +6602,7 @@ void renderSettings(const char* refreshReason = "mode switch") {
   gFontHugeButton = {};
   gFontStyleButton = {36, 614, width - 72, 54};
   gRefreshModeButton = {36, 718, width - 72, 54};
-  gPowerModeButton = {};
+  gPowerModeButton = {36, 852, width - 72, 52};
   gBadgeSleepButton = {};
   gHomeButton = {36, display.height() - 60, 178, 50};
 
@@ -6520,7 +6630,10 @@ void renderSettings(const char* refreshReason = "mode switch") {
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
   display.drawString("Power", 36, 792);
-  display.drawString(String("  ") + powerModeName() + "  (change in Debug > Power Audit)", 36, 824);
+  drawButton(gPowerModeButton, String(gSettings.powerMode == PowerMode::BatterySaver ? "Battery Saver *" : "Battery Saver"));
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachMetadataFont();
+  display.drawString("Advanced: Debug > Power Audit", 36, 916);
   drawButton(gHomeButton, "Home");
 
   finishDisplayRefresh();
@@ -6651,6 +6764,11 @@ void renderPowerAudit(const char* refreshReason = "mode switch") {
   prepareFullRefresh(refreshReason, true);
 
   auto& display = M5.Display;
+  constexpr uint8_t kPowerAuditPageCount = 4;
+  if (gPowerAuditPage >= kPowerAuditPageCount) {
+    gPowerAuditPage = 0;
+  }
+
   const int32_t level = batteryLevelPercent();
   const bool wifiOff = WiFi.getMode() == WIFI_OFF;
   const bool bluetoothStarted = btStarted();
@@ -6658,57 +6776,91 @@ void renderPowerAudit(const char* refreshReason = "mode switch") {
   display.setTextDatum(textdatum_t::top_left);
   applyCoachTitleFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.drawString("Power Audit", 28, 26);
+  const String pageLabel = String("Power Audit ") + (gPowerAuditPage + 1) + "/" + kPowerAuditPageCount;
+  display.drawString(pageLabel, 26, 26);
 
   applyCoachMetadataFont();
-  int32_t y = 82;
+  int32_t y = 78;
   const int32_t lineH = coachTypography().metadataLineHeight;
+  const int32_t maxY = display.height() - 200;
   auto row = [&](const String& text) {
-    TextLayoutResult result =
-        drawWrappedText(text, 28, y, display.width() - 56, lineH, 2, "power-audit-row", 1);
-    y += result.height + 6;
+    if (y >= maxY) return;
+    TextLayoutResult result = drawWrappedText(text, 26, y, display.width() - 52, lineH, 2, "power-audit-row", 1);
+    y += result.height + 5;
   };
 
-  row(String("Battery: ") + gCachedBatteryMv + "mV  " + level + "%");
-  row(String("USB/VBUS: ") + usbPowerName(gCachedVbusMv) + "  " + gCachedVbusMv + "mV");
-  row(String("Charge: ") + chargingStateName(gCachedChargingState) + "  " + gCachedBatteryCurrentMa + "mA");
-  row(String("Wi-Fi: ") + (wifiOff ? "off" : "on") + "  Bluetooth: " + (bluetoothStarted ? "on" : "off"));
-  row("IMU: disabled  Speaker: stopped");
-  row(String("SD: ") + (gSdMounted ? "mounted" : "missing"));
-  row(String("Refresh mode: ") + refreshModeName());
-  row(String("Idle: ") + idleAuditStatusLine());
-  row(String("CPU: ") + static_cast<unsigned>(ESP.getCpuFreqMHz()) + " MHz  idle scale: " +
-      (gIdleCpuScaled ? "on" : "off"));
-  row(String("Power mode: ") + powerModeName());
-  row(String("Sleep mode: ") + badgeSleepModeName());
-  row(String("Sleep status: ") + sleepAuditStatusLine());
-  row(String("Last sleep: ") + gLastSleepAttempt);
-  row(String("Wake reason: ") + gLastWakeReason);
-  row(String("Millis since boot: ") + static_cast<unsigned>(millis()));
-  row(String("Redraw count: ") + static_cast<unsigned>(gDisplayRefreshCount));
-  row(String("Refresh count: ") + static_cast<unsigned>(gDisplayRefreshCount));
-  row(String("Badge redraw count: ") + static_cast<unsigned>(gBadgeRedrawCount));
-  row(String("Last refresh: ") + gLastRefreshReason);
-  row(String("Answer keys invalid: ") + static_cast<unsigned>(gInvalidAnswerKeyCount));
-  row(String("Last key warning: ") + gLastAnswerKeyWarning);
-  row(String("Last input: ") + static_cast<unsigned>(gLastUserActivityMs) + " ms");
-  row(String("Power poll age ms: ") + static_cast<unsigned>(millis() - gLastPowerPollMs));
+  if (gPowerAuditPage == 0) {
+    row(String("Battery: ") + gCachedBatteryMv + "mV  " + level + "%");
+    row(String("USB/VBUS: ") + usbPowerName(gCachedVbusMv) + "  " + gCachedVbusMv + "mV");
+    row(String("Charge: ") + chargingStateName(gCachedChargingState) + "  " + gCachedBatteryCurrentMa + "mA");
+    row(String("Wi-Fi: ") + (wifiOff ? "off" : "on") + "  BT: " + (bluetoothStarted ? "on" : "off"));
+    row("IMU: disabled  Speaker: stopped");
+    row(String("SD: ") + (gSdMounted ? "mounted" : "missing"));
+    row(String("Power mode: ") + powerModeName());
+    row(String("Profile: ") + powerProfileName());
+  } else if (gPowerAuditPage == 1) {
+    row(String("CPU: ") + static_cast<unsigned>(ESP.getCpuFreqMHz()) + " MHz  idle scale: " +
+        (gIdleCpuScaled ? "on" : "off"));
+    row(String("Profile idle threshold: ") + static_cast<unsigned>(profileIdleScaleThresholdMs() / 1000) + "s");
+    row(String("Refresh mode: ") + refreshModeName());
+    row(String("Redraw count: ") + static_cast<unsigned>(gDisplayRefreshCount));
+    row(String("Badge redraw count: ") + static_cast<unsigned>(gBadgeRedrawCount));
+    row(String("Last refresh: ") + gLastRefreshReason);
+    row(String("Idle: ") + idleAuditStatusLine());
+    row(String("Loop delay: ") + static_cast<unsigned>(loopDelayMs()) + "ms");
+    row(String("Power poll age: ") + static_cast<unsigned>(millis() - gLastPowerPollMs) + "ms");
+    row(String("Static screen: ") + (isStaticIdleScreen(gScreen) ? "yes" : "no"));
+  } else if (gPowerAuditPage == 2) {
+    row(String("Sleep mode: ") + badgeSleepModeName());
+    row(String("Sleep status: ") + sleepAuditStatusLine());
+    row(String("Last sleep: ") + gLastSleepAttempt);
+    row(String("Wake reason: ") + gLastWakeReason);
+    row(String("Millis since boot: ") + static_cast<unsigned>(millis()));
+    row(String("Last input: ") + static_cast<unsigned>(gLastUserActivityMs) + "ms");
+    row("Deep sleep: blocked (touch wake unverified)");
+    row("Light sleep: allowed in Aggressive/BadgeMax");
+  } else {
+    row(String("Answer keys invalid: ") + static_cast<unsigned>(gInvalidAnswerKeyCount));
+    row(String("Last key warning: ") + gLastAnswerKeyWarning);
+    row(String("Sanitize total: ") + static_cast<unsigned>(gSanitizerReplacementTotal));
+    row(String("Last touch: ") + gLastTouchDownX + "," + gLastTouchDownY);
+    row(String("Last hit: ") + gLastHitTarget);
+    row(String("Deck source: ") + gCoachDeckSource);
+    row(String("Items: ") + static_cast<unsigned>(gCoachItemCount) + " drills: " +
+        static_cast<unsigned>(gCoachDrillCount));
+    row(String("Firmware: ") + kFirmwareVersion);
+  }
 
-  const int32_t paActionGap = 10;
-  const int32_t paActionW = (display.width() - 52 - paActionGap) / 2;
-  const int32_t paActionH = 50;
-  const int32_t paRightX = 26 + paActionW + paActionGap;
-  const int32_t paButtonsY = display.height() - 94 - paActionH - 12;
-  gPowerModeButton = {26, paButtonsY, paActionW, paActionH};
-  gBadgeSleepButton = {paRightX, paButtonsY, paActionW, paActionH};
+  const int32_t paGap = 10;
+  const int32_t paW = (display.width() - 52 - paGap) / 2;
+  const int32_t paH = 48;
+  const int32_t paRightX = 26 + paW + paGap;
+  const int32_t paButtonsY = display.height() - 58 - paH - paGap - paH - 10;
+  gPowerModeButton = {26, paButtonsY, paW, paH};
+  gPowerProfileButton = {};
+  gBadgeSleepButton = {};
+  if (gPowerAuditPage == 1) {
+    gPowerProfileButton = {paRightX, paButtonsY, paW, paH};
+  } else {
+    gBadgeSleepButton = {paRightX, paButtonsY, paW, paH};
+  }
+  gFilterButton = {26, paButtonsY + paH + paGap, paW, paH};
+  gNextButton = {paRightX, paButtonsY + paH + paGap, paW, paH};
+  gHomeButton = {26, display.height() - 68, display.width() - 52, 58};
   drawButton(gPowerModeButton, String("Power: ") + powerModeName());
-  drawButton(gBadgeSleepButton, String("Sleep: ") + badgeSleepModeName());
-  gHomeButton = {26, display.height() - 94, display.width() - 52, 58};
+  if (gPowerAuditPage == 1) {
+    drawButton(gPowerProfileButton, String("Profile: ") + powerProfileName());
+  } else {
+    drawButton(gBadgeSleepButton, String("Sleep: ") + badgeSleepModeName());
+  }
+  drawButton(gFilterButton, String("< Page ") + (gPowerAuditPage + 1) + "/" + kPowerAuditPageCount);
+  drawButton(gNextButton, String("Page >"));
   drawButton(gHomeButton, "Home");
 
   finishDisplayRefresh();
   logPowerAudit("power audit screen");
-  Serial.println("Power audit screen shown.");
+  Serial.printf("Power audit shown: page=%u/%u profile=%s\n", gPowerAuditPage + 1, kPowerAuditPageCount,
+                powerProfileName());
 }
 
 void renderVisualQa(const char* refreshReason = "mode switch") {
@@ -7174,6 +7326,7 @@ void handleTouch() {
   }
 
   if (gScreen == Screen::PowerAudit) {
+    constexpr uint8_t kPaPageCount = 4;
     if (hitTarget(gPowerModeButton, "power mode", tapX, tapY)) {
       cyclePowerMode();
       saveSettings();
@@ -7184,6 +7337,16 @@ void handleTouch() {
       saveSettings();
       applyPowerPolicy("badge sleep switch");
       renderPowerAudit("badge sleep switch");
+    } else if (hitTarget(gPowerProfileButton, "power profile", tapX, tapY)) {
+      cyclePowerProfile();
+      saveSettings();
+      renderPowerAudit("profile switch");
+    } else if (hitTarget(gFilterButton, "power audit prev page", tapX, tapY)) {
+      gPowerAuditPage = static_cast<uint8_t>((gPowerAuditPage + kPaPageCount - 1) % kPaPageCount);
+      renderPowerAudit("prev page");
+    } else if (hitTarget(gNextButton, "power audit next page", tapX, tapY)) {
+      gPowerAuditPage = static_cast<uint8_t>((gPowerAuditPage + 1) % kPaPageCount);
+      renderPowerAudit("next page");
     } else if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
@@ -7536,6 +7699,12 @@ void handleTouch() {
       cycleRefreshMode();
       saveSettings();
       renderSettings("refresh mode switch");
+    } else if (hitTarget(gPowerModeButton, "battery saver", tapX, tapY)) {
+      gSettings.powerMode =
+          gSettings.powerMode == PowerMode::BatterySaver ? PowerMode::Normal : PowerMode::BatterySaver;
+      saveSettings();
+      applyPowerPolicy("battery saver toggle");
+      renderSettings("power mode switch");
     } else if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();

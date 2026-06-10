@@ -1,4 +1,4 @@
-# PaperBadge Project State — v5.7 Handoff
+# PaperBadge Project State — v5.8-dev Handoff
 
 _Last updated: 2026-06-10_
 
@@ -8,75 +8,123 @@ _Last updated: 2026-06-10_
 
 | Item | Value |
 |------|-------|
-| HEAD | `6b8171b` — v5.7 refine typography margins and settings power UX |
+| HEAD | (see latest commit) |
 | Branch | `main` |
-| Remote sync | **In sync** — pushed to origin/main |
 | Remote | `https://github.com/growwithsdtr/paperBadge.git` |
 
 ---
 
 ## Firmware
 
-- **Version:** `v5.7` (`src/main.cpp:20`)
-- **Build:** SUCCESS — RAM 49.4% · Flash 47.3% · 10.80 s
-- **Upload:** SUCCESS — `/dev/tty.usbmodem1101`, 28.3 s
+- **Version:** `v5.8-dev` (`src/main.cpp:20`)
+- **Build:** SUCCESS — RAM 49.4% · Flash 47.4% · 10.76 s
+- **Upload:** SUCCESS — `/dev/tty.usbmodem1101`, 28.2 s
 
 ---
 
-## What Changed in v5.7
+## What Changed in v5.8-dev
 
-### Phase 1–5 — Typography (bold labels, regular body)
+### Phase 1+2+4 — Unified Structured Practice Reader
 
-Added `applySansFont()` → regular FreeSans (9/12/18/24pt7b, already in M5GFX).  
-Added `applyBodyFont()` / `applyCoachBodyFont()` — same size slot as content font but uses regular instead of bold.
+Replaced the four separate stages (Question / Answer / Anchor / Watch-out) with a single continuous structured card renderer using the `GlossaryRenderLine` infrastructure already used by Glossary and Feedback screens.
 
-**Where regular body font now applies:**
-- `appendGlossaryWrappedBody()` — Glossary Definition / Why it matters / Example body text
-- `drawGlossaryTermPage()` — `GlossaryLineKind::Body` rendering
-- `drawFeedbackPage()` — feedback body lines (Selected value, Best value, Why explanation)
-- `renderInterviewPracticeScreen()` — Answer, Anchor, Watch-out stages
-- `practicePageCountsFor()` — uses body font for spoken/anchor/watch page-count measurement
+**Sections per card type:**
+- QA card: Question, Confidence, Answer, Anchor, Watch-out, Follow-up (explanation if present)
+- HostileFollowup: Follow-up, Defense, Anchor
+- WeakAnswer: Question, Explanation
 
-**Still bold:** Question prompt, option buttons, section labels (Selected / Best / Why this is best / Definition / etc.), headers, titles, footer buttons.
+**Typography:**
+- Section labels: `applyCoachMetadataFont()` — small bold, metadata color
+- Body lines: `applyCoachBodyFont()` — regular/non-bold, large readable
+- Empty sections are skipped automatically
 
-### Phase 2 — Confidence wrapping
+**Header:**
+- Line 1: `{id} | {Must/Card} | {category}` (no stage name)
+- Line 2: card title/question (if present and fits)
+- Page number shown in header when >1 page
 
-The single-line `"Confidence: ..."` overflow is fixed.  
-Now renders: **"Confidence"** label (metadata bold) + wrapped body lines (regular body font) below it.  
-Each line is checked against `footerY - 4` before rendering — no clip.  
-If no vertical space, the block is skipped rather than clipped.
+**Navigation:**
+- Content tap top half = previous page
+- Content tap bottom half = next page
+- Footer left/right = previous/next card
+- Home = home (unchanged)
 
-### Phase 6 — Tighter margins
+**Confidence wrapping:**
+- Confidence is now a proper section in the structured card (label + wrapped body)
+- No longer clipped: paginated as part of the continuous reader
+
+### Phase 3 — Tighter Margins
 
 | Item | Before | After |
 |------|--------|-------|
-| `kCoachMargin` | 34 | 28 |
-| `practiceLayoutFor contentX` | 38 | `kCoachMargin` (28) |
-| `practiceLayoutFor contentW` | `width - 76` | `width - kCoachMargin*2` (width - 56) |
+| `kCoachMargin` | 28 | 20 |
 
-Headers and body are now aligned at x=28 (was 34/38). Body is 20px wider total.
+All content uses `kCoachMargin = 20` now. Headers and body aligned at x=20.
 
-### Phase 7 — Settings power simplified
+### Phase 5 — Drill/Exam Prompt Formatter
 
-**Settings screen** no longer shows the two cycling power buttons.  
-Shows: `Power: Battery Saver  (change in Debug > Power Audit)`
+Added `formatDrillPrompt()`: inserts a `\n` after `: ` when the text following the colon is ≥16 chars and contains a space. Prevents long prompts like "What is the risk in a weak answer to: Self-introduction / career & recent work?" from running inline.
 
-**Power Audit screen** gains two new cycling buttons above Home:
-- `Power: <mode>` — taps cycle through Normal / Battery Saver / Conference Badge
-- `Sleep: <mode>` — taps cycle through Off / Light / DeepExperiment
+Applied in `buildDrillPagePlan()`.
 
-Stored preferences are unchanged (same Preferences keys, same save/load logic).
+### Phase 6 — Settings Power Wording
 
-### Phase 8 — Power audit sanity (verified, no changes needed)
+Settings screen "Power" section now shows:
+- `Battery Saver` button (toggles Normal ↔ BatterySaver, shows `*` when active)
+- `Advanced: Debug > Power Audit` text hint below
 
-Confirmed in firmware:
-- Wi-Fi: `WiFi.mode(WIFI_OFF)` at boot
-- Bluetooth: never started
-- IMU: disabled (Debug screen: "imu off")
-- Speaker: stopped (Debug screen: "spk stopped")
-- Battery polling cached at `kPowerPollIntervalMs = 45000 ms`
-- CPU idle scaling: tracked via `gIdleCpuScaled` flag (Power Audit shows status)
-- No periodic redraw on static screens: redraw only triggered by input events / badge language timer
+Previously was a read-only status line. Now tappable.
+
+### Phase 7 — Power Audit Pagination (4 pages)
+
+Power Audit is now paginated into 4 pages, navigable with `< Page` / `Page >` buttons:
+
+| Page | Contents |
+|------|----------|
+| 1 | Battery/USB/radios/peripherals, Power mode, Profile |
+| 2 | CPU MHz / idle scale, profile threshold, Refresh, Redraw count, Loop delay, Static screen status |
+| 3 | Sleep mode/status, last sleep/wake, deep sleep block notice |
+| 4 | Answer key warnings, sanitizer, touch diagnostics, deck info, firmware version |
+
+Footer buttons on page 2: `Power: <mode>` + `Profile: <profile>` + `< Page` + `Page >` + `Home`
+Footer buttons on other pages: `Power: <mode>` + `Sleep: <mode>` + `< Page` + `Page >` + `Home`
+
+### Phase 8 — Experimental Power Profiles
+
+Added `PowerProfile` enum: **Balanced** (default), **Aggressive**, **BadgeMax**.
+
+| Profile | Idle scale threshold | Loop delay on static | Notes |
+|---------|---------------------|---------------------|-------|
+| Balanced | 60 s | 50 ms | Default, safe |
+| Aggressive | 25 s | 100 ms idle / 400 ms active-idle | Lower CPU sooner |
+| Badge Max | 20 s | 200 ms on badge | Badge-only, strongest safe experiment |
+
+- Profiles do **not** enable deep sleep by default
+- Deep sleep remains blocked (touch wake unverified on PaperS3)
+- Light sleep allowed only in Aggressive/BadgeMax (BadgeSleepMode.Light must be explicitly set)
+- CPU restores to 240 MHz on any input event before display refresh
+- Profile saved to Preferences key `"powerProfile"`
+- Cycled via `Profile: <name>` button on Power Audit page 2
+
+### Phase 9 — v6 Architecture Notes (docs only)
+
+Intended v6 main menu structure:
+```
+Main Menu:
+  Badge
+  Interview Prep: Practice / Drills / Exam / Glossary / Results
+  Japanese (v6): Practice / Drills / Exam / Glossary / Results
+  Settings
+  Debug
+```
+
+Japanese readiness requirements (not yet implemented):
+- Font: M5GFX `lgfxJapanGothic_*` or efontJA_*
+- Sanitizer must be made UTF-8 safe before enabling
+- Japanese wrapping without spaces
+- Generic section blocks (Prompt / Meaning / Grammar / Example / Answer / Explanation)
+
+Navigation model (long-press Home → main home) — not yet changed.
 
 ---
 
@@ -85,48 +133,46 @@ Confirmed in firmware:
 | Setting | Value |
 |---------|-------|
 | Font size | Reader M |
-| Font style | Sans Bold-like |
+| Font style | High Contrast |
 | Refresh mode | Balanced refresh |
-| Power | Battery Saver (set in Debug > Power Audit) |
+| Power | Battery Saver (toggle in Settings > Power) |
+| Power Profile | Balanced (change in Debug > Power Audit page 2) |
 
 ---
 
 ## Font Summary
 
-- **English body text:** `FreeSans9/12/18/24pt7b` (regular, non-bold) — added in v5.7 for body roles
-- **English labels/titles:** `FreeSansBold9/12/18/24pt7b` — all metadata, labels, headers, question prompts, option buttons
-- **Sans Bold-like and High Contrast** both resolve to FreeSansBold for labels and FreeSans (regular) for body
-- **LargeReader** same: FreeSansBold labels, FreeSans body
-- **DebugMono** uses FreeMonoBold throughout
-- **Future Japanese:** `M5GFX lgfxJapanGothic_*` or efont CJK — **not** FreeSans (no CJK). Requires UTF-8-safe sanitizer before enabling.
+- **English body text:** `FreeSans9/12/18/24pt7b` (regular, non-bold) — body roles
+- **English labels/titles:** `FreeSansBold9/12/18/24pt7b` — metadata, labels, headers, question prompts, option buttons
+- **Future Japanese:** `M5GFX lgfxJapanGothic_*` — **not** FreeSans (no CJK). Requires UTF-8-safe sanitizer.
 
 ---
 
 ## Remaining Known Issues
 
-1. **SD deck-dump Best: letter** — unguarded `'A' + item.correctIndex` at `src/main.cpp:4049` in debug SD dump path. Low priority.
-2. **`docs/embedded_deck_dump.md` stale** — stale notice added. Regenerate after next device QA session with SD dump.
+1. **SD deck-dump Best: letter** — unguarded `'A' + item.correctIndex` in debug SD dump path. Low priority.
+2. **`docs/embedded_deck_dump.md` stale** — regenerate after next device QA session.
 3. **Japanese / UTF-8** — no CJK font, no UTF-8 sanitizer. Out of scope.
 4. **Dynamic deck categories** — firmware-hardcoded; new grids require firmware change.
 5. **SRS / long-term history** — not implemented.
 6. **Glossary search** — not implemented.
-7. **Generic stages array** — still hardcoded.
-8. **Deep sleep** — remains experimental/debug-only; wake reliability not confirmed.
+7. **Deep sleep** — remains blocked (touch wake unverified on PaperS3).
+8. **Power Audit page 2 CPU idle shows post-scale value** — CPU only scales after idle threshold; during active use will show 240 MHz.
 
 ---
 
-## Next QA Photo Checklist (v5.7, max 10 photos)
+## QA Photo Checklist (v5.8-dev)
 
-1. Practice A04 Question page — confirm Confidence shows as label + wrapped body (not clipped)
-2. Practice Answer page (any long card) — confirm regular/non-bold body text, paragraph spacing
-3. Drill Weak Answer A01 — question + options at Reader M
-4. Drill feedback page — Selected label (bold) / body (regular) / Best label (bold) / body (regular) / Why (regular)
-5. Glossary term page — Term bold, Definition/Why/Example labels bold, body text regular
-6. Settings screen — confirm no power cycling buttons; shows `Power: Battery Saver` status text
-7. Debug > Power Audit — confirm `Power: <mode>` and `Sleep: <mode>` cycling buttons above Home
-8. Exam results screen — confirm layout unchanged
-9. Badge English render
-10. Debug Power Audit screen (full audit rows)
+1. Practice A04 — confirm unified reader, Confidence is a section (not inline), no clip
+2. Practice B16, C23, C24, E33, F41 — confirm confidence wrapping on long cards
+3. Practice any card — confirm header shows `{id} | {Must/Card} | {category}` (no stage name)
+4. Practice multi-page card — confirm `< page >` navigation works, footer left/right for cards
+5. Drill Weak Answer — confirm prompt breaks after `:` when applicable
+6. Drill feedback page — confirm label bold, body regular
+7. Settings screen — confirm Battery Saver button, `Advanced: Debug > Power Audit` hint
+8. Power Audit page 1 — battery/USB/radios/profile row
+9. Power Audit page 2 — CPU MHz, `Profile: Balanced` button, idle threshold
+10. Power Audit page 3 — sleep status, deep sleep blocked notice
 
 ---
 
