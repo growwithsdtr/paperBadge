@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.8-dev2";
+constexpr const char* kFirmwareVersion = "v5.8-dev3-power";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -633,6 +633,11 @@ String gLastWakeReason = "not sleep";
 uint32_t gLastSleepAttemptMs = 0;
 uint32_t gLastLightSleepMs = 0;
 bool gIdleCpuScaled = false;
+uint32_t gLastIdleScaledAtMs = 0;
+uint32_t gLastRestoreAtMs = 0;
+String gLastRestoreReason = "none";
+uint32_t gPreRenderCpuMhz = kActiveCpuMhz;
+bool gPreRenderWasIdleScaled = false;
 PowerProfile gPowerProfile = PowerProfile::Balanced;
 uint8_t gPowerAuditPage = 0;
 uint32_t gInvalidAnswerKeyCount = 0;
@@ -1327,14 +1332,35 @@ String idleAuditStatusLine() {
   return status;
 }
 
+String idleScaleBlockedReason() {
+  if (!kEnableIdleCpuScaling) return "scaling disabled in firmware";
+  if (gIdleCpuScaled) return "already idle-scaled";
+  if (gInputLocked) return "input locked";
+  if (gTouchActive) return "touch active";
+  if (!isStaticIdleScreen(gScreen)) return "screen not static";
+  if (gPowerProfile == PowerProfile::BadgeMax && gScreen != Screen::Badge) return "BadgeMax: only Badge screen";
+  return "";
+}
+
+String msSinceIdleScaled() {
+  if (gLastIdleScaledAtMs == 0) return "never";
+  const uint32_t elapsed = millis() - gLastIdleScaledAtMs;
+  if (elapsed >= 1000) {
+    return String(elapsed / 1000) + "s ago";
+  }
+  return String(elapsed) + "ms ago";
+}
+
 void restoreActiveCpu(const char* reason) {
   if (!gIdleCpuScaled) {
     return;
   }
+  gLastRestoreAtMs = millis();
+  gLastRestoreReason = reason && reason[0] != '\0' ? reason : "active";
   setCpuFrequencyMhz(kActiveCpuMhz);
   gIdleCpuScaled = false;
   Serial.printf("Power CPU scale: active %uMHz reason=%s\n", static_cast<unsigned>(ESP.getCpuFreqMHz()),
-                reason && reason[0] != '\0' ? reason : "active");
+                gLastRestoreReason.c_str());
 }
 
 void maybeScaleIdleCpu(const char* reason) {
@@ -1346,6 +1372,9 @@ void maybeScaleIdleCpu(const char* reason) {
   }
   setCpuFrequencyMhz(kIdleCpuMhz);
   gIdleCpuScaled = ESP.getCpuFreqMHz() <= kIdleCpuMhz;
+  if (gIdleCpuScaled) {
+    gLastIdleScaledAtMs = millis();
+  }
   Serial.printf("Power CPU scale: idle requested=%uMHz actual=%uMHz profile=%s reason=%s active=%s\n",
                 static_cast<unsigned>(kIdleCpuMhz), static_cast<unsigned>(ESP.getCpuFreqMHz()),
                 powerProfileName(), reason && reason[0] != '\0' ? reason : "idle", gIdleCpuScaled ? "yes" : "no");
@@ -6795,6 +6824,7 @@ void renderDebug(const char* refreshReason = "mode switch") {
   gExportDeckButton = {rightX, actionY, actionW, actionH};
   actionY += actionH + 8;
   gTouchDebugButton = {actionX, actionY, actionW, actionH};
+  gPowerProfileButton = {rightX, actionY, actionW, actionH};
   gHomeButton = {26, display.height() - 94, display.width() - 52, 58};
   drawButton(gHelpButton, "Help");
   drawButton(gPowerAuditButton, "Power Audit");
@@ -6805,6 +6835,7 @@ void renderDebug(const char* refreshReason = "mode switch") {
   drawButton(gRenderTraceButton, "Dump render trace");
   drawButton(gTouchDebugButton, gTouchDebugEnabled ? "Touch debug off" : "Touch debug on");
   drawButton(gExportDeckButton, "Export deck text");
+  drawButton(gPowerProfileButton, String("Profile: ") + powerProfileName());
   drawButton(gHomeButton, "Home");
 
   finishDisplayRefresh();
@@ -6814,6 +6845,10 @@ void renderDebug(const char* refreshReason = "mode switch") {
 }
 
 void renderPowerAudit(const char* refreshReason = "mode switch") {
+  // Capture CPU state BEFORE prepareFullRefresh() restores it to 240MHz
+  gPreRenderCpuMhz = static_cast<uint32_t>(ESP.getCpuFreqMHz());
+  gPreRenderWasIdleScaled = gIdleCpuScaled;
+
   gScreen = Screen::PowerAudit;
   applyAppRotation();
   prepareFullRefresh(refreshReason, true);
@@ -6854,24 +6889,43 @@ void renderPowerAudit(const char* refreshReason = "mode switch") {
     row(String("Power mode: ") + powerModeName());
     row(String("Profile: ") + powerProfileName());
   } else if (gPowerAuditPage == 1) {
-    row(String("CPU: ") + static_cast<unsigned>(ESP.getCpuFreqMHz()) + " MHz [" +
-        (gIdleCpuScaled ? "idle-scaled" : "active") + "]");
-    row(String("Profile: ") + powerProfileName() + "  idle after: " +
+    // CPU now always shows 240MHz (restored by prepareFullRefresh before this draw).
+    // gPreRenderCpuMhz / gPreRenderWasIdleScaled capture the state that existed at render time.
+    row(String("CPU now: ") + static_cast<unsigned>(ESP.getCpuFreqMHz()) + " MHz [active]");
+    if (gPreRenderWasIdleScaled) {
+      row(String("Pre-render: ") + gPreRenderCpuMhz + " MHz [was idle-scaled]");
+    } else {
+      row(String("Pre-render: ") + gPreRenderCpuMhz + " MHz [was active]");
+    }
+    row(String("Profile: ") + powerProfileName() + "  threshold: " +
         static_cast<unsigned>(profileIdleScaleThresholdMs() / 1000) + "s");
-    row(String("Idle: ") + idleAuditStatusLine());
-    row(String("Static screen: ") + (isStaticIdleScreen(gScreen) ? "yes" : "no"));
-    row(String("Loop delay: ") + static_cast<unsigned>(loopDelayMs()) + "ms");
-    row(String("Refresh mode: ") + refreshModeName());
-    row(String("Redraw count: ") + static_cast<unsigned>(gDisplayRefreshCount));
-    row(String("Last refresh: ") + gLastRefreshReason);
-    row(String("Power poll age: ") + static_cast<unsigned>(millis() - gLastPowerPollMs) + "ms");
+    row(String("Last scaled: ") + msSinceIdleScaled());
+    row(String("Last restore: ") + (gLastRestoreAtMs > 0 ? gLastRestoreReason : String("none")));
+    {
+      const uint32_t sinceInput = gLastUserActivityMs > 0 ? millis() - gLastUserActivityMs : 0;
+      const uint32_t threshold = profileIdleScaleThresholdMs();
+      row(String("Since input: ") + sinceInput + "ms / " + threshold + "ms threshold");
+    }
+    {
+      const String blocked = idleScaleBlockedReason();
+      if (blocked.length() > 0) {
+        row(String("Idle blocked: ") + blocked);
+      } else {
+        row(String("Eligible: yes  idle mode: ") + (gIdleModeActive ? "active" : "awake"));
+      }
+    }
+    row(String("Loop delay: ") + static_cast<unsigned>(loopDelayMs()) + "ms  refreshes: " +
+        static_cast<unsigned>(gDisplayRefreshCount));
   } else if (gPowerAuditPage == 2) {
     row(String("Sleep mode: ") + badgeSleepModeName());
     row(String("Sleep status: ") + sleepAuditStatusLine());
     row(String("Last sleep: ") + gLastSleepAttempt);
     row(String("Wake reason: ") + gLastWakeReason);
     row(String("Millis since boot: ") + static_cast<unsigned>(millis()));
-    row(String("Last input: ") + static_cast<unsigned>(gLastUserActivityMs) + "ms");
+    {
+      const uint32_t sinceInput = gLastUserActivityMs > 0 ? millis() - gLastUserActivityMs : 0;
+      row(String("Since input: ") + sinceInput + "ms");
+    }
     row("Deep sleep: blocked (touch wake unverified)");
     row("Light sleep: allowed in Aggressive/BadgeMax");
   } else {
@@ -7358,6 +7412,10 @@ void handleTouch() {
     } else if (hitTarget(gExportDeckButton, "export deck text", tapX, tapY)) {
       exportDeckTextToSd();
       renderDebug("deck export");
+    } else if (hitTarget(gPowerProfileButton, "power profile cycle", tapX, tapY)) {
+      cyclePowerProfile();
+      saveSettings();
+      renderDebug("profile switch");
     } else if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
