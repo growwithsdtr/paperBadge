@@ -1,4 +1,4 @@
-# PaperBadge Project State — v5.6 Handoff
+# PaperBadge Project State — v5.7 Handoff
 
 _Last updated: 2026-06-10_
 
@@ -8,49 +8,75 @@ _Last updated: 2026-06-10_
 
 | Item | Value |
 |------|-------|
-| HEAD | `589cbb1` — v5.6 fix drill keys feedback readability |
+| HEAD | `6b8171b` — v5.7 refine typography margins and settings power UX |
 | Branch | `main` |
-| Remote sync | **In sync** — pushed 2 commits (v5.5, v5.6) to origin/main |
+| Remote sync | **In sync** — pushed to origin/main |
 | Remote | `https://github.com/growwithsdtr/paperBadge.git` |
 
 ---
 
 ## Firmware
 
-- **Version:** `v5.6` (confirmed at `src/main.cpp:20` — `constexpr const char* kFirmwareVersion = "v5.6"`)
-- **Build:** SUCCESS — RAM 49.4% · Flash 47.0% · 3.55 s
-- **Upload:** SUCCESS — uploaded to `/dev/tty.usbmodem1101` (ESP32-S3, esptool 4.11, 28.5 s)
+- **Version:** `v5.7` (`src/main.cpp:20`)
+- **Build:** SUCCESS — RAM 49.4% · Flash 47.3% · 10.80 s
+- **Upload:** SUCCESS — `/dev/tty.usbmodem1101`, 28.3 s
 
 ---
 
-## Invalid Best: E/F Fix — Verified
+## What Changed in v5.7
 
-All three layers are correct in v5.6:
+### Phase 1–5 — Typography (bold labels, regular body)
 
-### 1. Build tool (`tools/build_embedded_papercoach.py`)
-- `embedded_options_for()` picks the best 4 options from 6-option source items, remapping `correct_index` via `keep_indices.index(source_correct)`.
-- After-remap validation loop (lines 162–163) flags any item where `correct_index >= option_count` and reports it.
-- Dry-run confirms **63 remaps, 0 invalid** after remap — all embedded drill correct indices are 0–3.
+Added `applySansFont()` → regular FreeSans (9/12/18/24pt7b, already in M5GFX).  
+Added `applyBodyFont()` / `applyCoachBodyFont()` — same size slot as content font but uses regular instead of bold.
 
-### 2. Embedded header (`src/embedded_papercoach_deck.h`)
-- All `correctIndex` values are now in range `[0, optionCount)` — confirmed by build tool's zero-invalid output.
+**Where regular body font now applies:**
+- `appendGlossaryWrappedBody()` — Glossary Definition / Why it matters / Example body text
+- `drawGlossaryTermPage()` — `GlossaryLineKind::Body` rendering
+- `drawFeedbackPage()` — feedback body lines (Selected value, Best value, Why explanation)
+- `renderInterviewPracticeScreen()` — Answer, Anchor, Watch-out stages
+- `practicePageCountsFor()` — uses body font for spoken/anchor/watch page-count measurement
 
-### 3. Runtime (`src/main.cpp`)
-- `hasValidAnswerKey()` (line 4227–4229): returns true only if `correctIndex < optionCount && optionCount <= kMaxOptions`.
-- `optionLetterOrDash()` (line 4232): returns `"-"` if `option >= optionCount`.
-- `optionLabelWithSafeLetter()` (line 4239): returns `"- "` if `option >= optionCount`.
-- Feedback page (line 4830): gates on `hasValidAnswerKey(item)` — shows `"-"` for invalid key, never a letter past D.
-- Results `bestOption` (line 4584): set to `255` when invalid; display path (line 6329) shows `"-"` when `bestOption >= kMaxOptions`.
-- Drills/Exam pool filter (line 2363): skips items where `!hasValidAnswerKey(item)`.
-- SD session log (line 4538): `bestOption < kMaxOptions ? letter : "-"`.
+**Still bold:** Question prompt, option buttons, section labels (Selected / Best / Why this is best / Definition / etc.), headers, titles, footer buttons.
 
-**Conclusion: `Best: E` / `Best: F` cannot appear in feedback, results, or session logs in v5.6.**
+### Phase 2 — Confidence wrapping
 
-### SD dump path caveat
-The SD deck-dump function (line 4048–4049) does `'A' + item.correctIndex` without a validity guard — this path only runs when the operator explicitly triggers a deck dump to SD card (debug). It does not affect any user-facing screen.
+The single-line `"Confidence: ..."` overflow is fixed.  
+Now renders: **"Confidence"** label (metadata bold) + wrapped body lines (regular body font) below it.  
+Each line is checked against `footerY - 4` before rendering — no clip.  
+If no vertical space, the block is skipped rather than clipped.
 
-### `docs/embedded_deck_dump.md`
-**Marked stale.** This file was generated on-device pre-v5.6 and contains `Best: E/F` entries reflecting the old pre-remap indices. A stale notice has been prepended to the file. There is no Python path to regenerate it — it requires a device SD dump session. Regenerate only after next hardware QA session.
+### Phase 6 — Tighter margins
+
+| Item | Before | After |
+|------|--------|-------|
+| `kCoachMargin` | 34 | 28 |
+| `practiceLayoutFor contentX` | 38 | `kCoachMargin` (28) |
+| `practiceLayoutFor contentW` | `width - 76` | `width - kCoachMargin*2` (width - 56) |
+
+Headers and body are now aligned at x=28 (was 34/38). Body is 20px wider total.
+
+### Phase 7 — Settings power simplified
+
+**Settings screen** no longer shows the two cycling power buttons.  
+Shows: `Power: Battery Saver  (change in Debug > Power Audit)`
+
+**Power Audit screen** gains two new cycling buttons above Home:
+- `Power: <mode>` — taps cycle through Normal / Battery Saver / Conference Badge
+- `Sleep: <mode>` — taps cycle through Off / Light / DeepExperiment
+
+Stored preferences are unchanged (same Preferences keys, same save/load logic).
+
+### Phase 8 — Power audit sanity (verified, no changes needed)
+
+Confirmed in firmware:
+- Wi-Fi: `WiFi.mode(WIFI_OFF)` at boot
+- Bluetooth: never started
+- IMU: disabled (Debug screen: "imu off")
+- Speaker: stopped (Debug screen: "spk stopped")
+- Battery polling cached at `kPowerPollIntervalMs = 45000 ms`
+- CPU idle scaling: tracked via `gIdleCpuScaled` flag (Power Audit shows status)
+- No periodic redraw on static screens: redraw only triggered by input events / badge language timer
 
 ---
 
@@ -61,46 +87,46 @@ The SD deck-dump function (line 4048–4049) does `'A' + item.correctIndex` with
 | Font size | Reader M |
 | Font style | Sans Bold-like |
 | Refresh mode | Balanced refresh |
-| Power | Battery Saver |
+| Power | Battery Saver (set in Debug > Power Audit) |
 
 ---
 
 ## Font Summary
 
-- **English rendering:** Adafruit GFX bitmap buckets — `FreeSans` and `FreeSansBold` built into the library.
-- **Sans Bold-like** and **High Contrast** both resolve to `FreeSansBold` at the glyph level; the difference is layout density and content weight, not the actual typeface.
-- **Future Japanese:** Use `M5GFX` IPA Japanese fonts (`lgfxJapanGothic_*`) or efont CJK — **not** `FreeSans` variants, which have no CJK coverage.
-- **Japanese support also requires** a UTF-8-safe text sanitizer; the current sanitizer is ASCII-path only.
+- **English body text:** `FreeSans9/12/18/24pt7b` (regular, non-bold) — added in v5.7 for body roles
+- **English labels/titles:** `FreeSansBold9/12/18/24pt7b` — all metadata, labels, headers, question prompts, option buttons
+- **Sans Bold-like and High Contrast** both resolve to FreeSansBold for labels and FreeSans (regular) for body
+- **LargeReader** same: FreeSansBold labels, FreeSans body
+- **DebugMono** uses FreeMonoBold throughout
+- **Future Japanese:** `M5GFX lgfxJapanGothic_*` or efont CJK — **not** FreeSans (no CJK). Requires UTF-8-safe sanitizer before enabling.
 
 ---
 
 ## Remaining Known Issues
 
-1. **SD deck-dump Best: letter** — unguarded `'A' + item.correctIndex` on line 4048–4049 of the dump-to-SD path. Low priority (debug feature, not user-facing).
-2. **`docs/embedded_deck_dump.md` stale** — shows pre-remap `Best: E/F`; stale notice added. Must be regenerated on-device.
-3. **Japanese / UTF-8** — no CJK font, no UTF-8 sanitizer. Out of scope for current sprint.
-4. **Dynamic deck categories** — category grid is firmware-hardcoded; adding new category grids requires a firmware change.
-5. **Category cap** — fixed at current count; increase needs firmware and schema work.
-6. **SRS / long-term history** — not implemented.
-7. **Glossary search** — not implemented.
-8. **Generic stages array** — stages are still hardcoded; schema refactor deferred.
+1. **SD deck-dump Best: letter** — unguarded `'A' + item.correctIndex` at `src/main.cpp:4049` in debug SD dump path. Low priority.
+2. **`docs/embedded_deck_dump.md` stale** — stale notice added. Regenerate after next device QA session with SD dump.
+3. **Japanese / UTF-8** — no CJK font, no UTF-8 sanitizer. Out of scope.
+4. **Dynamic deck categories** — firmware-hardcoded; new grids require firmware change.
+5. **SRS / long-term history** — not implemented.
+6. **Glossary search** — not implemented.
+7. **Generic stages array** — still hardcoded.
+8. **Deep sleep** — remains experimental/debug-only; wake reliability not confirmed.
 
 ---
 
-## Next QA Photo Checklist (v5.6, max 10 photos)
+## Next QA Photo Checklist (v5.7, max 10 photos)
 
-Per `docs/QA_GUIDE.md`:
-
-1. Static Badge screen
-2. Settings power row — `Conf. Badge` / Badge sleep labels
-3. Practice large Answer page — confirm paragraph spacing
-4. Weak Answer A01 question + choices at Reader M — confirm no `Best: E/F`
-5. Metric Precision metric-01 question + choices at Reader M
-6. A longer Exam question (+ options page if split)
-7. Drill feedback page — Selected / Best / Why this is best blocks — confirm Best shows A–D or `-`
-8. Help / Legend — confirm wrapped long lines
-9. Results Recent misses page after at least one miss
-10. Debug Power Audit screen
+1. Practice A04 Question page — confirm Confidence shows as label + wrapped body (not clipped)
+2. Practice Answer page (any long card) — confirm regular/non-bold body text, paragraph spacing
+3. Drill Weak Answer A01 — question + options at Reader M
+4. Drill feedback page — Selected label (bold) / body (regular) / Best label (bold) / body (regular) / Why (regular)
+5. Glossary term page — Term bold, Definition/Why/Example labels bold, body text regular
+6. Settings screen — confirm no power cycling buttons; shows `Power: Battery Saver` status text
+7. Debug > Power Audit — confirm `Power: <mode>` and `Sleep: <mode>` cycling buttons above Home
+8. Exam results screen — confirm layout unchanged
+9. Badge English render
+10. Debug Power Audit screen (full audit rows)
 
 ---
 
@@ -108,7 +134,8 @@ Per `docs/QA_GUIDE.md`:
 
 - Japanese/N3 content schema
 - UTF-8 sanitizer overhaul
-- External font loading (efont, lgfxJapanGothic, etc.)
+- External font loading
 - SRS / spaced repetition
 - New drill or card content
 - Broad UI redesign
+- Deep sleep by default
