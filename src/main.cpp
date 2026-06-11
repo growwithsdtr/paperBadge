@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.8-dev4-powerlab";
+constexpr const char* kFirmwareVersion = "v5.8-dev5-kindlepower";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -41,7 +41,7 @@ constexpr bool kEnableIdleCpuScaling = true;
 constexpr uint32_t kActiveCpuMhz = 240;
 constexpr uint32_t kIdleCpuMhz = 80;
 constexpr uint32_t kPowerPollIntervalMs = 45000;
-constexpr uint32_t kPostTouchIdleGuardMs = 5000;
+constexpr uint32_t kPostTouchIdleGuardMs = 2000;
 constexpr uint32_t kHardCleanTransitionLimit = 14;
 constexpr int32_t kHitboxPadding = 10;
 constexpr size_t kMaxCoachItems = 180;
@@ -179,6 +179,13 @@ enum class PowerProfile : uint8_t {
   Balanced = 0,
   Aggressive = 1,
   BadgeMax = 2,
+};
+
+enum class PowerStage : uint8_t {
+  Active = 0,
+  WarmIdle = 1,
+  LightNap = 2,
+  Hibernate = 3,
 };
 
 enum class FontStyleMode : uint8_t {
@@ -472,8 +479,12 @@ void buildPracticeLines(const CoachItemView& item, const PracticeLayout& layout,
                         std::vector<GlossaryRenderLine>& lines);
 uint8_t practiceStructuredPageCount(const CoachItemView& item, const PracticeLayout& layout);
 const char* powerProfileName();
+const char* powerStageName(PowerStage stage);
+bool isVerboseLogOk();
 uint32_t profileIdleScaleThresholdMs();
+uint32_t profileLightSleepIdleMs();
 uint32_t profileBatteryPollMs();
+void enterPowerStage(PowerStage newStage);
 
 BadgeConfig gBadgeConfig;
 Settings gSettings;
@@ -653,6 +664,18 @@ uint8_t gPowerLabPage = 0;
 uint32_t gRedrawWhileIdleCount = 0;
 uint32_t gLightSleepEnteredCount = 0;
 uint32_t gLightSleepWakeCount = 0;
+// Power stage ladder — tracks Active/WarmIdle/LightNap/Hibernate transitions
+PowerStage gPowerStage = PowerStage::Active;
+PowerStage gLastPowerStage = PowerStage::Active;
+uint32_t gStageTransitionCount = 0;
+uint32_t gStageEnteredAtMs = 0;
+uint32_t gLightSleepTotalMs = 0;
+uint32_t gLightSleepAttemptCount = 0;
+uint32_t gLightSleepFailedCount = 0;
+uint32_t gLastLightSleepDurationMs = 0;
+uint32_t gLongestLightSleepMs = 0;
+bool gHibernateArmed = false;
+bool gInputDetectedAfterWake = false;
 uint32_t gInvalidAnswerKeyCount = 0;
 String gLastAnswerKeyWarning = "none";
 Screen gLastRenderedScreen = Screen::Badge;
@@ -1289,7 +1312,7 @@ int32_t batteryLevelPercent() {
     gCachedVbusMv = M5.Power.getVBUSVoltage();
     gCachedChargingState = M5.Power.isCharging();
     gLastPowerPollMs = now;
-    Serial.printf("Power poll: batteryMv=%d level=%ld currentMa=%ld vbusMv=%d charge=%s\n",
+    if (isVerboseLogOk()) Serial.printf("Power poll: batteryMv=%d level=%ld currentMa=%ld vbusMv=%d charge=%s\n",
                   static_cast<int>(gCachedBatteryMv), static_cast<long>(gCachedBatteryLevel),
                   static_cast<long>(gCachedBatteryCurrentMa), static_cast<int>(gCachedVbusMv),
                   chargingStateName(gCachedChargingState));
@@ -1331,6 +1354,11 @@ String batteryStatusLine() {
     status += "--%";
   }
   return status;
+}
+
+bool isVerboseLogOk() {
+  if (!gIdleModeActive) return true;
+  return gPowerProfile == PowerProfile::Balanced;
 }
 
 String idleAuditStatusLine() {
@@ -1381,6 +1409,7 @@ void restoreActiveCpu(const char* reason) {
   ++gCpuRestoreCount;
   setCpuFrequencyMhz(kActiveCpuMhz);
   gIdleCpuScaled = false;
+  enterPowerStage(PowerStage::Active);
   Serial.printf("Power CPU scale: active %uMHz reason=%s last80dur=%ums cumulative=%ums\n",
                 static_cast<unsigned>(ESP.getCpuFreqMHz()), gLastRestoreReason.c_str(),
                 static_cast<unsigned>(gLast80MhzDurationMs), static_cast<unsigned>(gCumulative80MhzMs));
@@ -1398,6 +1427,7 @@ void maybeScaleIdleCpu(const char* reason) {
   if (gIdleCpuScaled) {
     gLastIdleScaledAtMs = millis();
     ++gCpuScaleCount;
+    enterPowerStage(PowerStage::WarmIdle);
   }
   Serial.printf("Power CPU scale: idle requested=%uMHz actual=%uMHz profile=%s reason=%s active=%s scaleCount=%u\n",
                 static_cast<unsigned>(kIdleCpuMhz), static_cast<unsigned>(ESP.getCpuFreqMHz()),
@@ -1546,6 +1576,7 @@ void applyPowerPolicy(const char* reason) {
 void recordUserActivity(const char* reason) {
   restoreActiveCpu(reason);
   gLastUserActivityMs = millis();
+  gInputDetectedAfterWake = false;
   if (gIdleModeActive) {
     gIdleModeActive = false;
     Serial.printf("Power idle exit: mode=%s reason=%s\n", powerModeName(),
@@ -1588,50 +1619,75 @@ void maybeEnterPowerIdle() {
 }
 
 void maybeEnterBadgeSleep() {
-  if (gScreen != Screen::Badge || gSettings.badgeSleepMode == BadgeSleepMode::Off || gInputLocked || gTouchActive ||
+  if (gSettings.badgeSleepMode == BadgeSleepMode::Off || gInputLocked || gTouchActive ||
       gLastUserActivityMs == 0) {
     return;
   }
+  if (!isStaticIdleScreen(gScreen) && gScreen != Screen::Badge) {
+    return;
+  }
   const uint32_t now = millis();
-  if (now - gLastUserActivityMs < kBadgeLightSleepIdleMs) {
+  const uint32_t lightSleepThresholdMs = profileLightSleepIdleMs();
+  if (now - gLastUserActivityMs < lightSleepThresholdMs) {
     return;
   }
 
   if (gSettings.badgeSleepMode == BadgeSleepMode::DeepExperiment) {
-    if (now - gLastSleepAttemptMs >= kBadgeLightSleepIdleMs) {
+    if (now - gLastSleepAttemptMs >= lightSleepThresholdMs) {
       gLastSleepAttemptMs = now;
       gLastSleepAttempt = "deep blocked: touch wake unverified";
-      Serial.println("Badge deep sleep experiment blocked: safe PaperS3 touch wake source is not verified.");
+      Serial.println("Hibernate blocked: safe PaperS3 touch wake source is not verified.");
     }
     return;
   }
 
-  if (gSettings.badgeSleepMode == BadgeSleepMode::Light && now - gLastLightSleepMs >= 5000) {
-    gLastSleepAttemptMs = now;
-    gLastSleepAttempt = "light sleep timer 2s";
-    ++gLightSleepEnteredCount;
-    disableUnusedRadiosAndPeripherals("badge light sleep");
-    Serial.printf("Badge light sleep entry: timer=2s touchWake=not-used display=static entered=%u\n",
-                  static_cast<unsigned>(gLightSleepEnteredCount));
-    esp_sleep_enable_timer_wakeup(kBadgeLightSleepDurationUs);
-    esp_light_sleep_start();
-    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
-    ++gLightSleepWakeCount;
-    gLastLightSleepMs = millis();
-    gLastWakeReason = wakeReasonName(esp_sleep_get_wakeup_cause());
-    Serial.printf("Badge light sleep wake: reason=%s millis=%u wakeCount=%u\n", gLastWakeReason.c_str(),
-                  static_cast<unsigned>(gLastLightSleepMs), static_cast<unsigned>(gLightSleepWakeCount));
+  // Light sleep timer nap cycle: 2s nap, then wake and poll touch.
+  // Normal taps during the nap are missed; tap-and-hold ~2s will be detected.
+  if (now - gLastLightSleepMs < 1000) {
+    return;  // minimum 1s gap between nap attempts
+  }
+
+  ++gLightSleepAttemptCount;
+  gLastSleepAttemptMs = now;
+  gLastSleepAttempt = "light nap 2s timer";
+  disableUnusedRadiosAndPeripherals("light nap entry");
+  Serial.printf("Light nap entry: attempt=%u screen=%s idle=%ums\n",
+                static_cast<unsigned>(gLightSleepAttemptCount), screenName(gScreen),
+                static_cast<unsigned>(now - gLastUserActivityMs));
+  enterPowerStage(PowerStage::LightNap);
+  ++gLightSleepEnteredCount;
+  esp_sleep_enable_timer_wakeup(kBadgeLightSleepDurationUs);
+  esp_light_sleep_start();
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+
+  const uint32_t wakeNow = millis();
+  const uint32_t napDur = wakeNow > now ? wakeNow - now : 0;
+  gLastLightSleepDurationMs = napDur;
+  gLightSleepTotalMs += napDur;
+  if (napDur > gLongestLightSleepMs) gLongestLightSleepMs = napDur;
+  ++gLightSleepWakeCount;
+  gLastLightSleepMs = wakeNow;
+  gLastWakeReason = wakeReasonName(esp_sleep_get_wakeup_cause());
+  enterPowerStage(PowerStage::WarmIdle);
+  Serial.printf("Light nap wake: reason=%s dur=%ums total=%ums wakes=%u\n",
+                gLastWakeReason.c_str(), static_cast<unsigned>(napDur),
+                static_cast<unsigned>(gLightSleepTotalMs),
+                static_cast<unsigned>(gLightSleepWakeCount));
+  // Poll touch post-wake to detect any held input
+  M5.update();
+  if (M5.Touch.getCount() > 0) {
+    gInputDetectedAfterWake = true;
   }
 }
 
 uint32_t loopDelayMs() {
   if (gIdleModeActive && gSettings.powerMode == PowerMode::ConferenceBadge && gScreen == Screen::Badge) {
-    return 500;
+    return 600;
   }
   if (gIdleModeActive && isStaticIdleScreen(gScreen)) {
-    if (gPowerProfile == PowerProfile::BadgeMax) return 600;
-    if (gPowerProfile == PowerProfile::Aggressive) return 400;
-    return 250;
+    if (gPowerProfile == PowerProfile::BadgeMax) return 800;
+    if (gPowerProfile == PowerProfile::Aggressive) return 500;
+    return 300;
   }
   if (gSettings.powerMode == PowerMode::BatterySaver || gSettings.powerMode == PowerMode::ConferenceBadge) {
     return 120;
@@ -1640,7 +1696,7 @@ uint32_t loopDelayMs() {
     return 100;
   }
   if (gPowerProfile == PowerProfile::BadgeMax && gScreen == Screen::Badge) {
-    return 200;
+    return 250;
   }
   return 50;
 }
@@ -1685,6 +1741,24 @@ const char* powerProfileName() {
   }
 }
 
+const char* powerStageName(PowerStage stage) {
+  switch (stage) {
+    case PowerStage::WarmIdle:  return "WarmIdle";
+    case PowerStage::LightNap:  return "LightNap";
+    case PowerStage::Hibernate: return "Hibernate";
+    case PowerStage::Active:
+    default:                    return "Active";
+  }
+}
+
+void enterPowerStage(PowerStage newStage) {
+  if (gPowerStage == newStage) return;
+  gLastPowerStage = gPowerStage;
+  gPowerStage = newStage;
+  ++gStageTransitionCount;
+  gStageEnteredAtMs = millis();
+}
+
 void cyclePowerProfile() {
   switch (gPowerProfile) {
     case PowerProfile::Balanced:
@@ -1702,13 +1776,19 @@ void cyclePowerProfile() {
 
 uint32_t profileIdleScaleThresholdMs() {
   switch (gPowerProfile) {
-    case PowerProfile::Aggressive:
-      return 25000;
-    case PowerProfile::BadgeMax:
-      return 20000;
+    case PowerProfile::Aggressive: return 7000;
+    case PowerProfile::BadgeMax:   return 4000;
     case PowerProfile::Balanced:
-    default:
-      return 60000;
+    default:                        return 12000;
+  }
+}
+
+uint32_t profileLightSleepIdleMs() {
+  switch (gPowerProfile) {
+    case PowerProfile::Aggressive: return 90000;   // 90s
+    case PowerProfile::BadgeMax:   return 40000;   // 40s
+    case PowerProfile::Balanced:
+    default:                        return 420000;  // 7 min
   }
 }
 
@@ -6917,7 +6997,7 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
   prepareFullRefresh(refreshReason, true);
 
   auto& display = M5.Display;
-  constexpr uint8_t kPowerLabPageCount = 2;
+  constexpr uint8_t kPowerLabPageCount = 3;
   if (gPowerLabPage >= kPowerLabPageCount) gPowerLabPage = 0;
 
   display.setTextDatum(textdatum_t::top_left);
@@ -6937,70 +7017,90 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
   };
 
   if (gPowerLabPage == 0) {
-    // CPU event history
-    row(String("Profile: ") + powerProfileName() + "  threshold: " +
-        static_cast<unsigned>(profileIdleScaleThresholdMs() / 1000) + "s");
-    row(String("CPU now: ") + static_cast<unsigned>(ESP.getCpuFreqMHz()) + " MHz  active=" +
-        static_cast<unsigned>(kActiveCpuMhz) + " idle=" + static_cast<unsigned>(kIdleCpuMhz));
-    row(String("Pre-render: ") + gPreRenderCpuMhz + " MHz  " +
-        (gPreRenderWasIdleScaled ? "[was idle-scaled]" : "[was active]"));
-    row(String("Scale events: ") + static_cast<unsigned>(gCpuScaleCount) +
-        "  Restore events: " + static_cast<unsigned>(gCpuRestoreCount));
-    row(String("Last scaled: ") + fmtMsSince(gLastIdleScaledAtMs));
+    // Page 1: CPU / stage / idle counters
+    row(String("Stage: ") + powerStageName(gPowerStage) +
+        "  last: " + powerStageName(gLastPowerStage) +
+        "  transitions: " + static_cast<unsigned>(gStageTransitionCount));
+    row(String("Profile: ") + powerProfileName() +
+        "  WarmIdle@" + static_cast<unsigned>(profileIdleScaleThresholdMs() / 1000) + "s" +
+        "  LightNap@" + static_cast<unsigned>(profileLightSleepIdleMs() / 1000) + "s");
+    row(String("CPU now: ") + static_cast<unsigned>(ESP.getCpuFreqMHz()) + "MHz" +
+        "  pre-render: " + gPreRenderCpuMhz + "MHz" +
+        (gPreRenderWasIdleScaled ? " [idle]" : " [active]"));
+    row(String("Scale: ") + static_cast<unsigned>(gCpuScaleCount) +
+        "  Restore: " + static_cast<unsigned>(gCpuRestoreCount));
+    row(String("Last scaled: ") + fmtMsSince(gLastIdleScaledAtMs) +
+        "  last restore: " + fmtMsSince(gLastRestoreAtMs));
     row(String("Last restore reason: ") + (gLastRestoreAtMs > 0 ? gLastRestoreReason : String("none")));
-    row(String("Last restore: ") + fmtMsSince(gLastRestoreAtMs));
-    row(String("Last 80MHz dur: ") + fmtDurationMs(gLast80MhzDurationMs));
-    row(String("Total 80MHz: ") + fmtDurationMs(gCumulative80MhzMs));
-    row(String("Longest 80MHz: ") + fmtDurationMs(gLongest80MhzMs));
+    row(String("80MHz last: ") + fmtDurationMs(gLast80MhzDurationMs) +
+        "  total: " + fmtDurationMs(gCumulative80MhzMs) +
+        "  longest: " + fmtDurationMs(gLongest80MhzMs));
+    row(String("Light nap total: ") + fmtDurationMs(gLightSleepTotalMs) +
+        "  longest: " + fmtDurationMs(gLongestLightSleepMs));
     {
       const uint32_t sinceInput = gLastUserActivityMs > 0 ? millis() - gLastUserActivityMs : 0;
-      row(String("Last input: ") + fmtDurationMs(sinceInput) + " ago  threshold: " +
-          static_cast<unsigned>(profileIdleScaleThresholdMs() / 1000) + "s");
+      row(String("Last input: ") + fmtDurationMs(sinceInput) + " ago");
     }
     {
       const String blocked = idleScaleBlockedReason();
       if (blocked.length() > 0) {
         row(String("Idle blocked: ") + blocked);
       } else {
-        row(String("Idle eligible: yes  mode: ") + (gIdleModeActive ? "active" : "awake"));
+        row(String("Idle: ") + (gIdleModeActive ? "active" : "awake") +
+            "  idle entries: " + static_cast<unsigned>(gIdleEntryCount));
       }
     }
-    row(String("Input locked: ") + (gInputLocked ? "yes" : "no") +
-        "  Touch active: " + (gTouchActive ? "yes" : "no"));
-    row(String("Loop delay: ") + static_cast<unsigned>(loopDelayMs()) + "ms");
-    row(String("Refresh count: ") + static_cast<unsigned>(gDisplayRefreshCount) +
-        "  Redraws while idle: " + static_cast<unsigned>(gRedrawWhileIdleCount));
-    row(String("Last refresh: ") + gLastRefreshReason);
-    row(String("Screen: ") + screenName(gLastRenderedScreen));
-  } else {
-    // Peripheral and sleep state
+    row(String("Loop delay: ") + static_cast<unsigned>(loopDelayMs()) + "ms" +
+        "  redraws while idle: " + static_cast<unsigned>(gRedrawWhileIdleCount));
+    row(String("Screen: ") + screenName(gLastRenderedScreen) +
+        "  refreshes: " + static_cast<unsigned>(gDisplayRefreshCount));
+  } else if (gPowerLabPage == 1) {
+    // Page 2: battery / peripherals
     const bool wifiOff = WiFi.getMode() == WIFI_OFF;
     const bool btOn = btStarted();
     const int32_t level = batteryLevelPercent();
-    row(String("Wi-Fi: ") + (wifiOff ? "off (safe)" : "on") +
-        "  Bluetooth: " + (btOn ? "on" : "off (safe)"));
-    row("Speaker: stopped  Mic: not used");
-    row("IMU: not started  (no explicit disable API)");
-    row(String("SD: ") + (gSdMounted ? "mounted/idle between ops" : "not mounted"));
-    row(String("Battery: ") + gCachedBatteryMv + "mV  " + level + "%" +
-        "  poll: " + fmtMsSince(gLastPowerPollMs));
-    row(String("Battery poll interval: ") + static_cast<unsigned>(profileBatteryPollMs() / 1000) + "s" +
-        (gIdleModeActive ? " (idle rate)" : " (active rate)"));
+    row(String("Battery: ") + gCachedBatteryMv + "mV  " + level + "%");
     row(String("Charge: ") + chargingStateName(gCachedChargingState) +
-        "  " + gCachedBatteryCurrentMa + "mA");
-    row(String("USB/VBUS: ") + usbPowerName(gCachedVbusMv) + "  " + gCachedVbusMv + "mV");
-    // Sleep state
-    row(String("Light sleep: ") + badgeSleepModeName() +
+        "  " + gCachedBatteryCurrentMa + "mA" +
+        "  USB: " + usbPowerName(gCachedVbusMv) + " " + gCachedVbusMv + "mV");
+    row(String("Batt poll: ") + fmtMsSince(gLastPowerPollMs) +
+        "  interval: " + static_cast<unsigned>(profileBatteryPollMs() / 1000) + "s" +
+        (gIdleModeActive ? " (idle)" : " (active)"));
+    row(String("Wi-Fi: ") + (wifiOff ? "off" : "ON") +
+        "  BT: " + (btOn ? "ON" : "off") +
+        "  Speaker: stopped");
+    row("Mic: not used  IMU: not started");
+    row(String("SD: ") + (gSdMounted ? "mounted/idle" : "not mounted"));
+    row(String("Redraws while idle: ") + static_cast<unsigned>(gRedrawWhileIdleCount));
+  } else {
+    // Page 3: Sleep Lab controls and wake-source status
+    row(String("Sleep mode: ") + badgeSleepModeName());
+    row(String("Power stage: ") + powerStageName(gPowerStage));
+    row(String("Light attempts: ") + static_cast<unsigned>(gLightSleepAttemptCount) +
         "  entered: " + static_cast<unsigned>(gLightSleepEnteredCount) +
         "  woke: " + static_cast<unsigned>(gLightSleepWakeCount));
-    row(String("Last sleep: ") + gLastSleepAttempt);
-    row(String("Last wake reason: ") + gLastWakeReason);
-    row("Deep sleep: blocked (touch wake unverified on PaperS3)");
-    row(String("Power mode: ") + powerModeName() +
-        "  Idle entries: " + static_cast<unsigned>(gIdleEntryCount));
+    row(String("Light total: ") + fmtDurationMs(gLightSleepTotalMs) +
+        "  last: " + fmtDurationMs(gLastLightSleepDurationMs) +
+        "  longest: " + fmtDurationMs(gLongestLightSleepMs));
+    row(String("Wake reason: ") + gLastWakeReason);
+    row(String("Last sleep attempt: ") + gLastSleepAttempt);
+    row(String("Input detected after wake: ") + (gInputDetectedAfterWake ? "yes" : "no"));
+    row("--- Wake source status ---");
+    row("Touch INT wake: unknown (GT911 GPIO not configured)");
+    row("Timer wake: supported (used for nap cycles)");
+    row("USB/UART wake: supported (ESP32-S3 auto)");
+    row("Button/GPIO wake: not configured");
+    row("Deep sleep: blocked (touch wake unverified)");
+    row("Hibernate: blocked (use arm button if added)");
+    // Sleep cycle button occupies body area — lay it out here
+    const int32_t sleepBtnY = maxY - 10;
+    const int32_t sleepBtnH = 52;
+    const int32_t sleepBtnW = display.width() - 52;
+    gBadgeSleepButton = {26, sleepBtnY, sleepBtnW, sleepBtnH};
+    drawButton(gBadgeSleepButton, String("Sleep mode: ") + badgeSleepModeName());
   }
 
-  // Footer: Profile | Refresh | Home
+  // Footer: Profile | Page | Home  (body tap refreshes current page)
   const int32_t paFooterH = 58;
   const int32_t paFooterY = display.height() - paFooterH - 10;
   const int32_t paGap = 10;
@@ -7010,18 +7110,19 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
   gHomeButton = {26 + 2 * (paW + paGap), paFooterY, paW, paFooterH};
   gPowerModeButton = {};
   gPowerAuditButton = {};
-  gBadgeSleepButton = {};
+  if (gPowerLabPage != 2) gBadgeSleepButton = {};
   gNextButton = {};
   drawButton(gPowerProfileButton, String(powerProfileName()));
-  drawButton(gFilterButton, "Refresh");
+  drawButton(gFilterButton, "Page");
   drawButton(gHomeButton, "", IconType::Home);
 
   finishDisplayRefresh();
   logPowerAudit("power lab screen");
-  Serial.printf("Power Lab shown: page=%u/%u profile=%s scaled=%s scaleCount=%u restoreCount=%u\n",
+  Serial.printf("Power Lab shown: page=%u/%u profile=%s stage=%s scaleCount=%u lightNaps=%u\n",
                 gPowerLabPage + 1, kPowerLabPageCount, powerProfileName(),
-                gIdleCpuScaled ? "yes" : "no",
-                static_cast<unsigned>(gCpuScaleCount), static_cast<unsigned>(gCpuRestoreCount));
+                powerStageName(gPowerStage),
+                static_cast<unsigned>(gCpuScaleCount),
+                static_cast<unsigned>(gLightSleepEnteredCount));
 }
 
 void renderPowerAudit(const char* refreshReason = "mode switch") {
@@ -7609,20 +7710,23 @@ void handleTouch() {
   }
 
   if (gScreen == Screen::PowerLab) {
-    constexpr uint8_t kPlPageCount = 2;
+    constexpr uint8_t kPlPageCount = 3;
     if (hitTarget(gPowerProfileButton, "power lab profile cycle", tapX, tapY)) {
       cyclePowerProfile();
       saveSettings();
       renderPowerLab("profile switch");
-    } else if (hitTarget(gFilterButton, "power lab refresh/next", tapX, tapY)) {
-      // Refresh advances page (wraps) so both pages are accessible; re-render captures fresh state
+    } else if (hitTarget(gFilterButton, "power lab page", tapX, tapY)) {
       gPowerLabPage = static_cast<uint8_t>((gPowerLabPage + 1) % kPlPageCount);
-      renderPowerLab("refresh");
+      renderPowerLab("page");
     } else if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
+    } else if (gPowerLabPage == 2 && hitTarget(gBadgeSleepButton, "sleep mode cycle", tapX, tapY)) {
+      cycleBadgeSleepMode();
+      saveSettings();
+      renderPowerLab("sleep mode switch");
     } else {
-      // Tap outside buttons: re-render current page to capture fresh state
+      // Body tap: re-render current page to capture fresh state
       renderPowerLab("tap refresh");
     }
     noteIgnoredIfNoHit(tapX, tapY);
@@ -8090,6 +8194,7 @@ void setup() {
   gLastWakeReason = wakeReasonName(wakeReason);
   Serial.printf("Wake reason: %s (%d)\n", wakeReasonName(wakeReason), static_cast<int>(wakeReason));
   Serial.println("Power sleep policy: deep/light sleep deferred until PaperS3 touch wake is physically verified.");
+  Serial.println("Wake sources: timer=supported uart=supported(auto) touch-INT=unverified gpio-btn=not-configured deep=blocked");
   Serial.printf("M5 board id: %d\n", static_cast<int>(M5.getBoard()));
   Serial.printf("Display at boot: %dx%d rotation=%u normalPortrait=%u\n", M5.Display.width(), M5.Display.height(),
                 M5.Display.getRotation() & 3, gNormalPortraitRotation);

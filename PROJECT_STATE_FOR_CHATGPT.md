@@ -1,6 +1,6 @@
-# PaperBadge Project State — v5.8-dev4-powerlab Handoff
+# PaperBadge Project State — v5.8-dev5-kindlepower Handoff
 
-_Last updated: 2026-06-10_
+_Last updated: 2026-06-11_
 
 ---
 
@@ -8,7 +8,6 @@ _Last updated: 2026-06-10_
 
 | Item | Value |
 |------|-------|
-| HEAD | `20ffa0f` |
 | Branch | `main` |
 | Remote | `https://github.com/growwithsdtr/paperBadge.git` |
 
@@ -16,253 +15,235 @@ _Last updated: 2026-06-10_
 
 ## Firmware
 
-- **Version:** `v5.8-dev4-powerlab` (`src/main.cpp:20`)
-- **Build:** SUCCESS — RAM 49.5% · Flash 47.5% · 10.47 s
-- **Upload:** SUCCESS — `/dev/tty.usbmodem1101`, 28.36 s
+- **Version:** `v5.8-dev5-kindlepower` (`src/main.cpp:20`)
+- **Build:** SUCCESS — RAM 49.5% · Flash 47.5%
+- **Upload:** SUCCESS — `/dev/tty.usbmodem1101`
 
 ---
 
-## Phase 1 — Discovered Low-Power Limits
+## Phase 1 — v5.8-dev4-powerlab Confirmed Baseline (Frozen)
 
-### CPU Frequency (ESP32-S3 via Arduino HAL)
+### Physical Long Test Results (v5.8-dev4)
 
-| Frequency | Status | Notes |
-|-----------|--------|-------|
-| 240 MHz | Active — already used | Default active freq |
-| 160 MHz | Safe, unsupported in this build | Not used, no firmware benefit planned |
-| 80 MHz | **Safe — already used for idle** | `setCpuFrequencyMhz(80)` confirmed working |
-| 40 MHz | **Unsupported / unsafe** | ESP32-S3 Arduino HAL minimum for stable Arduino core + USB CDC is 80 MHz. 40 MHz is not a supported Arduino operating frequency on S3. |
-
-Active CPU scaling is distinct from sleep: scaling keeps the CPU running but slower. Sleep (light/deep) suspends execution.
-
-### Sleep Sources Available
-
-| Source | Status |
+| Metric | Result |
 |--------|--------|
-| Timer wakeup (`esp_sleep_enable_timer_wakeup`) | **Used** — light sleep timer-wake in Badge mode |
-| Touch controller interrupt | **Unknown** — not configured; PaperS3 touch wake from light/deep sleep not verified |
-| GPIO / physical button | Not configured |
-| RTC timer | Same as timer wakeup |
-| IMU interrupt | Not configured; IMU not started |
-| USB / UART | Wakes from light sleep automatically on CDC traffic |
+| Total 80 MHz time | ~16h52m (≈1012m12s) |
+| Longest single 80 MHz interval | ~13h25m (≈805m5s) |
+| Redraws while idle | 0 |
+| Battery depleted | Yes — proving CPU-only 80 MHz standby is insufficient for week-like runtime |
+| E-ink image after battery depletion | Visible (expected e-ink behavior — not a touch bug) |
 
-Light sleep with timer wake: **confirmed working** (badge mode, BadgeSleepMode::Light).  
-Deep sleep: **blocked** — touch controller wake source not verified on PaperS3; if deep sleep fires, all RAM is lost (reset-like wake).
-
-### Display / E-ink
-
-| Item | Status |
-|------|--------|
-| E-ink panel between refreshes | Already idle — no power draw while static |
-| M5GFX display sleep/power-down API | Not exposed in current M5GFX version — `M5.Display.sleep()` is not available |
-| Touch controller separate from display | Yes — GT911 touch IC is separate from the EPD panel |
-| Touch controller stays awake while display is static | Yes — touch polling continues normally |
-| Redraw loop | None — screen is only redrawn on explicit touch |
-
-**Already optimized:** no redraw loop, e-ink is static between renders.
-
-### Peripherals
-
-| Peripheral | Status | Classification |
-|-----------|--------|---------------|
-| Wi-Fi | Off at boot (`WiFi.disconnect + WIFI_OFF`) | **Already optimized** |
-| Bluetooth | Stopped at boot (`btStop()`) | **Already optimized** |
-| Speaker | Stopped at boot (`M5.Speaker.stop()`) | **Already optimized** |
-| Microphone | Not used / not started | **Already optimized** |
-| IMU | Not started | **Already optimized** |
-| SD card | Mounted but idle between file ops | **Already optimized** — no dequeue risk |
-| Battery/PMIC poll | 45s active; 120s Aggressive idle; 180s BadgeMax idle | **New in dev4** |
-| Serial logging | Active always (USB CDC) | Safe to suppress in idle; not implemented yet |
+**Conclusion:** 80 MHz active idle alone does not achieve Kindle-like standby. Light sleep / deeper power stages are required.
 
 ---
 
-## What Changed in v5.8-dev4-powerlab
+## What Changed in v5.8-dev5-kindlepower
 
-### Power Event Logger (new globals)
+### Power Stage Ladder (new)
+
+| Stage | CPU | When |
+|-------|-----|------|
+| **Active** | 240 MHz | During touch, render, SD, parse, heavy work |
+| **WarmIdle** | 80 MHz | After short idle threshold (profile-dependent) |
+| **LightNap** | 80 MHz + sleep | During 2s timer nap cycles (opt-in via Sleep Lab) |
+| **Hibernate** | deep sleep | Blocked — touch wake unverified on PaperS3 |
+
+### New Globals
 
 | Variable | Type | Purpose |
 |----------|------|---------|
-| `gCpuScaleCount` | `uint32_t` | Count of CPU scale-downs to 80 MHz |
-| `gCpuRestoreCount` | `uint32_t` | Count of CPU restores to 240 MHz |
-| `gLast80MhzDurationMs` | `uint32_t` | Duration of last 80 MHz interval (ms) |
-| `gCumulative80MhzMs` | `uint32_t` | Total ms spent at 80 MHz since boot |
-| `gLongest80MhzMs` | `uint32_t` | Longest single 80 MHz interval (ms) |
-| `gPowerLabPage` | `uint8_t` | Current Power Lab page (0 or 1) |
-| `gRedrawWhileIdleCount` | `uint32_t` | Number of redraws that fired while idle mode was active |
-| `gLightSleepEnteredCount` | `uint32_t` | Number of light sleep entries |
-| `gLightSleepWakeCount` | `uint32_t` | Number of light sleep wakes |
+| `gPowerStage` | `PowerStage` | Current explicit power stage |
+| `gLastPowerStage` | `PowerStage` | Previous stage before last transition |
+| `gStageTransitionCount` | `uint32_t` | Total stage transitions since boot |
+| `gStageEnteredAtMs` | `uint32_t` | Millis when current stage was entered |
+| `gLightSleepTotalMs` | `uint32_t` | Cumulative light sleep time |
+| `gLightSleepAttemptCount` | `uint32_t` | Light sleep attempt count |
+| `gLightSleepFailedCount` | `uint32_t` | Failed entries (reserved) |
+| `gLastLightSleepDurationMs` | `uint32_t` | Duration of last nap |
+| `gLongestLightSleepMs` | `uint32_t` | Longest single nap |
+| `gHibernateArmed` | `bool` | Deep sleep arm flag (always false — blocked) |
+| `gInputDetectedAfterWake` | `bool` | Touch detected in first poll after nap wake |
 
-### Updated Functions
+### Shortened Idle Thresholds
 
-- **`restoreActiveCpu()`** — now computes `gLast80MhzDurationMs`, accumulates `gCumulative80MhzMs`, updates `gLongest80MhzMs`, increments `gCpuRestoreCount`
-- **`maybeScaleIdleCpu()`** — now increments `gCpuScaleCount` on confirmed scale
-- **`maybeEnterBadgeSleep()`** — now increments `gLightSleepEnteredCount` / `gLightSleepWakeCount`
-- **`prepareFullRefresh()`** — now increments `gRedrawWhileIdleCount` when `gIdleModeActive`
-- **`batteryLevelPercent()`** — now uses `profileBatteryPollMs()` instead of constant
+| Profile | WarmIdle (80 MHz) | LightNap (timer nap) |
+|---------|-------------------|----------------------|
+| Balanced | **12s** (was 60s) | **7 min** (opt-in) |
+| Aggressive | **7s** (was 25s) | **90s** (opt-in) |
+| Badge Max | **4s** (was 20s) | **40s** (opt-in) |
 
-### New Functions
+`kPostTouchIdleGuardMs` lowered from 5s to 2s so the 4s BadgeMax threshold can actually fire.
 
-- **`profileBatteryPollMs()`** — returns 45s (Normal), 120s (Aggressive idle), 180s (BadgeMax idle)
-- **`fmtDurationMs()`** / **`fmtMsSince()`** — human-readable ms/age formatters for Power Lab display
-- **`renderPowerLab()`** — new 2-page Power Lab screen (see below)
+### Light Nap Behavior (extended from Badge-only)
 
-### Power Lab Screen (new)
+- Was: Badge screen only, 30s idle, 2s nap
+- Now: **Any static idle screen**, profile-based threshold, 2s timer nap cycle
+- Opt-in: must enable via Power Lab → Sleep Lab → Sleep mode button
+- Nap cycle: sleep 2s → wake by timer → poll touch → re-enter if still idle
+- Touch during nap is missed; tap-and-hold ~2s will be detected post-wake
+- `gInputDetectedAfterWake` is set if M5.Touch detects a touch on first post-wake poll
 
-Access: **Debug → Power Lab**
+### Wake Sources (discovered / documented)
 
-Two-page screen with footer: **Profile | Refresh | Home**
+| Source | Status |
+|--------|--------|
+| Timer (`esp_sleep_enable_timer_wakeup`) | **Supported — used for nap cycles** |
+| USB/UART (ESP32-S3 CDC) | **Supported — automatic from light sleep** |
+| Touch (GT911 INT) | **Unknown — GPIO INT pin not configured** |
+| Button/GPIO | **Not configured** |
+| Deep sleep wake source | **Blocked — touch wake unverified** |
+| RTC memory | Available but not used |
+| Preferences/NVS | Available — used for settings persistence |
 
-**Page 1 — CPU & Event History:**
-- Profile name + threshold
-- CPU now / Pre-render CPU (pre-restore)
-- Scale events / Restore events
-- Last scaled (age) / Last restore reason / Last restore (age)
-- Last 80 MHz duration / Total 80 MHz time / Longest 80 MHz interval
-- Last input age / idle threshold
-- Idle blocked reason or "Eligible: yes"
-- Input locked / Touch active
-- Loop delay
-- Refresh count / Redraws while idle
-- Last refresh reason / Current screen
+### Loop Delays (updated)
 
-**Page 2 — Peripheral & Sleep State:**
-- Wi-Fi / Bluetooth status
-- Speaker / Mic / IMU status
-- SD state
-- Battery mV / % / poll age
-- Battery poll interval (active vs idle rate)
-- Charge state / USB VBUS
-- Light sleep mode / entered / woke counts
-- Last sleep attempt / wake reason
-- Deep sleep: blocked (with reason)
-- Power mode / idle entry count
+| State | Balanced | Aggressive | Badge Max |
+|-------|----------|------------|-----------|
+| WarmIdle static screen | 300ms (was 250ms) | 500ms (was 400ms) | 800ms (was 600ms) |
+| ConferenceBadge idle | 600ms (was 500ms) | — | — |
+| Badge Max badge-only | — | — | 250ms (was 200ms) |
 
-**Footer interactions:**
-- **Profile button** — cycles profile (Balanced → Aggressive → Badge Max → Balanced), saves prefs
-- **Refresh** — advances page (1→2→1) and re-renders to capture fresh state
-- **Home** — returns to home screen
-- **Tap anywhere else on screen** — re-renders current page to capture fresh state
+### Serial Log Suppression
 
-### Profile Improvements (dev4)
+`isVerboseLogOk()` returns false when `gIdleModeActive && profile != Balanced`.
+Battery poll log (`Power poll:`) is suppressed in Aggressive/BadgeMax idle.
+Sleep wake/entry logs are never suppressed.
 
-| Profile | Idle scale threshold | Idle loop delay | Battery poll (idle) |
-|---------|---------------------|-----------------|---------------------|
-| Balanced | 60s | 250ms | 45s |
-| Aggressive | 25s | 400ms | 120s |
-| Badge Max | 20s | 600ms (badge only) | 180s |
+### Power Lab — 3 Pages (updated)
 
-### Screen Enum Addition
+**Page 1 — CPU / Stage / Idle Counters:**
+- Power stage (current + last + transitions)
+- Profile + WarmIdle threshold + LightNap threshold
+- CPU now / pre-render (MHz)
+- Scale / restore event counts
+- Last scaled / restored timestamps
+- 80 MHz last/total/longest
+- Light nap total / longest
+- Last input age
+- Idle blocked reason / idle mode status
+- Loop delay / redraws while idle
+- Screen / refresh count
 
-`Screen::PowerLab` added between `Screen::PowerAudit` and `Screen::FontLab`.  
-`isStaticIdleScreen()` includes `PowerLab` → eligible for idle CPU scaling.
+**Page 2 — Battery / Peripherals:**
+- Battery mV / % 
+- Charge state + current mA + USB/VBUS
+- Battery poll age + interval (active vs idle rate)
+- Wi-Fi / BT / Speaker / Mic / IMU / SD status
+- Redraws while idle
 
-### Debug Screen Change
+**Page 3 — Sleep Lab Controls:**
+- Sleep mode: Off / Light test / Deep test
+- Current power stage
+- Light attempts / entered / woke
+- Light total / last / longest
+- Last wake reason
+- Last sleep attempt
+- Input detected after wake
+- Wake source status table (touch-INT, timer, USB, GPIO, deep, hibernate)
+- **Sleep mode cycle button** (body button, cycles Off → Light → Deep → Off)
 
-"Power Audit" button in Debug → **"Power Lab"** (navigates to `renderPowerLab()`).  
-`renderPowerAudit()` remains in the codebase but is no longer reachable from Debug.
-
----
-
-## Power Lab Navigation
-
-```
-Home → Debug → Power Lab
-```
-
-From Power Lab: tap **Refresh** to cycle page (1↔2) and re-render fresh state.  
-From Power Lab: tap **Profile** to cycle power profile.  
-From Power Lab: tap anywhere else to re-render current page.
-
----
-
-## Test Procedures
-
-### Balanced Profile (default, 60s threshold)
-
-1. Debug → Power Lab → Page 1
-2. Do not touch the screen
-3. Wait **65 seconds**
-4. Tap anywhere on the screen (not a footer button)
-5. Page re-renders. Check:
-   - **Scale events:** > 0
-   - **Pre-render:** "80 MHz [was idle-scaled]"
-   - **Last scaled:** ~65s ago
-   - **Last restore reason:** "display refresh" or "tap refresh"
-   - **Last 80 MHz duration:** ~65s
-6. Tap Refresh to see Page 2 (peripheral state)
-
-### Aggressive Profile (25s threshold)
-
-1. From Debug screen → tap "Profile: Balanced" until "Profile: Aggressive"
-2. Debug → Power Lab → Page 1
-3. Wait **30 seconds**
-4. Tap anywhere — Pre-render should show "80 MHz [was idle-scaled]"
-5. Loop delay shown: 400ms
-6. Battery poll interval shown: 120s
-
-### Badge Max Profile (20s threshold, badge-only)
-
-1. Set profile to Badge Max via Debug screen
-2. Navigate to Home → Badge screen
-3. Wait **25 seconds**
-4. Navigate to Debug → Power Lab → Page 1
-5. Scale events > 0; Last 80 MHz duration ~25s
-6. Loop delay shown: 600ms (only while on Badge screen)
+**Footer:** `Profile | Page | Home`
+- **Profile**: cycles power profile (Balanced → Aggressive → Badge Max)
+- **Page**: advances page (1→2→3→1)
+- **Home**: returns to home screen
+- **Body tap**: re-renders current page (fresh state capture)
 
 ---
 
-## How to Interpret Event Counters
+## CPU Frequency Discovery (unchanged from dev4)
 
-| Counter | Meaning |
-|---------|---------|
-| Scale events | CPU successfully reduced to 80 MHz this many times since boot |
-| Restore events | CPU restored to 240 MHz this many times (≈ scale events, may lag by 1) |
-| Last 80 MHz duration | How long the LAST idle interval lasted before restore |
-| Total 80 MHz time | Cumulative idle time since boot — confirms real savings |
-| Longest 80 MHz interval | Best single idle stretch — diagnostic for "can it stay idle?" |
-| Redraws while idle | Any redraws that happened with idle mode active — should be low |
-| Light sleep entered/woke | Only > 0 in Aggressive/BadgeMax with BadgeSleepMode::Light enabled |
+| Frequency | Status |
+|-----------|--------|
+| 240 MHz | Active — default for rendering/input |
+| 80 MHz | Safe — idle scaling confirmed |
+| 40 MHz | Unsupported — ESP32-S3 Arduino minimum is 80 MHz |
 
 ---
 
-## Power Lever Classification
+## Peripherals (unchanged from dev4)
 
-| Lever | Classification |
-|-------|---------------|
-| CPU 240→80 MHz on static screens | **Already implemented** |
-| Wi-Fi off | **Already implemented** |
-| Bluetooth off | **Already implemented** |
-| Speaker stopped | **Already implemented** |
-| IMU not started | **Already implemented** |
-| Mic not used | **Already implemented** |
-| Battery poll rate (idle-aware) | **New in dev4** — Aggressive: 120s, BadgeMax: 180s |
-| Loop delay increase while idle | **Already implemented** + BadgeMax 600ms new in dev4 |
-| E-ink static between renders | **Already at zero power** — no action needed |
-| Light sleep (badge mode, timer wake) | **Experimental** — behind BadgeSleepMode::Light setting |
-| Display/EPD power-down API | **Unsupported** — M5GFX does not expose this |
-| Deep sleep | **Blocked** — touch wake unverified on PaperS3 |
-| SD deinitialization | **Not needed** — SD is idle between ops; dequeue risky |
-| Serial log suppression (Aggressive idle) | **Not yet implemented** — identified as safe-to-optimize |
-| 40 MHz CPU | **Unsupported** — ESP32-S3 Arduino minimum is 80 MHz |
+| Peripheral | Status |
+|-----------|--------|
+| Wi-Fi | Off at boot (WiFi.disconnect + WIFI_OFF) |
+| Bluetooth | Stopped at boot (btStop()) |
+| Speaker | Stopped at boot (M5.Speaker.stop()) |
+| Microphone | Not used / not started |
+| IMU | Not started |
+| SD card | Mounted but idle between file ops |
+| Battery/PMIC poll | Profile-aware: 45s active / 120s Aggressive idle / 180s BadgeMax idle |
+
+---
+
+## Safety and Recovery
+
+- Default boot: no sleep, Active stage, normal rendering
+- Light sleep: opt-in only (Power Lab → Sleep Lab → enable)
+- Deep sleep / Hibernate: blocked — touch wake source not verified on PaperS3
+- If deep sleep is accidentally entered (impossible via current UI), device will reset; prefs/NVS survive reset
+- No stuck-idle risk: `recordUserActivity()` always restores CPU and resets idle state
+
+---
+
+## Physical QA Steps for v5.8-dev5-kindlepower
+
+### 1. Confirm WarmIdle triggers faster
+
+1. Home → Debug → Power Lab → Page 1
+2. Do not touch screen
+3. **Balanced profile**: wait 13–15 seconds, then tap body
+4. Check: Stage shows `WarmIdle`, Scale events > 0, Pre-render was idle-scaled
+5. Switch to **Aggressive** (tap Profile footer button): wait 8–10s → same result
+6. Switch to **Badge Max**: wait 5–6s → same result
+
+### 2. Confirm Power Lab Page 3 / Sleep Lab
+
+1. Go to Power Lab → tap Page twice → reach Page 3
+2. Verify: wake source table, sleep mode row, attempt/enter/wake counters
+3. Tap the Sleep mode cycle button: cycles Off → Light test → Deep test → Off
+4. Confirm "Sleep mode: Light test" appears
+
+### 3. Light nap test (Badge Max + Light test)
+
+1. Set profile to Badge Max
+2. Go to Power Lab page 3, enable Light test
+3. Navigate to Badge screen
+4. Wait 45+ seconds without touching
+5. After 1–2 minutes, return to Power Lab → Page 3
+6. Check: Light attempts > 0, entered > 0, woke > 0, total > 0s
+7. Wake reason: "timer"
+
+### 4. Light nap on non-Badge static screen
+
+1. Set Aggressive profile + Light test enabled
+2. Go to Practice / Settings / Debug screen
+3. Wait 90+ seconds
+4. Return to Power Lab → Page 3: Light entered should be > 0
+
+### 5. Confirm deep sleep blocked
+
+1. Power Lab → Page 3 → cycle sleep to "Deep test"
+2. Wait for idle threshold
+3. Verify serial log: "Hibernate blocked: safe PaperS3 touch wake source is not verified."
+4. Device does NOT reset
 
 ---
 
 ## Known Risks
 
-1. **`gPowerLabButton` vs `gPowerAuditButton`** — Debug screen now uses `gPowerLabButton`. `renderPowerAudit()` still exists but is unreachable from the UI. If Power Audit is needed directly, it can be re-wired to a footer button inside Power Lab.
-2. **Badge screen** — PowerLab is eligible for idle scaling but navigating to it always restores CPU before render. History captures this.
-3. **Input lock stuck** — `gInputLocked` with `gInputUnlockAtMs == 0` means an in-flight render; `updateInputLock()` clears it once `finishDisplayRefresh()` fires and the timer expires. No stuck-lock timeout needed in normal operation.
-4. **Deep sleep** — blocked; if enabled experimentally it resets all RAM/state including Power Lab counters.
-5. **Light sleep USB wake** — USB CDC traffic will wake from light sleep (ESP32-S3 behavior). This is safe; `gLastWakeReason` will show "uart" or similar.
+1. **BadgeMax 4s threshold**: very aggressive. If a render takes >2s and the 2s post-touch guard is in play, idle may trigger very quickly. Monitor for unexpected idle during render operations.
+2. **Light sleep on non-Badge screens**: new behavior in dev5. If a static screen has a bug that re-renders during sleep wake, `gRedrawWhileIdleCount` will catch it.
+3. **Touch missed during 2s nap**: users on sleep-enabled profiles may notice short taps are missed. Workaround: tap-and-hold 2–3 seconds. This is labeled clearly in Power Lab Page 3.
+4. **Deep sleep still blocked**: `gHibernateArmed` is a placeholder. The UI cycles to "Deep test" but only logs a blocked message; it does not sleep.
 
 ---
 
-## UX Decisions Unchanged from v5.8-dev3
+## UX Decisions Unchanged
 
 | Decision | Value |
 |----------|-------|
 | Practice header layout | unchanged (Layout Batch A passed) |
-| Coach margin | kCoachMargin = 20 (unchanged — layout frozen) |
-| Default power profile | Balanced (60s threshold) |
+| kCoachMargin | 20 (frozen) |
+| Default power profile | Balanced (12s WarmIdle threshold) |
 | Deep sleep | blocked |
 | Profile cycling | Debug screen + Power Lab footer |
+| Language/font/refresh settings | unchanged |
