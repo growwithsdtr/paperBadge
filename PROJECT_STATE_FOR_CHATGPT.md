@@ -1,4 +1,4 @@
-# PaperBadge Project State — v5.8-dev9 Handoff
+# PaperBadge Project State — v5.8-dev10 Handoff
 
 _Last updated: 2026-06-12_
 
@@ -15,119 +15,75 @@ _Last updated: 2026-06-12_
 
 ## Firmware
 
-- **Version:** `v5.8-dev9` (`src/main.cpp:20`)
+- **Version:** `v5.8-dev10` (`src/main.cpp:20`)
 - **Build:** SUCCESS — RAM 49.5% · Flash 47.6%
 - **Upload:** SUCCESS — `/dev/cu.usbmodem1101`
 - **Smoke test:** PASS (7/7 boot log checks)
 
 ---
 
-## What Changed in v5.8-dev9
+## What Changed in v5.8-dev10
 
-### Settings Label Consistency (Phase 1)
+### Settings UI Refinements (from dev9 local diff, kept)
 
-Refresh segmented control now uses compact labels matching Power:
+Battery and USB power info on the Settings screen now renders as a proper compact row:
 
-| Row | Labels |
-|-----|--------|
-| Reader | S / M / L |
-| Refresh | Fast / **Bal** / Clean |
-| Power | Resp / Bal / Max |
-| Orientation | Normal / Strap |
+- **Battery row:** `"X% (YYYYmV)"` text left-aligned + bar right-aligned on the same line (y=80)
+- **USB row:** `"USB: yes/no (YYYYmV)"` below battery (y=110)
+- All button rows shifted down by 26px to clear the extra info area
+- Reader size label: y=142 (was 116), buttons: y=168 (was 142)
+- Refresh label: y=232 (was 206), buttons: y=258 (was 232)
+- Power label: y=322 (was 296), buttons: y=348 (was 322)
+- Orientation label: y=412 (was 386), buttons: y=438 (was 412)
+- Advanced button: y=502 (was 476)
 
-"Balanced" was wrapping inside the 3-way segmented button. Changed to "Bal" to match the compact style of "Resp" and "Max".
+Power button labels now adapt to font size — `isMediumSize` flag enables longer labels at Reader M:
 
----
-
-### Advanced Screen Layout Fix (Phase 2)
-
-**Before:** Button labels "Reset typography" and "Dump render trace" overflowed their buttons. Button grid start position could overlap diagnostic text.
-
-**After:**
-- Shortened labels: **Reset Type**, **Trace Dump**, **Layout Log**, **Touch Dbg On/Off**
-- Reduced info text to 8 concise lines (removed redundant "profile thresholds" line — Power Lab has that)
-- Button grid now starts at `max(y + 20, display.height() - 490)` — dynamically clears the last info line
-- Sleep hint shortened: "Sleep: tap after wake  long press = disable"
+| Setting | S/L label | M label |
+|---------|-----------|---------|
+| Refresh Balanced | `Bal` | `Balanced` |
+| Power Responsive | `Resp` | `Responsive` |
+| Power Balanced | `Bal` | `Balanced` |
+| Power Max Battery | `Max` | `Max Batt` |
 
 ---
 
-### Power Lab Page 4 (Phase 3)
+### LightNap Safety Patch
 
-Power Lab split from 3 pages to **4 pages**:
+**Problem:** LightNap uses a 2s timer-only sleep cycle. On wake, a tap that roused the device
+from sleep could accidentally register as an answer selection in Exam or Drills.
 
-| Page | Content |
-|------|---------|
-| 1 | CPU stage / idle counters / LightNap eligibility status |
-| 2 | Battery / peripherals |
-| 3 | Sleep diagnostics (nap, wake, listen window, touch timing, input lock) + Sleep mode button |
-| 4 | Wake source / deep sleep audit (GPIO48, RTC range, blocked status, eligible screens) |
+**Three-part fix:**
 
-**Page 3 fix:** The sleep mode button was previously placed at `maxY - 10`, causing it to overlap with the last text row on page 3 when content was dense. It is now placed at `maxY + 10`, below the text zone and above the footer.
+#### 1. Answer-selection guard (`isAnswerSelectionActive()`)
 
-**Page 4** contains all wake source audit findings previously crowded at the bottom of page 3.
+New function blocks LightNap entry whenever the user's next tap could record an answer:
 
-**Page 1** now shows: `LightNap eligible: yes/no (reason)` — real-time eligibility status for the current screen.
+- **Exam:** `gScreen == Screen::Exam && gExamActive && !gExamSummary` — question is active
+- **Drills:** `gScreen == Screen::Drills && gSelectedOption < 0 && isOptionDrillScreen(...)` — option drill awaiting first tap
 
----
+Guard applied in both `lightNapBlockedReason()` (Power Lab display) and `maybeEnterBadgeSleep()` (nap entry path).
 
-### Refresh Mode Cadence (Phase 4)
+Read-only screens (Home, Badge, Practice, Glossary, Results, DrillsMenu) remain LightNap-eligible.
 
-Balanced refresh was cleaning on nearly every `highQuality` screen transition, making navigation feel slow and distracting.
+#### 2. Post-wake input debounce (400ms)
 
-**New behavior:**
+After `esp_light_sleep_start()` returns, the existing input-lock mechanism is engaged for 400ms:
 
-| Mode | When clean refresh happens |
-|------|---------------------------|
-| Fast | Every ~16 non-clean transitions, or Badge/image/zoom entry |
-| Balanced | Every ~10 non-clean transitions, or Badge/image/zoom entry |
-| Clean | Always |
+```cpp
+gInputLocked = true;
+gInputLockedAtMs = wakeNow;
+gInputUnlockAtMs = wakeNow + 400;
+```
 
-**Key change:** `highQuality` parameter no longer triggers a clean refresh in Fast or Balanced mode. Only cadence counter and image/zoom transitions do. This means rapid navigation stays fast.
+`handleTouch()` already checks `gInputLocked` and ignores all touch events during this window.
+The existing 8s watchdog still clears stale locks.
 
-Constants:
-- `kHardCleanTransitionLimit = 16` (was 14; used for Fast mode)
-- `kBalancedCleanTransitionLimit = 10` (new; used for Balanced mode)
+#### 3. `sleepAuditStatusLine()` wording fix
 
----
+Old: `"enabled: light experiment after Badge idle"` (incorrectly implied Badge-only)
 
-### LightNap Eligibility Policy (Phase 5)
-
-**Before:** LightNap only activated on Badge screen.
-
-**After:** LightNap activates on any normal content/display screen when idle.
-
-**Eligible screens (isLightNapEligibleScreen):**
-- Badge, Home
-- PracticeMenu, GlossaryMenu, DrillsMenu
-- InterviewPractice (Practice), Glossary
-- Drills, Exam, Results
-
-**NOT eligible (control/diagnostic screens):**
-- Settings, Advanced, Debug
-- PowerLab, PowerAudit, FontLab, VisualQa, HelpLegend
-- QrZoom, PhotoZoom, TouchDebug
-
-**Guards still apply** (LightNap never enters when):
-- Sleep mode = Off
-- Profile = Responsive (profileAllowsLightSleep() = false)
-- Input is locked
-- Touch is active
-- Inside post-wake listen window
-
-Power Lab page 1 shows live LightNap eligibility status and reason.
-
----
-
-### Reader Size — Confirmed Working for Drills/Exam (Phase 6)
-
-Reader size (S/M/L) already applied correctly to Drills and Exam in v5.8-dev8:
-- `renderCoachScreen()` calls `coachReaderSizeFor(item)` for Drills
-- `renderExamQuestion()` calls `coachReaderSizeFor(item)` for Exam
-- Both set `gSettings.fontSizeMode = renderSize` before building layouts
-- Option button font (`optionTextPxFor`) also scales with reader size (capped at 31px to prevent overflow)
-- Feedback/explanation pages use `applyCoachBodyFont()` which reads from `coachTypography()` → reader size
-
-No code change needed. PROJECT_STATE_FOR_CHATGPT.md previously stated this was incomplete — that was incorrect.
+New: `"enabled: light sleep on idle eligible screens"` — accurately reflects expanded eligible screen set.
 
 ---
 
@@ -165,9 +121,11 @@ Power Lab → Home
 
 ### LightNap Policy
 - Enters on any `isLightNapEligibleScreen()` — Badge, Home, Practice menus, Drills, Exam, Results, etc.
-- Never enters on control/diagnostic screens
-- Never enters while input locked, touch active, or in wake listen window
+- **Blocked** on control/diagnostic screens (Settings, Advanced, Debug, PowerLab, etc.)
+- **Blocked** while `isAnswerSelectionActive()` — active Exam question OR Drills option awaiting tap
+- **Blocked** while input locked, touch active, or in wake listen window
 - Responsive profile: always disabled
+- Post-wake: 400ms input lock prevents accidental answer registration
 
 ### CPU Scaling (WarmIdle)
 - Applies to all `isStaticIdleScreen()` screens (includes Settings, Advanced, Power Lab, etc.)
@@ -223,19 +181,22 @@ Sleep Off resets on reboot (experimental flag, not sticky).
 
 ---
 
-## Physical QA Checklist (v5.8-dev9)
+## Physical QA Checklist (v5.8-dev10)
 
 - [ ] Home screen shows 7 buttons (no Debug)
-- [ ] Settings: Refresh shows Fast / Bal / Clean (no "Balanced" wrapping)
-- [ ] Settings: Power shows Resp / Bal / Max
+- [ ] Settings: battery % and mV visible on Settings screen
+- [ ] Settings: USB power line visible below battery
+- [ ] Settings: Refresh shows Fast / Bal(anced) / Clean
+- [ ] Settings: Power shows Resp(onsive) / Bal(anced) / Max (Batt)
+- [ ] Settings: Reader M shows full labels; Reader S/L shows compact
 - [ ] Settings "Advanced" button navigates to Advanced screen
 - [ ] Advanced: info text and button grid do not overlap
 - [ ] Advanced: "Reset Type", "Trace Dump", "Layout Log" labels fit buttons
 - [ ] Advanced: Sleep mode button visible only on Power Lab page 3
 - [ ] Power Lab page 3: body text does not overlap Sleep mode button
 - [ ] Power Lab page 4: shows GPIO48, RTC range, deep sleep blocked
-- [ ] Power Lab page 1: shows LightNap eligible: yes/no
-- [ ] Changing refresh in Settings shows Bal for Balanced mode
+- [ ] Power Lab page 1: shows `LightNap eligible: yes/no`
+- [ ] Power Lab page 1: shows `answer selection active` when in active Exam question
 - [ ] Practice: bottom tap on last page → next item
 - [ ] Practice: top tap on first page → previous item
 - [ ] Glossary: same tap behavior as Practice
@@ -245,6 +206,9 @@ Sleep Off resets on reboot (experimental flag, not sticky).
 - [ ] Home screen: LightNap eligible (check Power Lab page 1)
 - [ ] Settings screen: LightNap NOT eligible (control screen)
 - [ ] Responsive profile: no LightNap even with Sleep mode on
+- [ ] Exam active question: LightNap blocked (`answer selection active`)
+- [ ] Drill option awaiting tap: LightNap blocked (`answer selection active`)
+- [ ] Post-wake: first 400ms ignores taps (no accidental answer recorded)
 - [ ] Balanced refresh: does not clean every 2 taps during rapid navigation
 - [ ] Fast refresh: stays fast during rapid navigation, cleans every ~16 transitions
 
@@ -253,5 +217,5 @@ Sleep Off resets on reboot (experimental flag, not sticky).
 ## Next Steps
 
 1. **Japanese readiness implementation** — UTF-8 sanitizer, CJK word wrap, Japanese font path, generic deck schema
-2. **Physical QA this checklist** — especially Power Lab page 3 button overlap fix and LightNap on non-Badge screens
+2. **Physical QA this checklist** — especially LightNap answer-selection guard and post-wake debounce
 3. Long-term: GT911 touch INT wake research if alternative GPIO mapping found
