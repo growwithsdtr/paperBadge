@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.8-dev10";
+constexpr const char* kFirmwareVersion = "v5.8-dev11";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -4730,7 +4730,7 @@ int32_t optionLineHeight(uint8_t optionPx) {
 
 uint8_t optionTextPxFor(const String& label, int32_t buttonWidth) {
   const CoachTypography type = coachTypography();
-  const uint8_t largePx = type.bodyPx >= 31 ? 31 : type.bodyPx;
+  const uint8_t largePx = type.bodyPx;
   const uint8_t compactPx = type.buttonPx;
   if (largePx <= compactPx) {
     return compactPx;
@@ -6964,75 +6964,62 @@ void renderSettings(const char* refreshReason = "mode switch") {
   const int32_t bw2 = (bw - sg) / 2;      // 2-way width
   const int32_t bx2_2 = bx + bw2 + sg;
 
-  // Battery row: "X% (YYYYmV)" + bar right-aligned on same line
-  applyCoachMetadataFont();
+  // Battery info — large % on left, thick bar on right, detail lines below
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   const int32_t battLevel = batteryLevelPercent();  // populates cache
   const int16_t battMv = gCachedBatteryMv;
-  String battText;
-  if (battLevel >= 0) battText += String(static_cast<unsigned>(battLevel)) + "%";
-  else battText += "--%";
-  if (battMv > 0) battText += String(" (") + battMv + "mV)";
-  display.drawString(battText, bx, 80);
-  const int32_t barH = 22;
-  const int32_t barW = 180;
-  const int32_t barX = width - bx - barW;
-  const int32_t barY = 80 + (static_cast<int32_t>(coachTypography().metadataPx) - barH) / 2;
-  drawBatteryBar(barX, barY, barW, barH, battLevel);
-
-  // USB status below
-  String usbText = String("USB: ") + usbPowerName(gCachedVbusMv);
-  if (gCachedVbusMv >= 0) usbText += String(" (") + gCachedVbusMv + "mV)";
-  display.drawString(usbText, bx, 110);
+  applyCoachTitleFont();
+  const String battPctText = (battLevel >= 0) ? String(static_cast<unsigned>(battLevel)) + "%" : "--%";
+  display.drawString(battPctText, bx, 76);
+  const int32_t barH = 66;
+  const int32_t barW = 220;
+  drawBatteryBar(width - bx - barW, 76, barW, barH, battLevel);
+  applyCoachMetadataFont();
+  const String mvText = (battMv > 0) ? String(battMv) + "mV" : "---mV";
+  display.drawString(mvText, bx, 150);
+  const String usbText = String("USB: ") + usbPowerName(gCachedVbusMv)
+                       + "  " + chargingStateName(gCachedChargingState);
+  display.drawString(usbText, bx, 176);
 
   // Reader size — S / M / L
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.drawString("Reader size", bx, 142);
+  display.drawString("Reader size", bx, 210);
   const FontSizeMode activeReaderSize = canonicalFontSizeMode(gSettings.fontSizeMode);
-  const bool isMediumSize = (activeReaderSize == FontSizeMode::Medium);
-  gFontMediumButton = {bx,       168, bw3, bh};
-  gFontLargeButton  = {bx2_3,    168, bw3, bh};
-  gFontXlButton     = {bx3_3,    168, bw3, bh};
+  gFontMediumButton = {bx,       236, bw3, bh};
+  gFontLargeButton  = {bx2_3,    236, bw3, bh};
+  gFontXlButton     = {bx3_3,    236, bw3, bh};
   gFontXxlButton = {};
   gFontHugeButton = {};
   drawButton(gFontMediumButton, activeReaderSize == FontSizeMode::Medium ? "S *" : "S");
   drawButton(gFontLargeButton,  activeReaderSize == FontSizeMode::Large  ? "M *" : "M");
   drawButton(gFontXlButton,     activeReaderSize == FontSizeMode::XL     ? "L *" : "L");
 
-  // Refresh — Fast / Balanced / Clean
-  display.drawString("Refresh", bx, 232);
-  gRefreshFastButton     = {bx,      258, bw3, bh};
-  gRefreshBalancedButton = {bx2_3,   258, bw3, bh};
-  gRefreshCleanButton    = {bx3_3,   258, bw3, bh};
+  // Refresh — Fast / Bal / Clean
+  display.drawString("Refresh", bx, 300);
+  gRefreshFastButton     = {bx,      326, bw3, bh};
+  gRefreshBalancedButton = {bx2_3,   326, bw3, bh};
+  gRefreshCleanButton    = {bx3_3,   326, bw3, bh};
   gRefreshModeButton = {};
-  {
-    const String balBase = isMediumSize ? "Balanced" : "Bal";
-    drawButton(gRefreshFastButton,     gSettings.refreshMode == RefreshMode::Fast     ? "Fast *"        : "Fast");
-    drawButton(gRefreshBalancedButton, gSettings.refreshMode == RefreshMode::Balanced ? balBase + " *"  : balBase);
-    drawButton(gRefreshCleanButton,    gSettings.refreshMode == RefreshMode::Clean    ? "Clean *"       : "Clean");
-  }
+  drawButton(gRefreshFastButton,     gSettings.refreshMode == RefreshMode::Fast     ? "Fast *"  : "Fast");
+  drawButton(gRefreshBalancedButton, gSettings.refreshMode == RefreshMode::Balanced ? "Bal *"   : "Bal");
+  drawButton(gRefreshCleanButton,    gSettings.refreshMode == RefreshMode::Clean    ? "Clean *" : "Clean");
 
-  // Power — Responsive / Balanced / Max Battery
-  display.drawString("Power", bx, 322);
-  gPowerResponsiveButton = {bx,      348, bw3, bh};
-  gPowerBalancedButton   = {bx2_3,   348, bw3, bh};
-  gPowerMaxButton        = {bx3_3,   348, bw3, bh};
+  // Power — Resp / Bal / Max
+  display.drawString("Power", bx, 390);
+  gPowerResponsiveButton = {bx,      416, bw3, bh};
+  gPowerBalancedButton   = {bx2_3,   416, bw3, bh};
+  gPowerMaxButton        = {bx3_3,   416, bw3, bh};
   gPowerProfileButton = {};
   gBadgeSleepButton = {};
   gPowerModeButton = {};
-  {
-    const String respBase = isMediumSize ? "Responsive" : "Resp";
-    const String balBase  = isMediumSize ? "Balanced"   : "Bal";
-    const String maxBase  = isMediumSize ? "Max Batt"   : "Max";
-    drawButton(gPowerResponsiveButton, gPowerProfile == PowerProfile::Balanced   ? respBase + " *" : respBase);
-    drawButton(gPowerBalancedButton,   gPowerProfile == PowerProfile::Aggressive ? balBase  + " *" : balBase);
-    drawButton(gPowerMaxButton,        gPowerProfile == PowerProfile::BadgeMax   ? maxBase  + " *" : maxBase);
-  }
+  drawButton(gPowerResponsiveButton, gPowerProfile == PowerProfile::Balanced   ? "Resp *" : "Resp");
+  drawButton(gPowerBalancedButton,   gPowerProfile == PowerProfile::Aggressive ? "Bal *"  : "Bal");
+  drawButton(gPowerMaxButton,        gPowerProfile == PowerProfile::BadgeMax   ? "Max *"  : "Max");
 
-  // Badge orientation — Handheld / Strap
-  display.drawString("Badge orientation", bx, 412);
-  gOrientationButton     = {bx,      438, bw2, bh};
-  gOrientationStrapButton = {bx2_2,  438, bw2, bh};
+  // Badge orientation — Normal / Strap
+  display.drawString("Badge orientation", bx, 480);
+  gOrientationButton     = {bx,      506, bw2, bh};
+  gOrientationStrapButton = {bx2_2,  506, bw2, bh};
   gLanguageAutoButton = {};
   gLanguageEnglishButton = {};
   gLanguageJapaneseButton = {};
@@ -7043,7 +7030,7 @@ void renderSettings(const char* refreshReason = "mode switch") {
              gSettings.orientationMode == OrientationMode::Strap ? "Strap *" : "Strap");
 
   // Advanced button
-  gAdvancedButton = {bx, 502, bw, 58};
+  gAdvancedButton = {bx, 570, bw, 58};
   drawButton(gAdvancedButton, "Advanced");
 
   // Home button
@@ -7324,7 +7311,7 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
         "  refreshes: " + static_cast<unsigned>(gDisplayRefreshCount));
     {
       const String napBlocked = lightNapBlockedReason();
-      row(String("LightNap eligible: ") + (napBlocked.length() == 0 ? "yes" : String("no (") + napBlocked + ")"));
+      row(String("LightNap (this screen): ") + (napBlocked.length() == 0 ? "yes" : String("no — ") + napBlocked));
     }
   } else if (gPowerLabPage == 1) {
     // Page 2: battery / peripherals
@@ -7383,7 +7370,7 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
     drawButton(gBadgeSleepButton, String("Sleep mode: ") + badgeSleepModeName());
   } else {
     // Page 4: Wake source / deep sleep audit
-    row("--- Wake source audit (v5.8-dev9) ---");
+    row(String("--- Wake source audit (") + kFirmwareVersion + ") ---");
     row("GT911 touch INT = GPIO48.");
     row("ESP32-S3 RTC GPIO range = 0-21 only.");
     row("GPIO48 is NOT RTC-wake capable — cannot wake from deep sleep.");
@@ -8078,7 +8065,7 @@ void handleTouch() {
   }
 
   if (gScreen == Screen::PowerLab) {
-    constexpr uint8_t kPlPageCount = 3;
+    constexpr uint8_t kPlPageCount = 4;
     if (hitTarget(gPowerProfileButton, "power lab profile cycle", tapX, tapY)) {
       cyclePowerProfile();
       saveSettings();
@@ -8481,12 +8468,15 @@ void handleTouch() {
     // Power — Responsive / Balanced / Max Battery
     } else if (hitTarget(gPowerResponsiveButton, "power responsive", tapX, tapY)) {
       gPowerProfile = PowerProfile::Balanced;
+      saveSettings();
       renderSettings("power responsive");
     } else if (hitTarget(gPowerBalancedButton, "power balanced", tapX, tapY)) {
       gPowerProfile = PowerProfile::Aggressive;
+      saveSettings();
       renderSettings("power balanced");
     } else if (hitTarget(gPowerMaxButton, "power max battery", tapX, tapY)) {
       gPowerProfile = PowerProfile::BadgeMax;
+      saveSettings();
       renderSettings("power max battery");
     // Badge orientation — Normal / Strap
     } else if (hitTarget(gOrientationButton, "orientation normal", tapX, tapY)) {

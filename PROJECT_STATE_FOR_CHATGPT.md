@@ -1,4 +1,4 @@
-# PaperBadge Project State — v5.8-dev10 Handoff
+# PaperBadge Project State — v5.8-dev11 Handoff
 
 _Last updated: 2026-06-12_
 
@@ -15,75 +15,88 @@ _Last updated: 2026-06-12_
 
 ## Firmware
 
-- **Version:** `v5.8-dev10` (`src/main.cpp:20`)
+- **Version:** `v5.8-dev11` (`src/main.cpp:20`)
 - **Build:** SUCCESS — RAM 49.5% · Flash 47.6%
 - **Upload:** SUCCESS — `/dev/cu.usbmodem1101`
 - **Smoke test:** PASS (7/7 boot log checks)
 
 ---
 
-## What Changed in v5.8-dev10
+## What Changed in v5.8-dev11
 
-### Settings UI Refinements (from dev9 local diff, kept)
+### Fix 1: Power Lab page 4 unreachable
 
-Battery and USB power info on the Settings screen now renders as a proper compact row:
+Touch handler used `kPlPageCount = 3` while `renderPowerLab()` defines `kPowerLabPageCount = 4`.
+Fixed: handler now uses `4`. Page button cycles through all four pages.
 
-- **Battery row:** `"X% (YYYYmV)"` text left-aligned + bar right-aligned on the same line (y=80)
-- **USB row:** `"USB: yes/no (YYYYmV)"` below battery (y=110)
-- All button rows shifted down by 26px to clear the extra info area
-- Reader size label: y=142 (was 116), buttons: y=168 (was 142)
-- Refresh label: y=232 (was 206), buttons: y=258 (was 232)
-- Power label: y=322 (was 296), buttons: y=348 (was 322)
-- Orientation label: y=412 (was 386), buttons: y=438 (was 412)
-- Advanced button: y=502 (was 476)
+### Fix 2: Settings power profile persistence
 
-Power button labels now adapt to font size — `isMediumSize` flag enables longer labels at Reader M:
+Settings power profile buttons (Resp / Bal / Max) were missing `saveSettings()` calls.
+Fixed: all three handlers now call `saveSettings()` matching Power Lab behavior.
 
-| Setting | S/L label | M label |
-|---------|-----------|---------|
-| Refresh Balanced | `Bal` | `Balanced` |
-| Power Responsive | `Resp` | `Responsive` |
-| Power Balanced | `Bal` | `Balanced` |
-| Power Max Battery | `Max` | `Max Batt` |
+### Fix 3: Power Lab LightNap label clarified
 
----
+"LightNap eligible:" renamed to **"LightNap (this screen):"** — makes clear that when viewing
+Power Lab (a control screen), the result of `no — control screen` reflects the current Power Lab
+screen, not a prior content screen the user came from.
 
-### LightNap Safety Patch
+### Fix 4: Settings labels — always compact
 
-**Problem:** LightNap uses a 2s timer-only sleep cycle. On wake, a tap that roused the device
-from sleep could accidentally register as an answer selection in Exam or Drills.
+Removed the `isMediumSize` adaptive label expansion introduced in dev10. Labels are now always
+compact to prevent wrapping inside 150px segmented buttons:
 
-**Three-part fix:**
+| Row | Labels |
+|-----|--------|
+| Reader | S / M / L |
+| Refresh | Fast / **Bal** / Clean |
+| Power | **Resp** / **Bal** / **Max** |
+| Orientation | Normal / Strap |
 
-#### 1. Answer-selection guard (`isAnswerSelectionActive()`)
+### Fix 5: Drill/Exam option text scales with Reader size
 
-New function blocks LightNap entry whenever the user's next tap could record an answer:
+`optionTextPxFor()` was capping `largePx = min(bodyPx, 31)`, making Reader L (bodyPx=40)
+look identical to Reader M (bodyPx=31) for option buttons.
 
-- **Exam:** `gScreen == Screen::Exam && gExamActive && !gExamSummary` — question is active
-- **Drills:** `gScreen == Screen::Drills && gSelectedOption < 0 && isOptionDrillScreen(...)` — option drill awaiting first tap
+Fixed: removed the `>= 31 ? 31` cap. Now uses `bodyPx` directly:
 
-Guard applied in both `lightNapBlockedReason()` (Power Lab display) and `maybeEnterBadgeSleep()` (nap entry path).
+| Reader | bodyPx | optionTextPx (if fits 2 lines) |
+|--------|--------|-------------------------------|
+| S | 24 | 24 (= buttonPx; no change) |
+| M | 31 | 31 |
+| L | 40 | 40 (or falls back to 31 if text is too long) |
 
-Read-only screens (Home, Badge, Practice, Glossary, Results, DrillsMenu) remain LightNap-eligible.
+The existing 2-line overflow guard still applies: if a label doesn't fit in 2 lines at `largePx`,
+the function falls back to `compactPx` (buttonPx). No button height overflow possible.
 
-#### 2. Post-wake input debounce (400ms)
+### Fix 6: Settings battery layout redesign
 
-After `esp_light_sleep_start()` returns, the existing input-lock mechanism is engaged for 400ms:
+Old layout: single metadata-font line with thin 22px bar inline.
 
-```cpp
-gInputLocked = true;
-gInputLockedAtMs = wakeNow;
-gInputUnlockAtMs = wakeNow + 400;
+New layout for glanceability:
+
+```
+[  100%  ]                    [████████████████████]   ← thick bar (66×220px)
+4156mV
+USB: no  discharging
 ```
 
-`handleTouch()` already checks `gInputLocked` and ignores all touch events during this window.
-The existing 8s watchdog still clears stale locks.
+- Battery % uses `applyCoachTitleFont()` (31–40px depending on reader size), left at x=36
+- Thick bar: h=66px, w=220px, right-aligned at x=width-36-220, same y as % text
+- mV line below (metadata font), then USB+charging status below that
+- All settings rows shifted down ~68px to accommodate taller battery section:
+  - Reader size: label y=210, buttons y=236
+  - Refresh: label y=300, buttons y=326
+  - Power: label y=390, buttons y=416
+  - Orientation: label y=480, buttons y=506
+  - Advanced: y=570
 
-#### 3. `sleepAuditStatusLine()` wording fix
+### Fix 7: Power Lab page 4 audit version string
 
-Old: `"enabled: light experiment after Badge idle"` (incorrectly implied Badge-only)
+Changed hardcoded `"v5.8-dev9"` to `kFirmwareVersion` so it stays current automatically.
 
-New: `"enabled: light sleep on idle eligible screens"` — accurately reflects expanded eligible screen set.
+### Docs
+
+- Created `docs/PRD_PaperBadge_v0.6.md` — product behavior reference and Japanese deck roadmap
 
 ---
 
@@ -152,7 +165,8 @@ Controls font size in:
 - Exam question stems and option buttons
 - Drill/Exam feedback and explanation pages
 
-Option buttons scale within limits: capped at 31px to prevent overflow on XL size.
+Option buttons scale correctly at S/M/L: S→24px, M→31px, L→40px (falls back to next size down if
+label doesn't fit in 2 lines).
 
 ---
 
@@ -181,41 +195,35 @@ Sleep Off resets on reboot (experimental flag, not sticky).
 
 ---
 
-## Physical QA Checklist (v5.8-dev10)
+## Physical QA Checklist (v5.8-dev11)
 
 - [ ] Home screen shows 7 buttons (no Debug)
-- [ ] Settings: battery % and mV visible on Settings screen
-- [ ] Settings: USB power line visible below battery
-- [ ] Settings: Refresh shows Fast / Bal(anced) / Clean
-- [ ] Settings: Power shows Resp(onsive) / Bal(anced) / Max (Batt)
-- [ ] Settings: Reader M shows full labels; Reader S/L shows compact
+- [ ] Settings: large battery % visible, thick bar to the right
+- [ ] Settings: mV line and USB+charging line below battery
+- [ ] Settings: Refresh shows Fast / Bal / Clean (no wrapping)
+- [ ] Settings: Power shows Resp / Bal / Max (no wrapping)
 - [ ] Settings "Advanced" button navigates to Advanced screen
 - [ ] Advanced: info text and button grid do not overlap
-- [ ] Advanced: "Reset Type", "Trace Dump", "Layout Log" labels fit buttons
-- [ ] Advanced: Sleep mode button visible only on Power Lab page 3
-- [ ] Power Lab page 3: body text does not overlap Sleep mode button
-- [ ] Power Lab page 4: shows GPIO48, RTC range, deep sleep blocked
-- [ ] Power Lab page 1: shows `LightNap eligible: yes/no`
-- [ ] Power Lab page 1: shows `answer selection active` when in active Exam question
+- [ ] Power Lab page 1: shows `LightNap (this screen): no — control screen`
+- [ ] Power Lab page 4: reachable via Page button tap (cycles 1→2→3→4→1)
+- [ ] Power Lab page 4: shows current firmware version in audit header
+- [ ] Changing power profile in Settings persists after reboot
+- [ ] Changing power profile in Power Lab persists after reboot
+- [ ] Drills Reader L: option buttons visibly larger than Reader M
+- [ ] Drills Reader S: option buttons visibly smaller than Reader M
+- [ ] Exam Reader L: option buttons visibly larger than Reader M
 - [ ] Practice: bottom tap on last page → next item
 - [ ] Practice: top tap on first page → previous item
-- [ ] Glossary: same tap behavior as Practice
-- [ ] Drills: reader size (S/M/L) affects question and option text
-- [ ] Exam: reader size affects question and option text
 - [ ] Badge screen: LightNap activates in Balanced or Max Battery after idle
-- [ ] Home screen: LightNap eligible (check Power Lab page 1)
 - [ ] Settings screen: LightNap NOT eligible (control screen)
 - [ ] Responsive profile: no LightNap even with Sleep mode on
-- [ ] Exam active question: LightNap blocked (`answer selection active`)
-- [ ] Drill option awaiting tap: LightNap blocked (`answer selection active`)
-- [ ] Post-wake: first 400ms ignores taps (no accidental answer recorded)
-- [ ] Balanced refresh: does not clean every 2 taps during rapid navigation
-- [ ] Fast refresh: stays fast during rapid navigation, cleans every ~16 transitions
+- [ ] Exam active question: LightNap blocked (answer selection active)
+- [ ] Post-wake: first 400ms ignores taps
 
 ---
 
 ## Next Steps
 
-1. **Japanese readiness implementation** — UTF-8 sanitizer, CJK word wrap, Japanese font path, generic deck schema
-2. **Physical QA this checklist** — especially LightNap answer-selection guard and post-wake debounce
+1. **Japanese readiness implementation** — UTF-8 sanitizer, CJK word wrap, Japanese font path, generic deck schema (see `docs/PRD_PaperBadge_v0.6.md`)
+2. **Physical QA this checklist** — especially Reader L option sizing and Power Lab page 4
 3. Long-term: GT911 touch INT wake research if alternative GPIO mapping found
