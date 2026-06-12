@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.8-dev8";
+constexpr const char* kFirmwareVersion = "v5.8-dev9";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -42,7 +42,8 @@ constexpr uint32_t kActiveCpuMhz = 240;
 constexpr uint32_t kIdleCpuMhz = 80;
 constexpr uint32_t kPowerPollIntervalMs = 45000;
 constexpr uint32_t kPostTouchIdleGuardMs = 2000;
-constexpr uint32_t kHardCleanTransitionLimit = 14;
+constexpr uint32_t kHardCleanTransitionLimit = 16;      // Fast: clean every ~16 non-clean transitions
+constexpr uint32_t kBalancedCleanTransitionLimit = 10;  // Balanced: clean every ~10 transitions
 constexpr int32_t kHitboxPadding = 10;
 constexpr size_t kMaxCoachItems = 180;
 constexpr size_t kMaxSdGlossaryTerms = 56;
@@ -1185,19 +1186,20 @@ bool isImageOrZoomRefresh(const char* reason) {
          refreshReasonContains(reason, "language") || refreshReasonContains(reason, "orientation");
 }
 
-bool shouldUseCleanRefresh(const char* reason, bool highQuality, bool hardCleanTriggered) {
-  if (hardCleanTriggered || gSettings.refreshMode == RefreshMode::Clean) {
-    return true;
-  }
-  if (gSettings.refreshMode == RefreshMode::Balanced) {
-    return highQuality || isImageOrZoomRefresh(reason);
-  }
-  return isImageOrZoomRefresh(reason);
+bool shouldUseCleanRefresh(const char* reason, bool /*highQuality*/, bool hardCleanTriggered) {
+  if (gSettings.refreshMode == RefreshMode::Clean) return true;
+  if (hardCleanTriggered) return true;
+  if (isImageOrZoomRefresh(reason)) return true;
+  // Fast and Balanced: cadence only — highQuality alone does not trigger a clean refresh
+  return false;
 }
 
 bool chooseRefreshClean(const char* reason, bool highQuality, bool& hardCleanTriggered) {
   const uint32_t nextTransition = gRefreshTransitionCount + 1;
-  hardCleanTriggered = nextTransition >= kHardCleanTransitionLimit;
+  const uint32_t cleanLimit = (gSettings.refreshMode == RefreshMode::Balanced)
+                               ? kBalancedCleanTransitionLimit
+                               : kHardCleanTransitionLimit;
+  hardCleanTriggered = nextTransition >= cleanLimit;
   const bool cleanRefresh = shouldUseCleanRefresh(reason, highQuality, hardCleanTriggered);
   gRefreshTransitionCount = cleanRefresh ? 0 : nextTransition;
   Serial.printf("Refresh policy: mode=%s reason=%s highQuality=%s actual=%s transitionCount=%u hardClean=%s\n",
@@ -1303,6 +1305,34 @@ bool isStaticIdleScreen(Screen screen) {
     default:
       return false;
   }
+}
+
+// LightNap eligibility: only normal content/display screens — never control or diagnostic screens.
+bool isLightNapEligibleScreen(Screen screen) {
+  switch (screen) {
+    case Screen::Badge:
+    case Screen::Home:
+    case Screen::PracticeMenu:
+    case Screen::GlossaryMenu:
+    case Screen::DrillsMenu:
+    case Screen::InterviewPractice:
+    case Screen::Glossary:
+    case Screen::Results:
+    case Screen::Drills:
+    case Screen::Exam:
+      return true;
+    default:
+      return false;
+  }
+}
+
+const char* lightNapBlockedReason() {
+  if (gSettings.badgeSleepMode == BadgeSleepMode::Off) return "sleep off";
+  if (!profileAllowsLightSleep()) return "profile Responsive";
+  if (!isLightNapEligibleScreen(gScreen)) return "control screen";
+  if (gInputLocked) return "input locked";
+  if (gTouchActive) return "touch active";
+  return "";
 }
 
 const char* chargingStateName(m5::Power_Class::is_charging_t state) {
@@ -1655,8 +1685,8 @@ void maybeEnterBadgeSleep() {
       gLastUserActivityMs == 0) {
     return;
   }
-  // LightNap only on Badge screen — never during interactive study/settings/diagnostic screens
-  if (gScreen != Screen::Badge) {
+  // LightNap only on eligible content screens — never on control/diagnostic screens
+  if (!isLightNapEligibleScreen(gScreen)) {
     return;
   }
   // Responsive profile disables light sleep entirely
@@ -6934,9 +6964,9 @@ void renderSettings(const char* refreshReason = "mode switch") {
   gRefreshBalancedButton = {bx2_3,   232, bw3, bh};
   gRefreshCleanButton    = {bx3_3,   232, bw3, bh};
   gRefreshModeButton = {};
-  drawButton(gRefreshFastButton,     gSettings.refreshMode == RefreshMode::Fast     ? "Fast *"     : "Fast");
-  drawButton(gRefreshBalancedButton, gSettings.refreshMode == RefreshMode::Balanced ? "Balanced *" : "Balanced");
-  drawButton(gRefreshCleanButton,    gSettings.refreshMode == RefreshMode::Clean    ? "Clean *"    : "Clean");
+  drawButton(gRefreshFastButton,     gSettings.refreshMode == RefreshMode::Fast     ? "Fast *"  : "Fast");
+  drawButton(gRefreshBalancedButton, gSettings.refreshMode == RefreshMode::Balanced ? "Bal *"   : "Bal");
+  drawButton(gRefreshCleanButton,    gSettings.refreshMode == RefreshMode::Clean    ? "Clean *" : "Clean");
 
   // Power — Responsive / Balanced / Max
   display.drawString("Power", bx, 296);
@@ -7099,40 +7129,24 @@ void renderAdvanced(const char* refreshReason = "mode switch") {
   y += 34;
   display.drawString(String("firmware: ") + kFirmwareVersion, 26, y);
   y += 26;
-  display.drawString(String("SD: ") + (gSdMounted ? "yes" : "no") + "  deck: " + gCoachDeckSource + " " +
-                         static_cast<unsigned>(gCoachItemCount),
+  display.drawString(String("deck: ") + gCoachDeckSource + " " + static_cast<unsigned>(gCoachItemCount) +
+                         "  SD: " + (gSdMounted ? "yes" : "no"),
                      26, y);
   y += 26;
-  display.drawString(String("power: ") + powerModeName() + " profile=" + powerProfileName() +
-                         " sleep=" + badgeSleepModeName(),
-                     26, y);
-  y += 26;
-  display.drawString(String("profile thresholds: WarmIdle@") +
-                         static_cast<unsigned>(profileIdleScaleThresholdMs() / 1000) + "s  LightNap@" +
-                         (profileAllowsLightSleep()
-                            ? String(profileLightSleepIdleMs() / 1000) + "s"
-                            : String("disabled")),
-                     26, y);
+  display.drawString(String("profile: ") + powerProfileName() + "  sleep: " + badgeSleepModeName(), 26, y);
   y += 26;
   display.drawString(batteryStatusLine(), 26, y);
   y += 24;
   drawBatteryBar(26, y, 220, 16, batteryLevelPercent());
   y += 26;
-  display.drawString(chargeStatusLine(), 26, y);
-  y += 24;
-  display.drawString(String("font: ") + fontSizeModeName() + " / " + fontStyleModeName(), 26, y);
-  y += 24;
-  display.drawString(String("refresh: ") + refreshModeName() + "  contrast: " + contrastModeName(), 26, y);
-  y += 24;
-  display.drawString(String("touch debug: ") + (gTouchDebugEnabled ? "on" : "off"), 26, y);
+  display.drawString(String("font: ") + fontSizeModeName() + "  refresh: " + refreshModeName(), 26, y);
   y += 24;
   display.drawString(String("trace: ") + gLastRenderTraceStatus, 26, y);
   y += 24;
-  display.drawString(String("deck export: ") + gLastDeckExportStatus, 26, y);
+  display.drawString(String("export: ") + gLastDeckExportStatus, 26, y);
   y += 24;
-  // Sleep test hint
   if (gSettings.badgeSleepMode != BadgeSleepMode::Off) {
-    display.drawString("Sleep on: tap after wake. Long press = disable. Resets Off on reboot.", 26, y);
+    display.drawString("Sleep: tap after wake  long press = disable", 26, y);
     y += 24;
   }
 
@@ -7141,7 +7155,9 @@ void renderAdvanced(const char* refreshReason = "mode switch") {
   const int32_t actionW = (display.width() - 52 - actionGap) / 2;
   const int32_t actionH = 42;
   const int32_t rightX = actionX + actionW + actionGap;
-  int32_t actionY = display.height() - 430;
+  // Start button grid just below the info text (minimum gap of 20px, clamp above home button)
+  const int32_t minActionY = display.height() - 490;
+  int32_t actionY = (y + 20 > minActionY) ? y + 20 : minActionY;
   gHelpButton = {actionX, actionY, actionW, actionH};
   gPowerLabButton = {rightX, actionY, actionW, actionH};
   actionY += actionH + 8;
@@ -7163,10 +7179,10 @@ void renderAdvanced(const char* refreshReason = "mode switch") {
   drawButton(gPowerLabButton, "Power Lab");
   drawButton(gVisualQaButton, "Visual QA", IconType::Exam);
   drawButton(gFontLabButton, "Font Lab");
-  drawButton(gTypographyResetButton, "Reset typography");
-  drawButton(gLayoutDebugButton, "Layout log");
-  drawButton(gRenderTraceButton, "Dump render trace");
-  drawButton(gTouchDebugButton, gTouchDebugEnabled ? "Touch dbg off" : "Touch dbg on");
+  drawButton(gTypographyResetButton, "Reset Type");
+  drawButton(gLayoutDebugButton, "Layout Log");
+  drawButton(gRenderTraceButton, "Trace Dump");
+  drawButton(gTouchDebugButton, gTouchDebugEnabled ? "Touch Dbg Off" : "Touch Dbg On");
   drawButton(gExportDeckButton, "Export deck");
   drawButton(gBadgeSleepButton, String("Sleep: ") + badgeSleepModeName());
   drawButton(gHomeButton, "", IconType::Home);
@@ -7200,7 +7216,7 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
   prepareFullRefresh(refreshReason, true);
 
   auto& display = M5.Display;
-  constexpr uint8_t kPowerLabPageCount = 3;
+  constexpr uint8_t kPowerLabPageCount = 4;
   if (gPowerLabPage >= kPowerLabPageCount) gPowerLabPage = 0;
 
   display.setTextDatum(textdatum_t::top_left);
@@ -7257,6 +7273,10 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
         "  redraws while idle: " + static_cast<unsigned>(gRedrawWhileIdleCount));
     row(String("Screen: ") + screenName(gLastRenderedScreen) +
         "  refreshes: " + static_cast<unsigned>(gDisplayRefreshCount));
+    {
+      const String napBlocked = lightNapBlockedReason();
+      row(String("LightNap eligible: ") + (napBlocked.length() == 0 ? "yes" : String("no (") + napBlocked + ")"));
+    }
   } else if (gPowerLabPage == 1) {
     // Page 2: battery / peripherals
     const bool wifiOff = WiFi.getMode() == WIFI_OFF;
@@ -7275,13 +7295,11 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
     row("Mic: not used  IMU: not started");
     row(String("SD: ") + (gSdMounted ? "mounted/idle" : "not mounted"));
     row(String("Redraws while idle: ") + static_cast<unsigned>(gRedrawWhileIdleCount));
-  } else {
-    // Page 3: Sleep Lab controls and wake-source status
-    // Sleep mode / stage
+  } else if (gPowerLabPage == 2) {
+    // Page 3: Sleep Lab — nap/wake/listen diagnostics and sleep mode button
     row(String("Sleep mode: ") + badgeSleepModeName() +
         "  stage: " + powerStageName(gPowerStage) +
         "  last: " + powerStageName(gLastPowerStage));
-    // Nap cycle stats
     row(String("Nap: ") + static_cast<unsigned>(profileLightSleepDurationUs() / 1000000) + "s  " +
         "attempts: " + static_cast<unsigned>(gLightSleepAttemptCount) +
         "  entered: " + static_cast<unsigned>(gLightSleepEnteredCount) +
@@ -7289,11 +7307,9 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
     row(String("Light total: ") + fmtDurationMs(gLightSleepTotalMs) +
         "  last: " + fmtDurationMs(gLastLightSleepDurationMs) +
         "  longest: " + fmtDurationMs(gLongestLightSleepMs));
-    // Wake details
     row(String("Wake reason: ") + gLastWakeReason +
         "  last wake: " + (gLastWakeTimestampMs > 0 ? fmtMsSince(gLastWakeTimestampMs) : String("none")));
     row(String("Last sleep attempt: ") + gLastSleepAttempt);
-    // Listen window state
     {
       const uint32_t now = millis();
       const bool inWindow = gInWakeListenWindow && now < gWakeListenWindowEndMs;
@@ -7301,41 +7317,35 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
           "  dur: " + static_cast<unsigned>(gWakeListenWindowDurationMs / 1000) + "s" +
           "  entered: " + static_cast<unsigned>(gWakeListenWindowEnteredCount));
       if (inWindow) {
-        row(String("  window expires in: ") +
-            fmtDurationMs(gWakeListenWindowEndMs - now));
+        row(String("  expires in: ") + fmtDurationMs(gWakeListenWindowEndMs - now));
       }
     }
     row(String("Input after wake: ") + (gInputDetectedAfterWake ? "yes (held)" : "no") +
         "  listen touch: " + (gWakeListenWindowTouchDetected ? "yes" : "no"));
-    // Touch timing
-    row(String("Last touch down: ") + (gLastTouchDownMs > 0 ? fmtMsSince(gLastTouchDownMs) : String("none")) +
-        "  up: " + (gLastTouchUpMs > 0 ? fmtMsSince(gLastTouchUpMs) : String("none")));
-    row(String("Last hit: ") + gLastHitTarget +
-        "  last ignored: " + gLastIgnoredTouchReason);
-    // Input lock
     row(String("Input locked: ") + (gInputLocked ? "YES" : "no") +
-        (gInputLocked && gInputLockedAtMs > 0
-           ? String("  for: ") + fmtDurationMs(millis() - gInputLockedAtMs)
-           : String("")) +
         "  watchdog clears: " + static_cast<unsigned>(gInputLockWatchdogCount));
-    // Emergency long press
     row(String("Long press escapes: ") + static_cast<unsigned>(gLongPressEscapeCount) +
         (gSleepDisabledByLongPress ? "  (last: long press)" : ""));
-    // Wake source notes — deep sleep audit results
-    row("--- Wake sources (audit v5.8-dev8) ---");
-    row("Timer: supported. Touch INT: GPIO48 found but NOT RTC-wake capable.");
-    row("ESP32-S3 RTC GPIO = 0-21 only. GPIO48 cannot wake from deep sleep.");
-    row("Light sleep: timer wake only. Short taps during nap are missed.");
-    row("Deep sleep: BLOCKED (no verified RTC wake source). Sleep Off on reboot.");
-    if (!profileAllowsLightSleep()) {
-      row("Profile: Responsive — light sleep disabled. Most responsive to taps.");
-    }
-    // Sleep cycle button
-    const int32_t sleepBtnY = maxY - 10;
+    // Sleep mode toggle — placed 20px above footer to avoid overlap
     const int32_t sleepBtnH = 52;
     const int32_t sleepBtnW = display.width() - 52;
+    const int32_t sleepBtnY = maxY + 10;
     gBadgeSleepButton = {26, sleepBtnY, sleepBtnW, sleepBtnH};
     drawButton(gBadgeSleepButton, String("Sleep mode: ") + badgeSleepModeName());
+  } else {
+    // Page 4: Wake source / deep sleep audit
+    row("--- Wake source audit (v5.8-dev9) ---");
+    row("GT911 touch INT = GPIO48.");
+    row("ESP32-S3 RTC GPIO range = 0-21 only.");
+    row("GPIO48 is NOT RTC-wake capable — cannot wake from deep sleep.");
+    row("Power button = GPIO44, also NOT RTC-wake capable.");
+    row("Deep sleep: BLOCKED — no verified RTC wake source.");
+    row("Light sleep: timer wake ONLY. Short taps during nap are missed.");
+    row("Sleep Off resets on reboot (experimental flag).");
+    row("LightNap eligible screens: Badge, Home, Practice, Glossary,");
+    row("  Drills, Exam, Results, DrillsMenu, GlossaryMenu, PracticeMenu.");
+    row("NOT eligible: Settings, Advanced, Debug, PowerLab, FontLab,");
+    row("  VisualQA, TouchDebug, HelpLegend, PowerAudit.");
   }
 
   // Footer: Profile | Page | Home  (body tap refreshes current page)

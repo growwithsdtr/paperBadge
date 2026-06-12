@@ -1,4 +1,4 @@
-# PaperBadge Project State — v5.8-dev8 Handoff
+# PaperBadge Project State — v5.8-dev9 Handoff
 
 _Last updated: 2026-06-12_
 
@@ -15,129 +15,119 @@ _Last updated: 2026-06-12_
 
 ## Firmware
 
-- **Version:** `v5.8-dev8` (`src/main.cpp:20`)
+- **Version:** `v5.8-dev9` (`src/main.cpp:20`)
 - **Build:** SUCCESS — RAM 49.5% · Flash 47.6%
-- **Upload:** SUCCESS — `/dev/tty.usbmodem1101`
+- **Upload:** SUCCESS — `/dev/cu.usbmodem1101`
+- **Smoke test:** PASS (7/7 boot log checks)
 
 ---
 
-## What Changed in v5.8-dev8
+## What Changed in v5.8-dev9
 
-### Deep Sleep Feasibility Audit (Phase 1 — Research Only)
+### Settings Label Consistency (Phase 1)
 
-Searched M5GFX, M5Unified, board definitions, and ESP-IDF for M5PaperS3 deep sleep wake sources.
+Refresh segmented control now uses compact labels matching Power:
 
-**Findings:**
+| Row | Labels |
+|-----|--------|
+| Reader | S / M / L |
+| Refresh | Fast / **Bal** / Clean |
+| Power | Resp / Bal / Max |
+| Orientation | Normal / Strap |
 
-| Question | Answer |
-|----------|--------|
-| Can ESP32-S3 deep sleep be entered from this firmware? | Yes — `esp_deep_sleep_start()` works, but no safe wake source exists |
-| GT911 INT pin for M5PaperS3? | **GPIO_NUM_48** (M5GFX.cpp:2023, confirmed in board detection block) |
-| Is GPIO48 RTC-wake capable on ESP32-S3? | **NO** — ESP32-S3 RTC GPIO range is 0–21 only. GPIO48 is digital-only |
-| Is there a physical button wake source? | Power hold = GPIO_NUM_44 (also NOT RTC GPIO) |
-| Is USB-only wake acceptable as standby? | No |
-| Does GT911 stay powered during deep sleep? | Unknown — likely unpowered |
-| Light sleep wake verified? | Timer wake: YES. Touch INT wake: NO |
-| What app state needs persist/restore after deep sleep? | Settings, screen, session ID, coach index, results — significant |
-
-**Conclusion: Deep sleep remains BLOCKED.** No RTC-capable wake source found. Light sleep (timer only) is the only safe option.
-
-The Power Lab page 3 and Power Audit now display these specific findings.
+"Balanced" was wrapping inside the 3-way segmented button. Changed to "Bal" to match the compact style of "Resp" and "Max".
 
 ---
 
-### Power Profile Rename (Phase 2)
+### Advanced Screen Layout Fix (Phase 2)
 
-User-facing names now match intent:
+**Before:** Button labels "Reset typography" and "Dump render trace" overflowed their buttons. Button grid start position could overlap diagnostic text.
 
-| Enum value | Old display name | New display name |
-|------------|-----------------|-----------------|
-| `PowerProfile::Balanced` | "Balanced" | **"Responsive"** |
-| `PowerProfile::Aggressive` | "Low Power" | **"Balanced"** |
-| `PowerProfile::BadgeMax` | "Max Battery" | **"Max Battery"** (unchanged) |
-
-**Updated thresholds:**
-
-| Profile | WarmIdle threshold | Light sleep idle | Nap duration | Light sleep |
-|---------|-------------------|-----------------|--------------|-------------|
-| Responsive (Balanced enum) | 30s | N/A | N/A | **Disabled** |
-| Balanced (Aggressive enum) | 15s | 10 min | 12s | Allowed |
-| Max Battery (BadgeMax enum) | 5s | 5 min | 15s | Allowed |
-
-**Responsive profile disables light sleep entirely** (`profileAllowsLightSleep()` = false) — prioritizes tap responsiveness.
-
-Listen windows updated: Balanced=12s, Max Battery=15s.
+**After:**
+- Shortened labels: **Reset Type**, **Trace Dump**, **Layout Log**, **Touch Dbg On/Off**
+- Reduced info text to 8 concise lines (removed redundant "profile thresholds" line — Power Lab has that)
+- Button grid now starts at `max(y + 20, display.height() - 490)` — dynamically clears the last info line
+- Sleep hint shortened: "Sleep: tap after wake  long press = disable"
 
 ---
 
-### Home / Settings / Advanced Structure (Phase 3)
+### Power Lab Page 4 (Phase 3)
 
-**New Home screen** (Debug removed):
-- Badge
-- Practice
-- Drills
-- Exam
-- Glossary
-- Results
-- Settings
+Power Lab split from 3 pages to **4 pages**:
 
-**New Settings screen** (compact segmented rows, no Font style / Badge language / Sleep):
-- Reader size: segmented row **S / M / L** (stars active choice)
-- Refresh: segmented row **Fast / Balanced / Clean**
-- Power: segmented row **Resp / Bal / Max** (short labels to fit 3 columns)
-- Badge orientation: 2-way **Normal / Strap**
-- **Advanced** button (full-width)
-- Home icon button (bottom)
+| Page | Content |
+|------|---------|
+| 1 | CPU stage / idle counters / LightNap eligibility status |
+| 2 | Battery / peripherals |
+| 3 | Sleep diagnostics (nap, wake, listen window, touch timing, input lock) + Sleep mode button |
+| 4 | Wake source / deep sleep audit (GPIO48, RTC range, blocked status, eligible screens) |
 
-**New Advanced screen** (`Screen::Advanced`, accessible from Settings → Advanced):
-- Replaces Debug on Home — all diagnostic content now lives here
-- Shows: firmware, SD, power profile/thresholds, battery, font, refresh, touch debug, trace, deck export status
-- Action buttons: Help, Power Lab, Visual QA, Font Lab, Reset typography, Layout log, Dump render trace, Touch dbg, Export deck, **Sleep mode** toggle
-- Home icon button at bottom
-- Navigate: Settings → Advanced → Power Lab / Font Lab / etc.
+**Page 3 fix:** The sleep mode button was previously placed at `maxY - 10`, causing it to overlap with the last text row on page 3 when content was dense. It is now placed at `maxY + 10`, below the text zone and above the footer.
 
-Old Debug screen (`Screen::Debug`) still exists as a reachable screen for backward compatibility (e.g., from Power Lab Home button) but Debug is no longer on Home.
+**Page 4** contains all wake source audit findings previously crowded at the bottom of page 3.
+
+**Page 1** now shows: `LightNap eligible: yes/no (reason)` — real-time eligibility status for the current screen.
 
 ---
 
-### LightNap Eligibility (Phase 5)
+### Refresh Mode Cadence (Phase 4)
 
-**Light sleep (LightNap) now only activates on the Badge screen.**
+Balanced refresh was cleaning on nearly every `highQuality` screen transition, making navigation feel slow and distracting.
 
-Previously it could activate on: Practice, Glossary, Settings, Debug, Power Lab, Results.
+**New behavior:**
 
-New rule in `maybeEnterBadgeSleep()`:
-```cpp
-if (gScreen != Screen::Badge) return;           // LightNap: Badge only
-if (!profileAllowsLightSleep()) return;          // Responsive profile: disabled
-```
+| Mode | When clean refresh happens |
+|------|---------------------------|
+| Fast | Every ~16 non-clean transitions, or Badge/image/zoom entry |
+| Balanced | Every ~10 non-clean transitions, or Badge/image/zoom entry |
+| Clean | Always |
 
-WarmIdle CPU scaling still applies to all `isStaticIdleScreen()` screens as before.
+**Key change:** `highQuality` parameter no longer triggers a clean refresh in Fast or Balanced mode. Only cadence counter and image/zoom transitions do. This means rapid navigation stays fast.
 
----
-
-### Power Lab Fixes (Phase 6)
-
-- Footer profile button now uses short label: **Resp / Bal / Max** (avoids "Max Battery" overflow)
-- Page 3 wake source notes updated with specific audit findings:
-  - GT911 INT = GPIO48, not RTC-wake capable
-  - ESP32-S3 RTC GPIO range documented
-  - Profile note: if Responsive, shows "light sleep disabled"
-- Power Audit page 2 updated similarly
+Constants:
+- `kHardCleanTransitionLimit = 16` (was 14; used for Fast mode)
+- `kBalancedCleanTransitionLimit = 10` (new; used for Balanced mode)
 
 ---
 
-### Practice / Glossary Tap Navigation (Phase 7)
+### LightNap Eligibility Policy (Phase 5)
 
-**Practice reader** (`handleInterviewPracticeTouch`):
-- Bottom half: if not last page → next page; **if on last page → next item**
-- Top half: if not first page → previous page; **if on first page → previous item**
+**Before:** LightNap only activated on Badge screen.
 
-**Glossary reader** (generic coach screen handler):
-- Same behavior as Practice
-- `allowItemNav = (gScreen == Screen::Glossary)` — Drills/Exam are excluded to prevent accidental option selection
+**After:** LightNap activates on any normal content/display screen when idle.
 
-Does NOT apply to Drill/Exam answer selection screens.
+**Eligible screens (isLightNapEligibleScreen):**
+- Badge, Home
+- PracticeMenu, GlossaryMenu, DrillsMenu
+- InterviewPractice (Practice), Glossary
+- Drills, Exam, Results
+
+**NOT eligible (control/diagnostic screens):**
+- Settings, Advanced, Debug
+- PowerLab, PowerAudit, FontLab, VisualQa, HelpLegend
+- QrZoom, PhotoZoom, TouchDebug
+
+**Guards still apply** (LightNap never enters when):
+- Sleep mode = Off
+- Profile = Responsive (profileAllowsLightSleep() = false)
+- Input is locked
+- Touch is active
+- Inside post-wake listen window
+
+Power Lab page 1 shows live LightNap eligibility status and reason.
+
+---
+
+### Reader Size — Confirmed Working for Drills/Exam (Phase 6)
+
+Reader size (S/M/L) already applied correctly to Drills and Exam in v5.8-dev8:
+- `renderCoachScreen()` calls `coachReaderSizeFor(item)` for Drills
+- `renderExamQuestion()` calls `coachReaderSizeFor(item)` for Exam
+- Both set `gSettings.fontSizeMode = renderSize` before building layouts
+- Option button font (`optionTextPxFor`) also scales with reader size (capped at 31px to prevent overflow)
+- Feedback/explanation pages use `applyCoachBodyFont()` which reads from `coachTypography()` → reader size
+
+No code change needed. PROJECT_STATE_FOR_CHATGPT.md previously stated this was incomplete — that was incorrect.
 
 ---
 
@@ -153,7 +143,7 @@ Home → Glossary → GlossaryMenu → Glossary
 Home → Results
 Home → Settings
 Settings → Advanced
-Advanced → Power Lab (pages 1-3)
+Advanced → Power Lab (pages 1-4)
 Advanced → Font Lab
 Advanced → Visual QA
 Advanced → Help/Legend
@@ -167,27 +157,31 @@ Power Lab → Home
 
 ### Profile Thresholds
 
-| Profile | WarmIdle | LightNap eligible | LightNap threshold | Nap duration | Listen window |
-|---------|----------|------------------|--------------------|--------------|---------------|
-| Responsive | 30s | Badge only, but **BLOCKED** by profileAllowsLightSleep()=false | — | — | — |
-| Balanced | 15s | Badge only | 10 min | 12s | 12s |
-| Max Battery | 5s | Badge only (only Badge for WarmIdle too) | 5 min | 15s | 15s |
+| Profile | WarmIdle | LightNap idle threshold | Nap duration | Listen window |
+|---------|----------|------------------------|--------------|---------------|
+| Responsive (enum Balanced) | 30s | Disabled | — | 10s |
+| Balanced (enum Aggressive) | 15s | 10 min | 12s | 12s |
+| Max Battery (enum BadgeMax) | 5s | 5 min | 15s | 15s |
 
-### Light Sleep Behavior
-- Enters only on Badge screen
-- Timer wake only (touch INT not configured)
-- Short taps during sleep are missed
-- After each wake: listen window where any touch prevents re-sleep
+### LightNap Policy
+- Enters on any `isLightNapEligibleScreen()` — Badge, Home, Practice menus, Drills, Exam, Results, etc.
+- Never enters on control/diagnostic screens
+- Never enters while input locked, touch active, or in wake listen window
+- Responsive profile: always disabled
+
+### CPU Scaling (WarmIdle)
+- Applies to all `isStaticIdleScreen()` screens (includes Settings, Advanced, Power Lab, etc.)
+- Max Battery profile: Badge screen only for CPU scaling (separate from LightNap eligibility)
 
 ---
 
 ## Refresh Modes
 
-| Mode | Behavior |
-|------|----------|
-| Fast | Fastest updates, most ghosting |
-| Balanced | Default — clean on screen entry, fast on re-renders |
-| Clean | Always full clean refresh, slowest |
+| Mode | Cadence | When clean |
+|------|---------|-----------|
+| Fast | ~16 transitions between cleans | Badge/image entry or hard limit |
+| Balanced | ~10 transitions between cleans | Badge/image entry or balanced limit |
+| Clean | Every transition | Always |
 
 ---
 
@@ -196,8 +190,28 @@ Power Lab → Home
 Controls font size in:
 - Practice body text
 - Glossary body text
+- Drill question stems and option buttons
+- Exam question stems and option buttons
+- Drill/Exam feedback and explanation pages
 
-Does NOT currently apply to Drill/Exam question stems (Phases 8+ work remaining).
+Option buttons scale within limits: capped at 31px to prevent overflow on XL size.
+
+---
+
+## Deep Sleep
+
+**BLOCKED — will not be pursued further in this version.**
+
+| Question | Answer |
+|----------|--------|
+| GT911 touch INT | GPIO48 |
+| ESP32-S3 RTC GPIO range | 0–21 only |
+| GPIO48 RTC-wake capable? | **NO** |
+| Power button GPIO44 RTC-wake capable? | **NO** |
+| Deep sleep status | **BLOCKED** |
+| Light sleep wake | Timer only |
+
+Sleep Off resets on reboot (experimental flag, not sticky).
 
 ---
 
@@ -205,37 +219,39 @@ Does NOT currently apply to Drill/Exam question stems (Phases 8+ work remaining)
 
 1. **Touch INT not configured** — Timer wake only for LightNap. Short taps during sleep missed.
 2. **Deep sleep blocked** — GPIO48 (GT911 INT) is not RTC-wake capable on ESP32-S3.
-3. **Reader size inconsistency** — Drill/Exam question stems and explanations don't yet follow Reader size (Phase 8).
-4. **Japanese** — Blocked until: UTF-8 sanitizer, CJK word wrap, Japanese font path, generic deck schema.
+3. **Japanese** — Blocked until: UTF-8 sanitizer, CJK word wrap, Japanese font path, generic deck schema.
 
 ---
 
-## Physical QA Checklist (v5.8-dev8)
+## Physical QA Checklist (v5.8-dev9)
 
 - [ ] Home screen shows 7 buttons (no Debug)
-- [ ] Settings shows segmented rows for Reader / Refresh / Power
+- [ ] Settings: Refresh shows Fast / Bal / Clean (no "Balanced" wrapping)
+- [ ] Settings: Power shows Resp / Bal / Max
 - [ ] Settings "Advanced" button navigates to Advanced screen
-- [ ] Advanced screen shows diagnostic info + all tool buttons
-- [ ] Advanced → Power Lab navigates correctly
-- [ ] Power profile labels in Settings show Resp/Bal/Max
-- [ ] Changing power profile in Settings cycles correctly
-- [ ] Changing reader size in Settings cycles correctly
-- [ ] Changing refresh in Settings cycles correctly
-- [ ] Badge orientation toggle works
-- [ ] Practice: bottom tap on last page → advances to next item
-- [ ] Practice: top tap on first page → goes to previous item
+- [ ] Advanced: info text and button grid do not overlap
+- [ ] Advanced: "Reset Type", "Trace Dump", "Layout Log" labels fit buttons
+- [ ] Advanced: Sleep mode button visible only on Power Lab page 3
+- [ ] Power Lab page 3: body text does not overlap Sleep mode button
+- [ ] Power Lab page 4: shows GPIO48, RTC range, deep sleep blocked
+- [ ] Power Lab page 1: shows LightNap eligible: yes/no
+- [ ] Changing refresh in Settings shows Bal for Balanced mode
+- [ ] Practice: bottom tap on last page → next item
+- [ ] Practice: top tap on first page → previous item
 - [ ] Glossary: same tap behavior as Practice
-- [ ] Badge screen: LightNap only activates in Balanced or Max Battery profile
+- [ ] Drills: reader size (S/M/L) affects question and option text
+- [ ] Exam: reader size affects question and option text
+- [ ] Badge screen: LightNap activates in Balanced or Max Battery after idle
+- [ ] Home screen: LightNap eligible (check Power Lab page 1)
+- [ ] Settings screen: LightNap NOT eligible (control screen)
 - [ ] Responsive profile: no LightNap even with Sleep mode on
-- [ ] Power Lab page 3: footer shows Resp/Bal/Max (no overflow)
-- [ ] Power Lab page 3 body text: shows audit findings (GPIO48, RTC range)
-- [ ] WarmIdle thresholds: Responsive@30s, Balanced@15s, Max@5s
+- [ ] Balanced refresh: does not clean every 2 taps during rapid navigation
+- [ ] Fast refresh: stays fast during rapid navigation, cleans every ~16 transitions
 
 ---
 
-## Next Steps (Not Implemented)
+## Next Steps
 
-- Phase 8: Reader size consistency for Drill/Exam question/explanation rendering
-- Phase 9: Document Refresh mode (done in Settings layout, needs QA)
-- Phase 10: Japanese readiness docs only
-- Long-term: GT911 touch INT wake research if alternative GPIO mapping found
+1. **Japanese readiness implementation** — UTF-8 sanitizer, CJK word wrap, Japanese font path, generic deck schema
+2. **Physical QA this checklist** — especially Power Lab page 3 button overlap fix and LightNap on non-Badge screens
+3. Long-term: GT911 touch INT wake research if alternative GPIO mapping found
