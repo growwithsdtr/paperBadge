@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.8-dev7";
+constexpr const char* kFirmwareVersion = "v5.8-dev8";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -109,6 +109,7 @@ enum class Screen {
   Badge,
   Home,
   Settings,
+  Advanced,
   Debug,
   PowerAudit,
   PowerLab,
@@ -481,12 +482,14 @@ uint8_t practiceStructuredPageCount(const CoachItemView& item, const PracticeLay
 const char* powerProfileName();
 const char* powerStageName(PowerStage stage);
 bool isVerboseLogOk();
+bool profileAllowsLightSleep();
 uint32_t profileIdleScaleThresholdMs();
 uint32_t profileLightSleepIdleMs();
 uint32_t profileLightSleepDurationUs();
 uint32_t profileListenWindowMs();
 uint32_t profileBatteryPollMs();
 void enterPowerStage(PowerStage newStage);
+void renderAdvanced(const char* refreshReason);
 
 BadgeConfig gBadgeConfig;
 Settings gSettings;
@@ -531,7 +534,15 @@ Rect gGlossaryButton;
 Rect gMockInterviewButton;
 Rect gSettingsButton;
 Rect gDebugButton;
+Rect gAdvancedButton;
 Rect gOrientationButton;
+Rect gOrientationStrapButton;
+Rect gRefreshFastButton;
+Rect gRefreshBalancedButton;
+Rect gRefreshCleanButton;
+Rect gPowerResponsiveButton;
+Rect gPowerBalancedButton;
+Rect gPowerMaxButton;
 Rect gLanguageAutoButton;
 Rect gLanguageEnglishButton;
 Rect gLanguageJapaneseButton;
@@ -1281,6 +1292,7 @@ bool isStaticIdleScreen(Screen screen) {
     case Screen::Glossary:
     case Screen::Results:
     case Screen::Settings:
+    case Screen::Advanced:
     case Screen::Debug:
     case Screen::PowerAudit:
     case Screen::PowerLab:
@@ -1372,7 +1384,7 @@ String batteryStatusLine() {
 
 bool isVerboseLogOk() {
   if (!gIdleModeActive) return true;
-  return gPowerProfile == PowerProfile::Balanced;
+  return gPowerProfile == PowerProfile::Balanced; // Responsive profile: always verbose
 }
 
 String idleAuditStatusLine() {
@@ -1394,7 +1406,7 @@ String idleScaleBlockedReason() {
   if (gInputLocked) return "input locked";
   if (gTouchActive) return "touch active";
   if (!isStaticIdleScreen(gScreen)) return "screen not static";
-  if (gPowerProfile == PowerProfile::BadgeMax && gScreen != Screen::Badge) return "BadgeMax: only Badge screen";
+  if (gPowerProfile == PowerProfile::BadgeMax && gScreen != Screen::Badge) return "Max Battery: only Badge screen";
   return "";
 }
 
@@ -1643,7 +1655,12 @@ void maybeEnterBadgeSleep() {
       gLastUserActivityMs == 0) {
     return;
   }
-  if (!isStaticIdleScreen(gScreen) && gScreen != Screen::Badge) {
+  // LightNap only on Badge screen — never during interactive study/settings/diagnostic screens
+  if (gScreen != Screen::Badge) {
+    return;
+  }
+  // Responsive profile disables light sleep entirely
+  if (!profileAllowsLightSleep()) {
     return;
   }
   const uint32_t now = millis();
@@ -1730,18 +1747,18 @@ uint32_t loopDelayMs() {
     return 600;
   }
   if (gIdleModeActive && isStaticIdleScreen(gScreen)) {
-    if (gPowerProfile == PowerProfile::BadgeMax) return 800;
-    if (gPowerProfile == PowerProfile::Aggressive) return 500;
-    return 300;
+    if (gPowerProfile == PowerProfile::BadgeMax) return 800;   // Max Battery
+    if (gPowerProfile == PowerProfile::Aggressive) return 500; // Balanced
+    return 300;                                                 // Responsive
   }
   if (gSettings.powerMode == PowerMode::BatterySaver || gSettings.powerMode == PowerMode::ConferenceBadge) {
     return 120;
   }
   if (gPowerProfile == PowerProfile::Aggressive && isStaticIdleScreen(gScreen)) {
-    return 100;
+    return 100;  // Balanced profile: slightly slower poll on static screens
   }
   if (gPowerProfile == PowerProfile::BadgeMax && gScreen == Screen::Badge) {
-    return 250;
+    return 250;  // Max Battery: slower badge loop
   }
   return 50;
 }
@@ -1777,12 +1794,12 @@ const char* contrastModeName() {
 const char* powerProfileName() {
   switch (gPowerProfile) {
     case PowerProfile::Aggressive:
-      return "Low Power";
+      return "Balanced";
     case PowerProfile::BadgeMax:
       return "Max Battery";
     case PowerProfile::Balanced:
     default:
-      return "Balanced";
+      return "Responsive";
   }
 }
 
@@ -1820,41 +1837,46 @@ void cyclePowerProfile() {
 }
 
 uint32_t profileIdleScaleThresholdMs() {
+  // WarmIdle CPU scaling thresholds per profile
   switch (gPowerProfile) {
-    case PowerProfile::Aggressive: return 7000;
-    case PowerProfile::BadgeMax:   return 4000;
+    case PowerProfile::Aggressive: return 15000;  // Balanced: WarmIdle@15s
+    case PowerProfile::BadgeMax:   return 5000;   // Max Battery: WarmIdle@5s
     case PowerProfile::Balanced:
-    default:                        return 12000;
+    default:                        return 30000;  // Responsive: WarmIdle@30s
   }
 }
 
+bool profileAllowsLightSleep() {
+  // Responsive profile disables light sleep — prioritizes tap responsiveness
+  return gPowerProfile != PowerProfile::Balanced;
+}
+
 uint32_t profileLightSleepIdleMs() {
+  // Time idle before entering LightNap (only used when profileAllowsLightSleep())
   switch (gPowerProfile) {
-    case PowerProfile::Aggressive: return 90000;   // 90s
-    case PowerProfile::BadgeMax:   return 40000;   // 40s
+    case PowerProfile::Aggressive: return 600000;  // Balanced: 10 min
+    case PowerProfile::BadgeMax:   return 300000;  // Max Battery: 5 min
     case PowerProfile::Balanced:
-    default:                        return 420000;  // 7 min
+    default:                        return 999999999; // Responsive: disabled
   }
 }
 
 uint32_t profileLightSleepDurationUs() {
-  // Dev-phase shorter naps: make wake recovery testable before proving touch wake.
-  // Extend once listen window + tap-anywhere wake is confirmed reliable.
   switch (gPowerProfile) {
-    case PowerProfile::Aggressive: return 10000000;  // 10s (was 30s)
-    case PowerProfile::BadgeMax:   return 15000000;  // 15s (was 60s)
+    case PowerProfile::Aggressive: return 12000000;  // Balanced: 12s nap
+    case PowerProfile::BadgeMax:   return 15000000;  // Max Battery: 15s nap
     case PowerProfile::Balanced:
-    default:                        return 5000000;   // 5s (was 10s)
+    default:                        return 12000000;  // Responsive: irrelevant (blocked)
   }
 }
 
 // Post-wake listen window: stay awake this long after each timer nap to catch user input.
 uint32_t profileListenWindowMs() {
   switch (gPowerProfile) {
-    case PowerProfile::BadgeMax:   return 12000;  // 12s
-    case PowerProfile::Aggressive: return 10000;  // 10s
+    case PowerProfile::BadgeMax:   return 15000;  // Max Battery: 15s
+    case PowerProfile::Aggressive: return 12000;  // Balanced: 12s
     case PowerProfile::Balanced:
-    default:                        return 8000;   // 8s
+    default:                        return 10000;  // Responsive: irrelevant (no nap)
   }
 }
 
@@ -3302,6 +3324,8 @@ const char* screenName(Screen screen) {
       return "Home";
     case Screen::Settings:
       return "Settings";
+    case Screen::Advanced:
+      return "Advanced";
     case Screen::Debug:
       return "Debug";
     case Screen::PowerAudit:
@@ -6101,8 +6125,8 @@ void renderHome(const char* refreshReason = "mode switch") {
   const int32_t width = display.width();
   const int32_t buttonX = 34;
   const int32_t buttonW = width - 68;
-  const int32_t buttonH = 82;
-  const int32_t gap = 12;
+  const int32_t buttonH = 86;
+  const int32_t gap = 14;
   int32_t y = 104;
   gBadgeButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
@@ -6117,8 +6141,7 @@ void renderHome(const char* refreshReason = "mode switch") {
   gResultsButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
   gSettingsButton = {buttonX, y, buttonW, buttonH};
-  y += buttonH + gap;
-  gDebugButton = {buttonX, y, buttonW, buttonH};
+  gDebugButton = {};  // Debug moved to Advanced (Settings → Advanced)
 
   drawButton(gBadgeButton, "Badge", IconType::Badge);
   drawButton(gPracticeButton, "Practice", IconType::Practice);
@@ -6127,7 +6150,6 @@ void renderHome(const char* refreshReason = "mode switch") {
   drawButton(gGlossaryButton, "Glossary", IconType::Glossary);
   drawButton(gResultsButton, "Results", IconType::Results);
   drawButton(gSettingsButton, "Settings", IconType::Settings);
-  drawButton(gDebugButton, "Debug", IconType::Debug);
 
   finishDisplayRefresh();
   Serial.println("Home/Menu mode: normal orientation.");
@@ -6883,77 +6905,78 @@ void renderSettings(const char* refreshReason = "mode switch") {
   display.drawString(compactPowerStatusLine(), 36, 68);
   drawBatteryBar(36, 92, width - 84, 14, batteryLevelPercent());
 
-  const int32_t bh = 48;  // button height
-  const int32_t bx = 36;  // button left margin
-  const int32_t bw = width - 72;  // full-width button width
-  const int32_t gap = 8;   // gap between 3-way buttons
-  const int32_t bw3 = (bw - gap * 2) / 3;  // width of each 3-way button
-  const int32_t bx2 = bx + bw3 + gap;
-  const int32_t bx3 = bx + 2 * (bw3 + gap);
+  const int32_t bh = 48;   // segmented button height
+  const int32_t bx = 36;   // left margin
+  const int32_t bw = width - 72;  // full-width
+  const int32_t sg = 8;    // gap between segmented buttons
+  const int32_t bw3 = (bw - sg * 2) / 3;  // 3-way width
+  const int32_t bx2_3 = bx + bw3 + sg;
+  const int32_t bx3_3 = bx + 2 * (bw3 + sg);
+  const int32_t bw2 = (bw - sg) / 2;      // 2-way width
+  const int32_t bx2_2 = bx + bw2 + sg;
 
-  // Badge orientation
-  display.drawString("Badge orientation", bx, 118);
-  gOrientationButton    = {bx, 144, bw, bh};
-  // Badge language
-  display.drawString("Badge language", bx, 204);
-  gLanguageAutoButton   = {bx, 230, bw, bh};
-  gLanguageEnglishButton = {bx, 286, bw, bh};
-  gLanguageJapaneseButton = {};
-  // Reader size (3-way compact row)
-  display.drawString("Reader size", bx, 346);
-  gFontMediumButton = {bx,  372, bw3, bh};   // S
-  gFontLargeButton  = {bx2, 372, bw3, bh};   // M
-  gFontXlButton     = {bx3, 372, bw3, bh};   // L
+  // Reader size — S / M / L
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Reader size", bx, 116);
+  const FontSizeMode activeReaderSize = canonicalFontSizeMode(gSettings.fontSizeMode);
+  gFontMediumButton = {bx,       142, bw3, bh};
+  gFontLargeButton  = {bx2_3,    142, bw3, bh};
+  gFontXlButton     = {bx3_3,    142, bw3, bh};
   gFontXxlButton = {};
   gFontHugeButton = {};
-  // Font style
-  display.drawString("Font style", bx, 432);
-  gFontStyleButton = {bx, 458, bw, bh};
-  // Refresh mode
-  display.drawString("Refresh mode", bx, 518);
-  gRefreshModeButton = {bx, 544, bw, bh};
-  // Power profile
-  display.drawString("Power profile", bx, 604);
-  gPowerProfileButton = {bx, 630, bw, bh};
-  // Sleep mode
-  display.drawString("Sleep mode", bx, 690);
-  gBadgeSleepButton = {bx, 716, bw, bh};
-  // Battery Saver removed from main Settings (use Debug / Power Lab for advanced power)
-  gPowerModeButton = {};
-  // Home button — full-width at bottom
-  gHomeButton = {bx, display.height() - 76, bw, 60};
-
-  // Draw controls
-  drawButton(gOrientationButton,
-             gSettings.orientationMode == OrientationMode::Strap ? "Strap 180" : "Handheld 0");
-  drawButton(gLanguageAutoButton,   String("Mode: ") + languageModeName());
-  drawButton(gLanguageEnglishButton, String("Auto interval: ") + autoRotateIntervalName());
-
-  const FontSizeMode activeReaderSize = canonicalFontSizeMode(gSettings.fontSizeMode);
   drawButton(gFontMediumButton, activeReaderSize == FontSizeMode::Medium ? "S *" : "S");
   drawButton(gFontLargeButton,  activeReaderSize == FontSizeMode::Large  ? "M *" : "M");
   drawButton(gFontXlButton,     activeReaderSize == FontSizeMode::XL     ? "L *" : "L");
 
-  drawButton(gFontStyleButton,   fontStyleModeName());
-  drawButton(gRefreshModeButton, String(refreshModeName()) + " *");
-  drawButton(gPowerProfileButton, String(powerProfileName()) + " *");
-  drawButton(gBadgeSleepButton,  badgeSleepModeName());
+  // Refresh — Fast / Balanced / Clean
+  display.drawString("Refresh", bx, 206);
+  gRefreshFastButton     = {bx,      232, bw3, bh};
+  gRefreshBalancedButton = {bx2_3,   232, bw3, bh};
+  gRefreshCleanButton    = {bx3_3,   232, bw3, bh};
+  gRefreshModeButton = {};
+  drawButton(gRefreshFastButton,     gSettings.refreshMode == RefreshMode::Fast     ? "Fast *"     : "Fast");
+  drawButton(gRefreshBalancedButton, gSettings.refreshMode == RefreshMode::Balanced ? "Balanced *" : "Balanced");
+  drawButton(gRefreshCleanButton,    gSettings.refreshMode == RefreshMode::Clean    ? "Clean *"    : "Clean");
 
-  // Dev hint for light sleep wake
-  if (gSettings.badgeSleepMode != BadgeSleepMode::Off) {
-    applyCoachMetadataFont();
-    display.setTextDatum(textdatum_t::top_left);
-    display.drawString("Light test: tap after timer wake. Long press=disable. Resets Off on reboot.", bx, 774);
-  }
+  // Power — Responsive / Balanced / Max
+  display.drawString("Power", bx, 296);
+  gPowerResponsiveButton = {bx,      322, bw3, bh};
+  gPowerBalancedButton   = {bx2_3,   322, bw3, bh};
+  gPowerMaxButton        = {bx3_3,   322, bw3, bh};
+  gPowerProfileButton = {};
+  gBadgeSleepButton = {};
+  gPowerModeButton = {};
+  drawButton(gPowerResponsiveButton, gPowerProfile == PowerProfile::Balanced   ? "Resp *" : "Resp");
+  drawButton(gPowerBalancedButton,   gPowerProfile == PowerProfile::Aggressive ? "Bal *"  : "Bal");
+  drawButton(gPowerMaxButton,        gPowerProfile == PowerProfile::BadgeMax   ? "Max *"  : "Max");
 
-  drawButton(gHomeButton, "Home");
+  // Badge orientation — Handheld / Strap
+  display.drawString("Badge orientation", bx, 386);
+  gOrientationButton     = {bx,      412, bw2, bh};
+  gOrientationStrapButton = {bx2_2,  412, bw2, bh};
+  gLanguageAutoButton = {};
+  gLanguageEnglishButton = {};
+  gLanguageJapaneseButton = {};
+  gFontStyleButton = {};
+  drawButton(gOrientationButton,
+             gSettings.orientationMode == OrientationMode::Handheld ? "Normal *" : "Normal");
+  drawButton(gOrientationStrapButton,
+             gSettings.orientationMode == OrientationMode::Strap ? "Strap *" : "Strap");
+
+  // Advanced button
+  gAdvancedButton = {bx, 476, bw, 58};
+  drawButton(gAdvancedButton, "Advanced");
+
+  // Home button
+  gHomeButton = {bx, display.height() - 76, bw, 60};
+  drawButton(gHomeButton, "", IconType::Home);
 
   finishDisplayRefresh();
   logTypographySettings("settings screen");
   logPowerAudit("settings screen");
-  Serial.printf("Settings screen shown: font=%s style=%s contrast=%s refresh=%s power=%s profile=%s badgeSleep=%s\n",
-                fontSizeModeName(), fontStyleModeName(), contrastModeName(), refreshModeName(), powerModeName(),
-                powerProfileName(), badgeSleepModeName());
+  Serial.printf("Settings screen shown: font=%s refresh=%s profile=%s orientation=%s\n",
+                fontSizeModeName(), refreshModeName(), powerProfileName(),
+                gSettings.orientationMode == OrientationMode::Strap ? "strap" : "handheld");
 }
 
 void renderDebug(const char* refreshReason = "mode switch") {
@@ -7059,6 +7082,99 @@ void renderDebug(const char* refreshReason = "mode switch") {
   logTypographySettings("debug screen");
   logPowerAudit("debug screen");
   Serial.println("Debug screen shown.");
+}
+
+void renderAdvanced(const char* refreshReason = "mode switch") {
+  gScreen = Screen::Advanced;
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachMetadataFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+
+  int32_t y = 28;
+  display.drawString("Advanced", 26, y);
+  y += 34;
+  display.drawString(String("firmware: ") + kFirmwareVersion, 26, y);
+  y += 26;
+  display.drawString(String("SD: ") + (gSdMounted ? "yes" : "no") + "  deck: " + gCoachDeckSource + " " +
+                         static_cast<unsigned>(gCoachItemCount),
+                     26, y);
+  y += 26;
+  display.drawString(String("power: ") + powerModeName() + " profile=" + powerProfileName() +
+                         " sleep=" + badgeSleepModeName(),
+                     26, y);
+  y += 26;
+  display.drawString(String("profile thresholds: WarmIdle@") +
+                         static_cast<unsigned>(profileIdleScaleThresholdMs() / 1000) + "s  LightNap@" +
+                         (profileAllowsLightSleep()
+                            ? String(profileLightSleepIdleMs() / 1000) + "s"
+                            : String("disabled")),
+                     26, y);
+  y += 26;
+  display.drawString(batteryStatusLine(), 26, y);
+  y += 24;
+  drawBatteryBar(26, y, 220, 16, batteryLevelPercent());
+  y += 26;
+  display.drawString(chargeStatusLine(), 26, y);
+  y += 24;
+  display.drawString(String("font: ") + fontSizeModeName() + " / " + fontStyleModeName(), 26, y);
+  y += 24;
+  display.drawString(String("refresh: ") + refreshModeName() + "  contrast: " + contrastModeName(), 26, y);
+  y += 24;
+  display.drawString(String("touch debug: ") + (gTouchDebugEnabled ? "on" : "off"), 26, y);
+  y += 24;
+  display.drawString(String("trace: ") + gLastRenderTraceStatus, 26, y);
+  y += 24;
+  display.drawString(String("deck export: ") + gLastDeckExportStatus, 26, y);
+  y += 24;
+  // Sleep test hint
+  if (gSettings.badgeSleepMode != BadgeSleepMode::Off) {
+    display.drawString("Sleep on: tap after wake. Long press = disable. Resets Off on reboot.", 26, y);
+    y += 24;
+  }
+
+  const int32_t actionX = 26;
+  const int32_t actionGap = 10;
+  const int32_t actionW = (display.width() - 52 - actionGap) / 2;
+  const int32_t actionH = 42;
+  const int32_t rightX = actionX + actionW + actionGap;
+  int32_t actionY = display.height() - 430;
+  gHelpButton = {actionX, actionY, actionW, actionH};
+  gPowerLabButton = {rightX, actionY, actionW, actionH};
+  actionY += actionH + 8;
+  gVisualQaButton = {actionX, actionY, actionW, actionH};
+  gFontLabButton = {rightX, actionY, actionW, actionH};
+  actionY += actionH + 8;
+  gTypographyResetButton = {actionX, actionY, actionW, actionH};
+  gLayoutDebugButton = {rightX, actionY, actionW, actionH};
+  actionY += actionH + 8;
+  gRenderTraceButton = {actionX, actionY, actionW, actionH};
+  gExportDeckButton = {rightX, actionY, actionW, actionH};
+  actionY += actionH + 8;
+  gTouchDebugButton = {actionX, actionY, actionW, actionH};
+  gBadgeSleepButton = {rightX, actionY, actionW, actionH};
+  gPowerProfileButton = {};
+  gDebugButton = {};
+  gHomeButton = {26, display.height() - 94, display.width() - 52, 58};
+  drawButton(gHelpButton, "Help");
+  drawButton(gPowerLabButton, "Power Lab");
+  drawButton(gVisualQaButton, "Visual QA", IconType::Exam);
+  drawButton(gFontLabButton, "Font Lab");
+  drawButton(gTypographyResetButton, "Reset typography");
+  drawButton(gLayoutDebugButton, "Layout log");
+  drawButton(gRenderTraceButton, "Dump render trace");
+  drawButton(gTouchDebugButton, gTouchDebugEnabled ? "Touch dbg off" : "Touch dbg on");
+  drawButton(gExportDeckButton, "Export deck");
+  drawButton(gBadgeSleepButton, String("Sleep: ") + badgeSleepModeName());
+  drawButton(gHomeButton, "", IconType::Home);
+
+  finishDisplayRefresh();
+  logTypographySettings("advanced screen");
+  logPowerAudit("advanced screen");
+  Serial.println("Advanced screen shown.");
 }
 
 // ---- Power Lab: power discovery and event history screen ----
@@ -7205,13 +7321,15 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
     // Emergency long press
     row(String("Long press escapes: ") + static_cast<unsigned>(gLongPressEscapeCount) +
         (gSleepDisabledByLongPress ? "  (last: long press)" : ""));
-    // Wake source notes
-    row("--- Wake sources ---");
-    row("Timer: supported. Touch INT: not configured (GT911 GPIO unknown).");
-    row("Timer wake only: short taps during sleep are missed.");
-    row("After each wake, tap anywhere within listen window to stay awake.");
-    row("Long press anywhere (sleep on) disables sleep + goes to Power Lab.");
-    row("Deep sleep: blocked. Sleep Off on reboot (not sticky).");
+    // Wake source notes — deep sleep audit results
+    row("--- Wake sources (audit v5.8-dev8) ---");
+    row("Timer: supported. Touch INT: GPIO48 found but NOT RTC-wake capable.");
+    row("ESP32-S3 RTC GPIO = 0-21 only. GPIO48 cannot wake from deep sleep.");
+    row("Light sleep: timer wake only. Short taps during nap are missed.");
+    row("Deep sleep: BLOCKED (no verified RTC wake source). Sleep Off on reboot.");
+    if (!profileAllowsLightSleep()) {
+      row("Profile: Responsive — light sleep disabled. Most responsive to taps.");
+    }
     // Sleep cycle button
     const int32_t sleepBtnY = maxY - 10;
     const int32_t sleepBtnH = 52;
@@ -7232,7 +7350,11 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
   gPowerAuditButton = {};
   if (gPowerLabPage != 2) gBadgeSleepButton = {};
   gNextButton = {};
-  drawButton(gPowerProfileButton, String(powerProfileName()));
+  // Use short profile name to avoid footer overflow
+  const char* profileShort = (gPowerProfile == PowerProfile::Balanced)   ? "Resp"
+                           : (gPowerProfile == PowerProfile::Aggressive)  ? "Bal"
+                                                                          : "Max";
+  drawButton(gPowerProfileButton, profileShort);
   drawButton(gFilterButton, "Page");
   drawButton(gHomeButton, "", IconType::Home);
 
@@ -7327,8 +7449,8 @@ void renderPowerAudit(const char* refreshReason = "mode switch") {
       const uint32_t sinceInput = gLastUserActivityMs > 0 ? millis() - gLastUserActivityMs : 0;
       row(String("Since input: ") + sinceInput + "ms");
     }
-    row("Deep sleep: blocked (touch wake unverified)");
-    row("Light sleep: allowed in Aggressive/BadgeMax");
+    row("Deep sleep: BLOCKED — GT911 INT=GPIO48, not RTC-wake capable on ESP32-S3.");
+    row("Light sleep: allowed in Balanced/Max Battery. Disabled in Responsive profile.");
   } else {
     row(String("Answer keys invalid: ") + static_cast<unsigned>(gInvalidAnswerKeyCount));
     row(String("Last key warning: ") + gLastAnswerKeyWarning);
@@ -7693,22 +7815,32 @@ void handleInterviewPracticeTouch(int32_t tapX, int32_t tapY) {
   }
 
   if (tapY < gReaderContentRect.y + gReaderContentRect.h / 2) {
-    markHitTarget("practice previous page", tapX, tapY);
+    // Top half: previous page, or previous item if already on first page
     if (gCoachStage > 0) {
+      markHitTarget("practice previous page", tapX, tapY);
       --gCoachStage;
       renderCoachScreen();
+    } else if (hasPreviousCoachItem()) {
+      markHitTarget("practice previous item", tapX, tapY);
+      previousCoachItem();
+      renderCoachScreen();
     } else {
-      Serial.println("practice previous page disabled");
+      Serial.println("practice previous: at first item/page");
     }
     return;
   }
 
-  markHitTarget("practice next page", tapX, tapY);
+  // Bottom half: next page, or next item if on last page
   if (gCoachStage + 1 < stageCount) {
+    markHitTarget("practice next page", tapX, tapY);
     ++gCoachStage;
     renderCoachScreen();
+  } else if (hasNextCoachItem()) {
+    markHitTarget("practice next item", tapX, tapY);
+    nextCoachItem();
+    renderCoachScreen();
   } else {
-    Serial.println("practice next page disabled");
+    Serial.println("practice next: at last item/page");
   }
 }
 
@@ -7805,6 +7937,47 @@ void handleTouch() {
     markHitTarget("zoom exit", tapX, tapY);
     cleanWhiteRefresh("zoom exit");
     renderBadge(false);
+    return;
+  }
+
+  if (gScreen == Screen::Advanced) {
+    if (hitTarget(gHelpButton, "help legend", tapX, tapY)) {
+      renderHelpLegend();
+    } else if (hitTarget(gPowerLabButton, "power lab", tapX, tapY)) {
+      gPowerLabPage = 0;
+      renderPowerLab();
+    } else if (hitTarget(gVisualQaButton, "visual qa", tapX, tapY)) {
+      renderVisualQa();
+    } else if (hitTarget(gFontLabButton, "font lab", tapX, tapY)) {
+      renderFontLab();
+    } else if (hitTarget(gTypographyResetButton, "reset typography", tapX, tapY)) {
+      resetTypographyDefaults();
+      saveSettings();
+      renderAdvanced("typography reset");
+    } else if (hitTarget(gLayoutDebugButton, "layout log", tapX, tapY)) {
+      logCurrentLayoutDiagnostics("advanced button");
+      renderAdvanced();
+    } else if (hitTarget(gRenderTraceButton, "render trace dump", tapX, tapY)) {
+      dumpCurrentRenderTraceToSd();
+      renderAdvanced("render trace dump");
+    } else if (hitTarget(gTouchDebugButton, "touch debug", tapX, tapY)) {
+      gTouchDebugEnabled = !gTouchDebugEnabled;
+      renderAdvanced();
+    } else if (hitTarget(gExportDeckButton, "export deck", tapX, tapY)) {
+      exportDeckTextToSd();
+      renderAdvanced("deck export");
+    } else if (hitTarget(gBadgeSleepButton, "sleep mode", tapX, tapY)) {
+      cycleBadgeSleepMode();
+      saveSettings();
+      renderAdvanced("sleep mode switch");
+    } else if (hitTarget(gHomeButton, "home", tapX, tapY)) {
+      Serial.println("entering Home");
+      renderHome();
+    } else if (gTouchDebugEnabled) {
+      markHitTarget("touch debug canvas", tapX, tapY);
+      renderAdvanced();
+    }
+    noteIgnoredIfNoHit(tapX, tapY);
     return;
   }
 
@@ -8185,21 +8358,31 @@ void handleTouch() {
 
     if (gReaderContentRect.contains(tapX, tapY)) {
       const uint8_t pageCount = currentCoachReaderPageCount();
+      // Only allow item-advance navigation on Glossary (not Drills/Exam option screens)
+      const bool allowItemNav = (gScreen == Screen::Glossary);
       if (tapY < gReaderContentRect.y + gReaderContentRect.h / 2) {
-        markHitTarget("coach previous page", tapX, tapY);
         if (gCoachStage > 0) {
+          markHitTarget("coach previous page", tapX, tapY);
           --gCoachStage;
           renderCoachScreen();
-        } else {
-          Serial.println("coach previous page disabled");
-        }
-      } else {
-        markHitTarget("coach next page", tapX, tapY);
-        if (gCoachStage + 1 < pageCount) {
-          ++gCoachStage;
+        } else if (allowItemNav && hasPreviousCoachItem()) {
+          markHitTarget("coach previous item", tapX, tapY);
+          previousCoachItem();
           renderCoachScreen();
         } else {
-          Serial.println("coach next page disabled");
+          Serial.println("coach previous page/item disabled");
+        }
+      } else {
+        if (gCoachStage + 1 < pageCount) {
+          markHitTarget("coach next page", tapX, tapY);
+          ++gCoachStage;
+          renderCoachScreen();
+        } else if (allowItemNav && hasNextCoachItem()) {
+          markHitTarget("coach next item", tapX, tapY);
+          nextCoachItem();
+          renderCoachScreen();
+        } else {
+          Serial.println("coach next page/item disabled");
         }
       }
       return;
@@ -8210,47 +8393,54 @@ void handleTouch() {
   }
 
   if (gScreen == Screen::Settings) {
-    if (hitTarget(gOrientationButton, "orientation", tapX, tapY)) {
-      gSettings.orientationMode =
-          gSettings.orientationMode == OrientationMode::Strap ? OrientationMode::Handheld : OrientationMode::Strap;
-      saveSettings();
-      renderSettings("orientation switch");
-    } else if (hitTarget(gLanguageAutoButton, "language mode", tapX, tapY)) {
-      cycleLanguageMode();
-      saveSettings();
-      renderSettings("badge language mode switch");
-    } else if (hitTarget(gLanguageEnglishButton, "auto interval", tapX, tapY)) {
-      cycleAutoRotateInterval();
-      saveSettings();
-      renderSettings("badge interval switch");
-    } else if (hitTarget(gFontMediumButton, "font medium", tapX, tapY)) {
+    // Reader size — S / M / L
+    if (hitTarget(gFontMediumButton, "reader S", tapX, tapY)) {
       gSettings.fontSizeMode = FontSizeMode::Medium;
       saveSettings();
       renderSettings();
-    } else if (hitTarget(gFontLargeButton, "font large", tapX, tapY)) {
+    } else if (hitTarget(gFontLargeButton, "reader M", tapX, tapY)) {
       gSettings.fontSizeMode = FontSizeMode::Large;
       saveSettings();
       renderSettings();
-    } else if (hitTarget(gFontXlButton, "font xl", tapX, tapY)) {
+    } else if (hitTarget(gFontXlButton, "reader L", tapX, tapY)) {
       gSettings.fontSizeMode = FontSizeMode::XL;
       saveSettings();
       renderSettings();
-    } else if (hitTarget(gFontStyleButton, "font style", tapX, tapY)) {
-      cycleFontStyleMode();
+    // Refresh — Fast / Balanced / Clean
+    } else if (hitTarget(gRefreshFastButton, "refresh fast", tapX, tapY)) {
+      gSettings.refreshMode = RefreshMode::Fast;
       saveSettings();
-      renderSettings("font style switch");
-    } else if (hitTarget(gRefreshModeButton, "refresh mode", tapX, tapY)) {
-      cycleRefreshMode();
+      renderSettings("refresh fast");
+    } else if (hitTarget(gRefreshBalancedButton, "refresh balanced", tapX, tapY)) {
+      gSettings.refreshMode = RefreshMode::Balanced;
       saveSettings();
-      renderSettings("refresh mode switch");
-    } else if (hitTarget(gPowerProfileButton, "power profile", tapX, tapY)) {
-      cyclePowerProfile();
+      renderSettings("refresh balanced");
+    } else if (hitTarget(gRefreshCleanButton, "refresh clean", tapX, tapY)) {
+      gSettings.refreshMode = RefreshMode::Clean;
       saveSettings();
-      renderSettings("power profile switch");
-    } else if (hitTarget(gBadgeSleepButton, "sleep mode", tapX, tapY)) {
-      cycleBadgeSleepMode();
+      renderSettings("refresh clean");
+    // Power — Responsive / Balanced / Max Battery
+    } else if (hitTarget(gPowerResponsiveButton, "power responsive", tapX, tapY)) {
+      gPowerProfile = PowerProfile::Balanced;
+      renderSettings("power responsive");
+    } else if (hitTarget(gPowerBalancedButton, "power balanced", tapX, tapY)) {
+      gPowerProfile = PowerProfile::Aggressive;
+      renderSettings("power balanced");
+    } else if (hitTarget(gPowerMaxButton, "power max battery", tapX, tapY)) {
+      gPowerProfile = PowerProfile::BadgeMax;
+      renderSettings("power max battery");
+    // Badge orientation — Normal / Strap
+    } else if (hitTarget(gOrientationButton, "orientation normal", tapX, tapY)) {
+      gSettings.orientationMode = OrientationMode::Handheld;
       saveSettings();
-      renderSettings("sleep mode switch");
+      renderSettings("orientation normal");
+    } else if (hitTarget(gOrientationStrapButton, "orientation strap", tapX, tapY)) {
+      gSettings.orientationMode = OrientationMode::Strap;
+      saveSettings();
+      renderSettings("orientation strap");
+    // Advanced / Home
+    } else if (hitTarget(gAdvancedButton, "advanced", tapX, tapY)) {
+      renderAdvanced();
     } else if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
@@ -8275,8 +8465,6 @@ void handleTouch() {
       renderResultsScreen();
     } else if (hitTarget(gSettingsButton, "settings", tapX, tapY)) {
       renderSettings();
-    } else if (hitTarget(gDebugButton, "debug", tapX, tapY)) {
-      renderDebug();
     }
     noteIgnoredIfNoHit(tapX, tapY);
   }
