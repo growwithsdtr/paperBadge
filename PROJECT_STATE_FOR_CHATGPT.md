@@ -1,6 +1,6 @@
-# PaperBadge Project State — v5.8-dev5-kindlepower Handoff
+# PaperBadge Project State — v5.8-dev6-settings Handoff
 
-_Last updated: 2026-06-11_
+_Last updated: 2026-06-12_
 
 ---
 
@@ -15,152 +15,119 @@ _Last updated: 2026-06-11_
 
 ## Firmware
 
-- **Version:** `v5.8-dev5-kindlepower` (`src/main.cpp:20`)
+- **Version:** `v5.8-dev6-settings` (`src/main.cpp:20`)
 - **Build:** SUCCESS — RAM 49.5% · Flash 47.5%
 - **Upload:** SUCCESS — `/dev/tty.usbmodem1101`
 
 ---
 
-## Phase 1 — v5.8-dev4-powerlab Confirmed Baseline (Frozen)
+## What Changed in v5.8-dev6-settings
 
-### Physical Long Test Results (v5.8-dev4)
+### 1. Power Profile — User-Facing Labels
 
-| Metric | Result |
-|--------|--------|
-| Total 80 MHz time | ~16h52m (≈1012m12s) |
-| Longest single 80 MHz interval | ~13h25m (≈805m5s) |
-| Redraws while idle | 0 |
-| Battery depleted | Yes — proving CPU-only 80 MHz standby is insufficient for week-like runtime |
-| E-ink image after battery depletion | Visible (expected e-ink behavior — not a touch bug) |
+Internal enum names are **unchanged** (Balanced / Aggressive / BadgeMax).
+User-facing labels shown in Settings, Power Lab, and Debug are now:
 
-**Conclusion:** 80 MHz active idle alone does not achieve Kindle-like standby. Light sleep / deeper power stages are required.
+| Internal Enum | Old Label | New Label |
+|---------------|-----------|-----------|
+| `Balanced` | Balanced | **Balanced** |
+| `Aggressive` | Aggressive | **Low Power** |
+| `BadgeMax` | Badge Max | **Max Battery** |
+
+Function changed: `powerProfileName()` (`src/main.cpp`).
+
+### 2. Profile-Based LightNap Duration
+
+Each light sleep nap cycle now uses a duration based on the active power profile.
+Previously hardcoded at 2s for all profiles.
+
+| Profile | Nap Cycle Duration |
+|---------|-------------------|
+| Balanced | **10s** |
+| Low Power | **30s** |
+| Max Battery | **60s** |
+
+Function added: `profileLightSleepDurationUs()` (forward-declared with other profile functions).
+`gLastSleepAttempt` now logs the actual duration (e.g. `"light nap 30s timer"`).
+
+**Wake UX tradeoff:** Longer naps mean a short tap is more likely to be missed.
+Guidance on Power Lab page 3: "Light sleep uses timer wake. Hold screen 2–3s to wake."
+For Max Battery (60s naps), a longer hold may be needed if the touch lands mid-nap.
+
+### 3. Settings Screen — Redesigned Layout
+
+Settings now consolidates all everyday power controls. Old layout had text/button overlap
+near the bottom; new layout has consistent spacing throughout.
+
+**What's in Settings now:**
+- Badge orientation (toggle: Strap 180 / Handheld 0)
+- Badge language mode (cycle) + auto interval (cycle)
+- **Reader size: compact 3-button row** — S / M / L (each 1/3 width, same row)
+- Font style (cycle)
+- Refresh mode (cycle: Fast / Balanced / Clean)
+- **Power profile (cycle: Balanced / Low Power / Max Battery)** — NEW in Settings
+- **Sleep mode (cycle: Off / Light / Deep test)** — NEW in Settings
+- Dev hint: "(dev) Light sleep: hold 2–3s to wake" (shown only when sleep ≠ Off)
+- Home button — full-width at bottom
+
+**Removed from Settings:**
+- Battery Saver toggle (redundant with Power Profile for typical users; still functional,
+  accessible via Power Lab / Debug)
+
+**Removed from Settings / Power Mode button (`gPowerModeButton`):** zeroed out in Settings layout.
+
+### 4. Debug Screen — Fixed Text/Button Overlap
+
+Previous layout had text rows at y≈620 with buttons starting at y≈598 — overlap.
+
+**Removed verbose text lines:**
+- "refresh end" (ms) — removed
+- "debounce" (ms) — removed
+- "touch down" + "touch up" + "last hit" — merged into one line
+- "ignored" (last ignored touch reason) — removed
+
+**Button changes:**
+- Removed "Profile: …" cycle button from Debug (`gPowerProfileButton = {}` zeroed in Debug).
+  Profile control is now in Settings and Power Lab footer.
+- Button grid start moved from `display.height() - 362` to `display.height() - 420`
+  to give clear separation from text area.
+
+**Remaining Debug buttons (4 rows, 2 columns):**
+Help · Power Lab · Visual QA · Font Lab · Reset typography · Layout log ·
+Dump render trace · Export deck text · Touch debug · Home
+
+### 5. Power Lab — Page 3 Wake Guidance
+
+Added two new rows at the top of the Sleep Lab section:
+- `"Light sleep uses timer wake. Hold screen 2-3s to wake."`
+- `"Nap duration: Xs (ProfileName)"` — shows current profile's nap cycle length
+
+Profile footer label now reads "Low Power" / "Max Battery" / "Balanced" (from `powerProfileName()`).
 
 ---
 
-## What Changed in v5.8-dev5-kindlepower
-
-### Power Stage Ladder (new)
+## Power Stage Ladder (unchanged from dev5)
 
 | Stage | CPU | When |
 |-------|-----|------|
 | **Active** | 240 MHz | During touch, render, SD, parse, heavy work |
 | **WarmIdle** | 80 MHz | After short idle threshold (profile-dependent) |
-| **LightNap** | 80 MHz + sleep | During 2s timer nap cycles (opt-in via Sleep Lab) |
+| **LightNap** | 80 MHz + sleep | During profile-duration timer nap (opt-in via Sleep mode) |
 | **Hibernate** | deep sleep | Blocked — touch wake unverified on PaperS3 |
 
-### New Globals
+---
 
-| Variable | Type | Purpose |
-|----------|------|---------|
-| `gPowerStage` | `PowerStage` | Current explicit power stage |
-| `gLastPowerStage` | `PowerStage` | Previous stage before last transition |
-| `gStageTransitionCount` | `uint32_t` | Total stage transitions since boot |
-| `gStageEnteredAtMs` | `uint32_t` | Millis when current stage was entered |
-| `gLightSleepTotalMs` | `uint32_t` | Cumulative light sleep time |
-| `gLightSleepAttemptCount` | `uint32_t` | Light sleep attempt count |
-| `gLightSleepFailedCount` | `uint32_t` | Failed entries (reserved) |
-| `gLastLightSleepDurationMs` | `uint32_t` | Duration of last nap |
-| `gLongestLightSleepMs` | `uint32_t` | Longest single nap |
-| `gHibernateArmed` | `bool` | Deep sleep arm flag (always false — blocked) |
-| `gInputDetectedAfterWake` | `bool` | Touch detected in first poll after nap wake |
+## WarmIdle Thresholds (unchanged from dev5)
 
-### Shortened Idle Thresholds
-
-| Profile | WarmIdle (80 MHz) | LightNap (timer nap) |
-|---------|-------------------|----------------------|
-| Balanced | **12s** (was 60s) | **7 min** (opt-in) |
-| Aggressive | **7s** (was 25s) | **90s** (opt-in) |
-| Badge Max | **4s** (was 20s) | **40s** (opt-in) |
-
-`kPostTouchIdleGuardMs` lowered from 5s to 2s so the 4s BadgeMax threshold can actually fire.
-
-### Light Nap Behavior (extended from Badge-only)
-
-- Was: Badge screen only, 30s idle, 2s nap
-- Now: **Any static idle screen**, profile-based threshold, 2s timer nap cycle
-- Opt-in: must enable via Power Lab → Sleep Lab → Sleep mode button
-- Nap cycle: sleep 2s → wake by timer → poll touch → re-enter if still idle
-- Touch during nap is missed; tap-and-hold ~2s will be detected post-wake
-- `gInputDetectedAfterWake` is set if M5.Touch detects a touch on first post-wake poll
-
-### Wake Sources (discovered / documented)
-
-| Source | Status |
-|--------|--------|
-| Timer (`esp_sleep_enable_timer_wakeup`) | **Supported — used for nap cycles** |
-| USB/UART (ESP32-S3 CDC) | **Supported — automatic from light sleep** |
-| Touch (GT911 INT) | **Unknown — GPIO INT pin not configured** |
-| Button/GPIO | **Not configured** |
-| Deep sleep wake source | **Blocked — touch wake unverified** |
-| RTC memory | Available but not used |
-| Preferences/NVS | Available — used for settings persistence |
-
-### Loop Delays (updated)
-
-| State | Balanced | Aggressive | Badge Max |
-|-------|----------|------------|-----------|
-| WarmIdle static screen | 300ms (was 250ms) | 500ms (was 400ms) | 800ms (was 600ms) |
-| ConferenceBadge idle | 600ms (was 500ms) | — | — |
-| Badge Max badge-only | — | — | 250ms (was 200ms) |
-
-### Serial Log Suppression
-
-`isVerboseLogOk()` returns false when `gIdleModeActive && profile != Balanced`.
-Battery poll log (`Power poll:`) is suppressed in Aggressive/BadgeMax idle.
-Sleep wake/entry logs are never suppressed.
-
-### Power Lab — 3 Pages (updated)
-
-**Page 1 — CPU / Stage / Idle Counters:**
-- Power stage (current + last + transitions)
-- Profile + WarmIdle threshold + LightNap threshold
-- CPU now / pre-render (MHz)
-- Scale / restore event counts
-- Last scaled / restored timestamps
-- 80 MHz last/total/longest
-- Light nap total / longest
-- Last input age
-- Idle blocked reason / idle mode status
-- Loop delay / redraws while idle
-- Screen / refresh count
-
-**Page 2 — Battery / Peripherals:**
-- Battery mV / % 
-- Charge state + current mA + USB/VBUS
-- Battery poll age + interval (active vs idle rate)
-- Wi-Fi / BT / Speaker / Mic / IMU / SD status
-- Redraws while idle
-
-**Page 3 — Sleep Lab Controls:**
-- Sleep mode: Off / Light test / Deep test
-- Current power stage
-- Light attempts / entered / woke
-- Light total / last / longest
-- Last wake reason
-- Last sleep attempt
-- Input detected after wake
-- Wake source status table (touch-INT, timer, USB, GPIO, deep, hibernate)
-- **Sleep mode cycle button** (body button, cycles Off → Light → Deep → Off)
-
-**Footer:** `Profile | Page | Home`
-- **Profile**: cycles power profile (Balanced → Aggressive → Badge Max)
-- **Page**: advances page (1→2→3→1)
-- **Home**: returns to home screen
-- **Body tap**: re-renders current page (fresh state capture)
+| Profile | WarmIdle Threshold | LightNap Idle Threshold | LightNap Nap Duration |
+|---------|--------------------|------------------------|-----------------------|
+| Balanced | 12s | 7 min | **10s** |
+| Low Power | 7s | 90s | **30s** |
+| Max Battery | 4s | 40s | **60s** |
 
 ---
 
-## CPU Frequency Discovery (unchanged from dev4)
-
-| Frequency | Status |
-|-----------|--------|
-| 240 MHz | Active — default for rendering/input |
-| 80 MHz | Safe — idle scaling confirmed |
-| 40 MHz | Unsupported — ESP32-S3 Arduino minimum is 80 MHz |
-
----
-
-## Peripherals (unchanged from dev4)
+## Peripherals (unchanged)
 
 | Peripheral | Status |
 |-----------|--------|
@@ -170,80 +137,144 @@ Sleep wake/entry logs are never suppressed.
 | Microphone | Not used / not started |
 | IMU | Not started |
 | SD card | Mounted but idle between file ops |
-| Battery/PMIC poll | Profile-aware: 45s active / 120s Aggressive idle / 180s BadgeMax idle |
+| Battery/PMIC poll | 45s active / 120s Low Power idle / 180s Max Battery idle |
 
 ---
 
-## Safety and Recovery
+## Safety and Recovery (unchanged)
 
 - Default boot: no sleep, Active stage, normal rendering
-- Light sleep: opt-in only (Power Lab → Sleep Lab → enable)
+- Light sleep: opt-in only (Settings → Sleep mode → Light, or Power Lab → Sleep Lab)
 - Deep sleep / Hibernate: blocked — touch wake source not verified on PaperS3
-- If deep sleep is accidentally entered (impossible via current UI), device will reset; prefs/NVS survive reset
-- No stuck-idle risk: `recordUserActivity()` always restores CPU and resets idle state
+- `recordUserActivity()` always restores CPU and resets idle state — no stuck-idle risk
 
 ---
 
-## Physical QA Steps for v5.8-dev5-kindlepower
+## Japanese Readiness Audit
 
-### 1. Confirm WarmIdle triggers faster
+**Status: NOT READY — sanitizer destroys Japanese UTF-8**
 
-1. Home → Debug → Power Lab → Page 1
-2. Do not touch screen
-3. **Balanced profile**: wait 13–15 seconds, then tap body
-4. Check: Stage shows `WarmIdle`, Scale events > 0, Pre-render was idle-scaled
-5. Switch to **Aggressive** (tap Profile footer button): wait 8–10s → same result
-6. Switch to **Badge Max**: wait 5–6s → same result
+The `sanitizeCoachText()` function (line ~3816) handles only a specific whitelist of UTF-8
+sequences (smart quotes, dashes, bullets, nbsp, arrows, etc.). Any other multi-byte character
+that is not in the whitelist hits the fallback at line ~3888:
+```cpp
+sanitized += "?";
+index += utf8SequenceLength(ch);
+```
 
-### 2. Confirm Power Lab Page 3 / Sleep Lab
+Japanese characters (U+3040–U+9FFF, 3-byte UTF-8) would be replaced with "?" entirely.
+The function counts these as `replacements` and logs them — so they are detectable via
+`gSanitizerReplacementTotal` on the Debug screen.
 
-1. Go to Power Lab → tap Page twice → reach Page 3
-2. Verify: wake source table, sleep mode row, attempt/enter/wake counters
-3. Tap the Sleep mode cycle button: cycles Off → Light test → Deep test → Off
-4. Confirm "Sleep mode: Light test" appears
+**Required before enabling Japanese content:**
+1. UTF-8-safe sanitizer — pass-through for valid multi-byte sequences that are not in
+   the known-bad list; only replace characters that are actually problematic for the font.
+2. Japanese word-wrap — M5GFX `drawString` does not break on spaces between kanji;
+   need character-level line-break logic for CJK.
+3. Japanese font — use `lgfxJapanGothic_*` or `efontJA_*` bitmap fonts from M5GFX,
+   OR load a VLW/TTF that includes CJK glyphs.
+4. New `LanguageMode::Japanese` path in `renderBadge()` — already partially scaffolded
+   (see `gBadgeLanguage == BadgeLanguage::Japanese` branch at line ~2942).
 
-### 3. Light nap test (Badge Max + Light test)
+**Proposed future main menu (architecture note only, no UI change yet):**
+```
+Badge
+Interview Prep
+Japanese        ← future, add only when all 4 readiness items above are complete
+Settings
+Debug
+```
 
-1. Set profile to Badge Max
-2. Go to Power Lab page 3, enable Light test
-3. Navigate to Badge screen
-4. Wait 45+ seconds without touching
-5. After 1–2 minutes, return to Power Lab → Page 3
-6. Check: Light attempts > 0, entered > 0, woke > 0, total > 0s
-7. Wake reason: "timer"
+Do NOT add the Japanese menu item until the sanitizer is UTF-8-safe and Japanese content
+files exist on SD card. An empty/broken screen in the main menu is worse than no option.
 
-### 4. Light nap on non-Badge static screen
+---
 
-1. Set Aggressive profile + Light test enabled
-2. Go to Practice / Settings / Debug screen
-3. Wait 90+ seconds
-4. Return to Power Lab → Page 3: Light entered should be > 0
+## Physical QA Checklist — v5.8-dev6-settings
+
+### 1. Settings screen layout
+
+1. Home → Settings
+2. Verify layout top-to-bottom:
+   - Title "Settings" at top
+   - Power status line + battery bar
+   - Badge orientation button
+   - Badge language mode + auto interval buttons
+   - Reader size: **S / M / L in one compact row** (all 3 side-by-side)
+   - Font style button
+   - Refresh mode button
+   - **Power profile button** (should show "Balanced *", "Low Power *", or "Max Battery *")
+   - **Sleep mode button** (shows "Off", "Light", or "Deep test")
+   - "(dev) Light sleep: hold 2–3s to wake" hint (shown only when sleep ≠ Off)
+   - **Home button — full width at bottom** (no overlap with anything above)
+
+3. Tap Power profile: cycles Balanced → Low Power → Max Battery → Balanced
+4. Tap Sleep mode: cycles Off → Light → Deep test → Off
+5. Confirm settings persist after Home → Settings (saved to NVS)
+
+### 2. Debug screen buttons clear
+
+1. Home → Debug
+2. Verify: no text overlaps button grid
+3. Verify: **no "Profile: …" button** in Debug (moved to Settings)
+4. Touch row shows as single compact line: "touch: dn X,Y  up X,Y  hit: label"
+5. All 9 action buttons visible and tappable: Help, Power Lab, Visual QA, Font Lab,
+   Reset typography, Layout log, Dump render trace, Export deck text, Touch debug
+6. Home button full-width at bottom, not overlapping buttons above
+
+### 3. Power Lab profile labels
+
+1. Home → Debug → Power Lab
+2. Verify footer "Profile" button shows: "Balanced", "Low Power", or "Max Battery"
+3. Tap Profile footer: cycles through all three with new labels
+4. Page 3 (Sleep Lab): verify text "Light sleep uses timer wake. Hold screen 2-3s to wake."
+5. Page 3: verify "Nap duration: Xs (ProfileName)" shows correct value for current profile
+   - Balanced → 10s
+   - Low Power → 30s
+   - Max Battery → 60s
+
+### 4. LightNap duration is profile-based
+
+1. Set Profile → Low Power (Settings or Power Lab footer)
+2. Enable Sleep mode → Light (Settings or Power Lab page 3)
+3. Navigate to Badge screen; wait ~90s without touching
+4. Return to Power Lab → Page 3
+5. Check "Last sleep attempt" — should say "light nap 30s timer" (not "light nap 2s timer")
+6. Check counters: attempts > 0, entered > 0, woke > 0
 
 ### 5. Confirm deep sleep blocked
 
-1. Power Lab → Page 3 → cycle sleep to "Deep test"
+1. Power Lab → Page 3 → Sleep mode → Deep test
 2. Wait for idle threshold
-3. Verify serial log: "Hibernate blocked: safe PaperS3 touch wake source is not verified."
-4. Device does NOT reset
+3. Serial log: "Hibernate blocked: safe PaperS3 touch wake source is not verified."
+4. Device does NOT reset or freeze
 
 ---
 
-## Known Risks
+## Known Risks (updated)
 
-1. **BadgeMax 4s threshold**: very aggressive. If a render takes >2s and the 2s post-touch guard is in play, idle may trigger very quickly. Monitor for unexpected idle during render operations.
-2. **Light sleep on non-Badge screens**: new behavior in dev5. If a static screen has a bug that re-renders during sleep wake, `gRedrawWhileIdleCount` will catch it.
-3. **Touch missed during 2s nap**: users on sleep-enabled profiles may notice short taps are missed. Workaround: tap-and-hold 2–3 seconds. This is labeled clearly in Power Lab Page 3.
-4. **Deep sleep still blocked**: `gHibernateArmed` is a placeholder. The UI cycles to "Deep test" but only logs a blocked message; it does not sleep.
+1. **Max Battery 60s nap UX**: If the user taps during a 60s nap, the touch is missed.
+   Hold-and-wait is the only reliable method. The hint text says "2-3s" which is accurate
+   for Balanced (10s naps) but understates the wait for Max Battery. An extended hold will
+   eventually coincide with a wake poll.
+2. **BadgeMax 4s WarmIdle threshold**: Very aggressive on active-render screens. Monitor
+   `gRedrawWhileIdleCount` via Power Lab if rendering glitches appear.
+3. **Battery Saver not in Settings**: Users who had Battery Saver on and reset settings
+   will not see it in the new Settings UI. It remains in NVS and can be toggled via the
+   Power Audit screen (Debug → Power Lab → Power Audit).
+4. **Japanese content**: sanitizer replaces all non-whitelisted UTF-8 with "?". Do not
+   load Japanese deck files until sanitizer is made UTF-8-safe.
 
 ---
 
-## UX Decisions Unchanged
+## UX Decisions
 
 | Decision | Value |
 |----------|-------|
-| Practice header layout | unchanged (Layout Batch A passed) |
-| kCoachMargin | 20 (frozen) |
-| Default power profile | Balanced (12s WarmIdle threshold) |
-| Deep sleep | blocked |
-| Profile cycling | Debug screen + Power Lab footer |
-| Language/font/refresh settings | unchanged |
+| Default power profile | Balanced (12s WarmIdle, 10s LightNap duration) |
+| Deep sleep | Blocked |
+| Profile cycling | Settings (primary) + Power Lab footer |
+| Sleep mode cycling | Settings (primary) + Power Lab page 3 |
+| Battery Saver toggle | Power Audit screen only (not in main Settings) |
+| Language/font/refresh settings | Settings screen |
+| Reader size | Compact 3-button row (S/M/L) in Settings |

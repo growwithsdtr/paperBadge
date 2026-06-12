@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.8-dev5-kindlepower";
+constexpr const char* kFirmwareVersion = "v5.8-dev6-settings";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -483,6 +483,7 @@ const char* powerStageName(PowerStage stage);
 bool isVerboseLogOk();
 uint32_t profileIdleScaleThresholdMs();
 uint32_t profileLightSleepIdleMs();
+uint32_t profileLightSleepDurationUs();
 uint32_t profileBatteryPollMs();
 void enterPowerStage(PowerStage newStage);
 
@@ -1649,14 +1650,17 @@ void maybeEnterBadgeSleep() {
 
   ++gLightSleepAttemptCount;
   gLastSleepAttemptMs = now;
-  gLastSleepAttempt = "light nap 2s timer";
+  const uint32_t napDurationUs = profileLightSleepDurationUs();
+  const uint32_t napDurationS = napDurationUs / 1000000;
+  gLastSleepAttempt = String("light nap ") + napDurationS + "s timer";
   disableUnusedRadiosAndPeripherals("light nap entry");
-  Serial.printf("Light nap entry: attempt=%u screen=%s idle=%ums\n",
+  Serial.printf("Light nap entry: attempt=%u screen=%s idle=%ums napDuration=%us\n",
                 static_cast<unsigned>(gLightSleepAttemptCount), screenName(gScreen),
-                static_cast<unsigned>(now - gLastUserActivityMs));
+                static_cast<unsigned>(now - gLastUserActivityMs),
+                static_cast<unsigned>(napDurationS));
   enterPowerStage(PowerStage::LightNap);
   ++gLightSleepEnteredCount;
-  esp_sleep_enable_timer_wakeup(kBadgeLightSleepDurationUs);
+  esp_sleep_enable_timer_wakeup(napDurationUs);
   esp_light_sleep_start();
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
 
@@ -1732,9 +1736,9 @@ const char* contrastModeName() {
 const char* powerProfileName() {
   switch (gPowerProfile) {
     case PowerProfile::Aggressive:
-      return "Aggressive";
+      return "Low Power";
     case PowerProfile::BadgeMax:
-      return "Badge Max";
+      return "Max Battery";
     case PowerProfile::Balanced:
     default:
       return "Balanced";
@@ -1789,6 +1793,15 @@ uint32_t profileLightSleepIdleMs() {
     case PowerProfile::BadgeMax:   return 40000;   // 40s
     case PowerProfile::Balanced:
     default:                        return 420000;  // 7 min
+  }
+}
+
+uint32_t profileLightSleepDurationUs() {
+  switch (gPowerProfile) {
+    case PowerProfile::Aggressive: return 30000000;  // 30s per nap cycle
+    case PowerProfile::BadgeMax:   return 60000000;  // 60s per nap cycle
+    case PowerProfile::Balanced:
+    default:                        return 10000000;  // 10s per nap cycle
   }
 }
 
@@ -6801,61 +6814,82 @@ void renderSettings(const char* refreshReason = "mode switch") {
   display.setTextDatum(textdatum_t::top_left);
   applyCoachTitleFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.drawString("Settings", 32, 34);
+  display.drawString("Settings", 32, 26);
   applyCoachMetadataFont();
-  display.drawString(compactPowerStatusLine(), 36, 76);
-  drawBatteryBar(36, 102, width - 84, 16, batteryLevelPercent());
-  display.drawString("Badge orientation", 36, 132);
+  display.drawString(compactPowerStatusLine(), 36, 68);
+  drawBatteryBar(36, 92, width - 84, 14, batteryLevelPercent());
 
-  const int32_t halfW = (width - 88) / 2;
-  gOrientationButton = {36, 160, width - 72, 54};
-  gLanguageAutoButton = {36, 244, width - 72, 52};
-  gLanguageEnglishButton = {36, 302, width - 72, 52};
+  const int32_t bh = 48;  // button height
+  const int32_t bx = 36;  // button left margin
+  const int32_t bw = width - 72;  // full-width button width
+  const int32_t gap = 8;   // gap between 3-way buttons
+  const int32_t bw3 = (bw - gap * 2) / 3;  // width of each 3-way button
+  const int32_t bx2 = bx + bw3 + gap;
+  const int32_t bx3 = bx + 2 * (bw3 + gap);
+
+  // Badge orientation
+  display.drawString("Badge orientation", bx, 118);
+  gOrientationButton    = {bx, 144, bw, bh};
+  // Badge language
+  display.drawString("Badge language", bx, 204);
+  gLanguageAutoButton   = {bx, 230, bw, bh};
+  gLanguageEnglishButton = {bx, 286, bw, bh};
   gLanguageJapaneseButton = {};
-  gFontMediumButton = {36, 400, halfW, 52};
-  gFontLargeButton = {52 + halfW, 400, halfW, 52};
-  gFontXlButton = {36, 460, width - 72, 52};
+  // Reader size (3-way compact row)
+  display.drawString("Reader size", bx, 346);
+  gFontMediumButton = {bx,  372, bw3, bh};   // S
+  gFontLargeButton  = {bx2, 372, bw3, bh};   // M
+  gFontXlButton     = {bx3, 372, bw3, bh};   // L
   gFontXxlButton = {};
   gFontHugeButton = {};
-  gFontStyleButton = {36, 614, width - 72, 54};
-  gRefreshModeButton = {36, 718, width - 72, 54};
-  gPowerModeButton = {36, 852, width - 72, 52};
-  gBadgeSleepButton = {};
-  gHomeButton = {36, display.height() - 60, 178, 50};
+  // Font style
+  display.drawString("Font style", bx, 432);
+  gFontStyleButton = {bx, 458, bw, bh};
+  // Refresh mode
+  display.drawString("Refresh mode", bx, 518);
+  gRefreshModeButton = {bx, 544, bw, bh};
+  // Power profile
+  display.drawString("Power profile", bx, 604);
+  gPowerProfileButton = {bx, 630, bw, bh};
+  // Sleep mode
+  display.drawString("Sleep mode", bx, 690);
+  gBadgeSleepButton = {bx, 716, bw, bh};
+  // Battery Saver removed from main Settings (use Debug / Power Lab for advanced power)
+  gPowerModeButton = {};
+  // Home button — full-width at bottom
+  gHomeButton = {bx, display.height() - 76, bw, 60};
 
-  drawButton(gOrientationButton, gSettings.orientationMode == OrientationMode::Strap ? "Strap 180" : "Handheld 0");
-  display.setTextDatum(textdatum_t::top_left);
-  applyCoachMetadataFont();
-  display.drawString("Badge language", 36, 218);
-  drawButton(gLanguageAutoButton, String("Mode: ") + languageModeName());
+  // Draw controls
+  drawButton(gOrientationButton,
+             gSettings.orientationMode == OrientationMode::Strap ? "Strap 180" : "Handheld 0");
+  drawButton(gLanguageAutoButton,   String("Mode: ") + languageModeName());
   drawButton(gLanguageEnglishButton, String("Auto interval: ") + autoRotateIntervalName());
-  display.setTextDatum(textdatum_t::top_left);
-  applyCoachMetadataFont();
-  display.drawString("Reader size", 36, 370);
+
   const FontSizeMode activeReaderSize = canonicalFontSizeMode(gSettings.fontSizeMode);
-  drawButton(gFontMediumButton, activeReaderSize == FontSizeMode::Medium ? "Reader S *" : "Reader S");
-  drawButton(gFontLargeButton, activeReaderSize == FontSizeMode::Large ? "Reader M *" : "Reader M");
-  drawButton(gFontXlButton, activeReaderSize == FontSizeMode::XL ? "Reader L *" : "Reader L");
-  display.setTextDatum(textdatum_t::top_left);
-  applyCoachMetadataFont();
-  display.drawString("Font style", 36, 584);
-  drawButton(gFontStyleButton, fontStyleModeName());
-  display.setTextDatum(textdatum_t::top_left);
-  applyCoachMetadataFont();
-  display.drawString("Refresh mode", 36, 688);
+  drawButton(gFontMediumButton, activeReaderSize == FontSizeMode::Medium ? "S *" : "S");
+  drawButton(gFontLargeButton,  activeReaderSize == FontSizeMode::Large  ? "M *" : "M");
+  drawButton(gFontXlButton,     activeReaderSize == FontSizeMode::XL     ? "L *" : "L");
+
+  drawButton(gFontStyleButton,   fontStyleModeName());
   drawButton(gRefreshModeButton, String(refreshModeName()) + " *");
-  display.setTextDatum(textdatum_t::top_left);
-  applyCoachMetadataFont();
-  display.drawString("Power", 36, 792);
-  drawButton(gPowerModeButton, String(gSettings.powerMode == PowerMode::BatterySaver ? "Battery Saver *" : "Battery Saver"));
+  drawButton(gPowerProfileButton, String(powerProfileName()) + " *");
+  drawButton(gBadgeSleepButton,  badgeSleepModeName());
+
+  // Dev hint for light sleep wake
+  if (gSettings.badgeSleepMode != BadgeSleepMode::Off) {
+    applyCoachMetadataFont();
+    display.setTextDatum(textdatum_t::top_left);
+    display.drawString("(dev) Light sleep: hold 2-3s to wake", bx, 774);
+  }
+
   drawButton(gHomeButton, "Home");
 
   finishDisplayRefresh();
   logTypographySettings("settings screen");
   logPowerAudit("settings screen");
-  Serial.printf("Settings screen shown: font=%s style=%s contrast=%s refresh=%s power=%s badgeSleep=%s\n",
+  Serial.printf("Settings screen shown: font=%s style=%s contrast=%s refresh=%s power=%s profile=%s badgeSleep=%s\n",
                 fontSizeModeName(), fontStyleModeName(), contrastModeName(), refreshModeName(), powerModeName(),
-                badgeSleepModeName());
+                powerProfileName(), badgeSleepModeName());
 }
 
 void renderDebug(const char* refreshReason = "mode switch") {
@@ -6911,17 +6945,9 @@ void renderDebug(const char* refreshReason = "mode switch") {
                          (gTouchActive ? "yes" : "no"),
                      26, y);
   y += 24;
-  display.drawString(String("touch down: ") + gLastTouchDownX + "," + gLastTouchDownY, 26, y);
-  y += 24;
-  display.drawString(String("touch up: ") + gLastTouchUpX + "," + gLastTouchUpY, 26, y);
-  y += 24;
-  display.drawString(String("last hit: ") + gLastHitTarget, 26, y);
-  y += 24;
-  display.drawString(String("ignored: ") + gLastIgnoredTouchReason, 26, y);
-  y += 24;
-  display.drawString(String("refresh end: ") + static_cast<unsigned>(gLastRefreshEndMs) + " ms", 26, y);
-  y += 24;
-  display.drawString(String("debounce: ") + static_cast<unsigned>(gLastDebounceMs) + " ms", 26, y);
+  display.drawString(String("touch: dn ") + gLastTouchDownX + "," + gLastTouchDownY +
+                         "  up " + gLastTouchUpX + "," + gLastTouchUpY + "  hit: " + gLastHitTarget,
+                     26, y);
   y += 24;
   display.drawString(String("sanitize: last ") + static_cast<unsigned>(gSanitizerReplacementLast) + " total " +
                          static_cast<unsigned>(gSanitizerReplacementTotal),
@@ -6931,8 +6957,6 @@ void renderDebug(const char* refreshReason = "mode switch") {
   y += 24;
   display.drawString(String("trace: ") + gLastRenderTraceStatus, 26, y);
   y += 24;
-  display.drawString(String("answer keys invalid: ") + static_cast<unsigned>(gInvalidAnswerKeyCount), 26, y);
-  y += 24;
   display.drawString(String("deck export: ") + gLastDeckExportStatus, 26, y);
 
   const int32_t actionX = 26;
@@ -6940,7 +6964,7 @@ void renderDebug(const char* refreshReason = "mode switch") {
   const int32_t actionW = (display.width() - 52 - actionGap) / 2;
   const int32_t actionH = 42;
   const int32_t rightX = actionX + actionW + actionGap;
-  int32_t actionY = display.height() - 362;
+  int32_t actionY = display.height() - 420;
   gHelpButton = {actionX, actionY, actionW, actionH};
   gPowerLabButton = {rightX, actionY, actionW, actionH};
   actionY += actionH + 8;
@@ -6954,7 +6978,7 @@ void renderDebug(const char* refreshReason = "mode switch") {
   gExportDeckButton = {rightX, actionY, actionW, actionH};
   actionY += actionH + 8;
   gTouchDebugButton = {actionX, actionY, actionW, actionH};
-  gPowerProfileButton = {rightX, actionY, actionW, actionH};
+  gPowerProfileButton = {};   // profile is in Settings and Power Lab; remove from Debug
   gHomeButton = {26, display.height() - 94, display.width() - 52, 58};
   drawButton(gHelpButton, "Help");
   drawButton(gPowerLabButton, "Power Lab");
@@ -6965,7 +6989,6 @@ void renderDebug(const char* refreshReason = "mode switch") {
   drawButton(gRenderTraceButton, "Dump render trace");
   drawButton(gTouchDebugButton, gTouchDebugEnabled ? "Touch debug off" : "Touch debug on");
   drawButton(gExportDeckButton, "Export deck text");
-  drawButton(gPowerProfileButton, String("Profile: ") + powerProfileName());
   drawButton(gHomeButton, "Home");
 
   finishDisplayRefresh();
@@ -7085,6 +7108,8 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
     row(String("Wake reason: ") + gLastWakeReason);
     row(String("Last sleep attempt: ") + gLastSleepAttempt);
     row(String("Input detected after wake: ") + (gInputDetectedAfterWake ? "yes" : "no"));
+    row("Light sleep uses timer wake. Hold screen 2-3s to wake.");
+    row("Nap duration: " + String(profileLightSleepDurationUs() / 1000000) + "s (" + String(powerProfileName()) + ")");
     row("--- Wake source status ---");
     row("Touch INT wake: unknown (GT911 GPIO not configured)");
     row("Timer wake: supported (used for nap cycles)");
@@ -7694,10 +7719,6 @@ void handleTouch() {
     } else if (hitTarget(gExportDeckButton, "export deck text", tapX, tapY)) {
       exportDeckTextToSd();
       renderDebug("deck export");
-    } else if (hitTarget(gPowerProfileButton, "power profile cycle", tapX, tapY)) {
-      cyclePowerProfile();
-      saveSettings();
-      renderDebug("profile switch");
     } else if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
@@ -8107,12 +8128,14 @@ void handleTouch() {
       cycleRefreshMode();
       saveSettings();
       renderSettings("refresh mode switch");
-    } else if (hitTarget(gPowerModeButton, "battery saver", tapX, tapY)) {
-      gSettings.powerMode =
-          gSettings.powerMode == PowerMode::BatterySaver ? PowerMode::Normal : PowerMode::BatterySaver;
+    } else if (hitTarget(gPowerProfileButton, "power profile", tapX, tapY)) {
+      cyclePowerProfile();
       saveSettings();
-      applyPowerPolicy("battery saver toggle");
-      renderSettings("power mode switch");
+      renderSettings("power profile switch");
+    } else if (hitTarget(gBadgeSleepButton, "sleep mode", tapX, tapY)) {
+      cycleBadgeSleepMode();
+      saveSettings();
+      renderSettings("sleep mode switch");
     } else if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
