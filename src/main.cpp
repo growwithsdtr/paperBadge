@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.8-dev6-settings";
+constexpr const char* kFirmwareVersion = "v5.8-dev7";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -484,6 +484,7 @@ bool isVerboseLogOk();
 uint32_t profileIdleScaleThresholdMs();
 uint32_t profileLightSleepIdleMs();
 uint32_t profileLightSleepDurationUs();
+uint32_t profileListenWindowMs();
 uint32_t profileBatteryPollMs();
 void enterPowerStage(PowerStage newStage);
 
@@ -677,6 +678,18 @@ uint32_t gLastLightSleepDurationMs = 0;
 uint32_t gLongestLightSleepMs = 0;
 bool gHibernateArmed = false;
 bool gInputDetectedAfterWake = false;
+uint32_t gLastWakeTimestampMs = 0;
+bool gInWakeListenWindow = false;
+uint32_t gWakeListenWindowEndMs = 0;
+uint32_t gWakeListenWindowDurationMs = 0;
+uint32_t gWakeListenWindowEnteredCount = 0;
+bool gWakeListenWindowTouchDetected = false;
+uint32_t gInputLockedAtMs = 0;
+uint32_t gInputLockWatchdogCount = 0;
+bool gSleepDisabledByLongPress = false;
+uint32_t gLongPressEscapeCount = 0;
+uint32_t gLastTouchDownMs = 0;
+uint32_t gLastTouchUpMs = 0;
 uint32_t gInvalidAnswerKeyCount = 0;
 String gLastAnswerKeyWarning = "none";
 Screen gLastRenderedScreen = Screen::Badge;
@@ -1578,6 +1591,12 @@ void recordUserActivity(const char* reason) {
   restoreActiveCpu(reason);
   gLastUserActivityMs = millis();
   gInputDetectedAfterWake = false;
+  if (gInWakeListenWindow) {
+    gInWakeListenWindow = false;
+    gWakeListenWindowTouchDetected = true;
+    Serial.printf("Wake listen window: closed by activity reason=%s\n",
+                  reason && reason[0] != '\0' ? reason : "touch");
+  }
   if (gIdleModeActive) {
     gIdleModeActive = false;
     Serial.printf("Power idle exit: mode=%s reason=%s\n", powerModeName(),
@@ -1628,6 +1647,14 @@ void maybeEnterBadgeSleep() {
     return;
   }
   const uint32_t now = millis();
+  // Post-wake listen window: stay awake for a fixed period after each timer wake
+  if (gInWakeListenWindow) {
+    if (now < gWakeListenWindowEndMs) {
+      return;
+    }
+    gInWakeListenWindow = false;
+    Serial.println("Wake listen window: expired");
+  }
   const uint32_t lightSleepThresholdMs = profileLightSleepIdleMs();
   if (now - gLastUserActivityMs < lightSleepThresholdMs) {
     return;
@@ -1671,6 +1698,7 @@ void maybeEnterBadgeSleep() {
   if (napDur > gLongestLightSleepMs) gLongestLightSleepMs = napDur;
   ++gLightSleepWakeCount;
   gLastLightSleepMs = wakeNow;
+  gLastWakeTimestampMs = wakeNow;
   gLastWakeReason = wakeReasonName(esp_sleep_get_wakeup_cause());
   enterPowerStage(PowerStage::WarmIdle);
   Serial.printf("Light nap wake: reason=%s dur=%ums total=%ums wakes=%u\n",
@@ -1681,6 +1709,19 @@ void maybeEnterBadgeSleep() {
   M5.update();
   if (M5.Touch.getCount() > 0) {
     gInputDetectedAfterWake = true;
+  }
+  // Start post-wake listen window — any touch in this window wakes fully
+  const uint32_t listenMs = profileListenWindowMs();
+  gWakeListenWindowDurationMs = listenMs;
+  gWakeListenWindowEndMs = wakeNow + listenMs;
+  gInWakeListenWindow = true;
+  gWakeListenWindowTouchDetected = false;
+  ++gWakeListenWindowEnteredCount;
+  Serial.printf("Wake listen window: %ums started profile=%s\n",
+                static_cast<unsigned>(listenMs), powerProfileName());
+  if (gInputDetectedAfterWake) {
+    gWakeListenWindowTouchDetected = true;
+    recordUserActivity("post-wake touch held");
   }
 }
 
@@ -1797,11 +1838,23 @@ uint32_t profileLightSleepIdleMs() {
 }
 
 uint32_t profileLightSleepDurationUs() {
+  // Dev-phase shorter naps: make wake recovery testable before proving touch wake.
+  // Extend once listen window + tap-anywhere wake is confirmed reliable.
   switch (gPowerProfile) {
-    case PowerProfile::Aggressive: return 30000000;  // 30s per nap cycle
-    case PowerProfile::BadgeMax:   return 60000000;  // 60s per nap cycle
+    case PowerProfile::Aggressive: return 10000000;  // 10s (was 30s)
+    case PowerProfile::BadgeMax:   return 15000000;  // 15s (was 60s)
     case PowerProfile::Balanced:
-    default:                        return 10000000;  // 10s per nap cycle
+    default:                        return 5000000;   // 5s (was 10s)
+  }
+}
+
+// Post-wake listen window: stay awake this long after each timer nap to catch user input.
+uint32_t profileListenWindowMs() {
+  switch (gPowerProfile) {
+    case PowerProfile::BadgeMax:   return 12000;  // 12s
+    case PowerProfile::Aggressive: return 10000;  // 10s
+    case PowerProfile::Balanced:
+    default:                        return 8000;   // 8s
   }
 }
 
@@ -2069,13 +2122,10 @@ void loadSettings() {
     gSettings.powerMode = PowerMode::Normal;
   }
 
-  if (badgeSleepMode == static_cast<uint8_t>(BadgeSleepMode::Light)) {
-    gSettings.badgeSleepMode = BadgeSleepMode::Light;
-  } else if (badgeSleepMode == static_cast<uint8_t>(BadgeSleepMode::DeepExperiment)) {
-    gSettings.badgeSleepMode = BadgeSleepMode::DeepExperiment;
-  } else {
-    gSettings.badgeSleepMode = BadgeSleepMode::Off;
-  }
+  // Sleep mode always resets to Off on boot — experimental sleep is not sticky.
+  // NVS value is ignored; user must re-enable from Settings or Power Lab each session.
+  gSettings.badgeSleepMode = BadgeSleepMode::Off;
+  Serial.println("Sleep mode: reset to Off on boot (not sticky)");
 
   if (powerProfile == static_cast<uint8_t>(PowerProfile::Aggressive)) {
     gPowerProfile = PowerProfile::Aggressive;
@@ -2865,6 +2915,7 @@ bool drawEmbeddedPngFit(const uint8_t* data, size_t dataSize, uint16_t sourceWid
 
 void lockInputForRefresh(const char* reason, bool cleanRefresh) {
   gInputLocked = true;
+  gInputLockedAtMs = millis();
   gCurrentRefreshClean = cleanRefresh;
   gLastRefreshReason = reason && reason[0] != '\0' ? reason : "render";
   gInputUnlockAtMs = 0;
@@ -2886,7 +2937,20 @@ void finishDisplayRefresh() {
 }
 
 void updateInputLock() {
-  if (!gInputLocked || gInputUnlockAtMs == 0 || millis() < gInputUnlockAtMs) {
+  if (!gInputLocked) {
+    return;
+  }
+  const uint32_t now = millis();
+  // Watchdog: if locked > 8s something went wrong, clear it
+  if (gInputLockedAtMs > 0 && now - gInputLockedAtMs > 8000) {
+    gInputLocked = false;
+    ++gInputLockWatchdogCount;
+    Serial.printf("Input lock watchdog: cleared after %ums screen=%s count=%u\n",
+                  static_cast<unsigned>(now - gInputLockedAtMs), screenName(gScreen),
+                  static_cast<unsigned>(gInputLockWatchdogCount));
+    return;
+  }
+  if (gInputUnlockAtMs == 0 || now < gInputUnlockAtMs) {
     return;
   }
   gInputLocked = false;
@@ -6879,7 +6943,7 @@ void renderSettings(const char* refreshReason = "mode switch") {
   if (gSettings.badgeSleepMode != BadgeSleepMode::Off) {
     applyCoachMetadataFont();
     display.setTextDatum(textdatum_t::top_left);
-    display.drawString("(dev) Light sleep: hold 2-3s to wake", bx, 774);
+    display.drawString("Light test: tap after timer wake. Long press=disable. Resets Off on reboot.", bx, 774);
   }
 
   drawButton(gHomeButton, "Home");
@@ -7097,27 +7161,58 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
     row(String("Redraws while idle: ") + static_cast<unsigned>(gRedrawWhileIdleCount));
   } else {
     // Page 3: Sleep Lab controls and wake-source status
-    row(String("Sleep mode: ") + badgeSleepModeName());
-    row(String("Power stage: ") + powerStageName(gPowerStage));
-    row(String("Light attempts: ") + static_cast<unsigned>(gLightSleepAttemptCount) +
+    // Sleep mode / stage
+    row(String("Sleep mode: ") + badgeSleepModeName() +
+        "  stage: " + powerStageName(gPowerStage) +
+        "  last: " + powerStageName(gLastPowerStage));
+    // Nap cycle stats
+    row(String("Nap: ") + static_cast<unsigned>(profileLightSleepDurationUs() / 1000000) + "s  " +
+        "attempts: " + static_cast<unsigned>(gLightSleepAttemptCount) +
         "  entered: " + static_cast<unsigned>(gLightSleepEnteredCount) +
         "  woke: " + static_cast<unsigned>(gLightSleepWakeCount));
     row(String("Light total: ") + fmtDurationMs(gLightSleepTotalMs) +
         "  last: " + fmtDurationMs(gLastLightSleepDurationMs) +
         "  longest: " + fmtDurationMs(gLongestLightSleepMs));
-    row(String("Wake reason: ") + gLastWakeReason);
+    // Wake details
+    row(String("Wake reason: ") + gLastWakeReason +
+        "  last wake: " + (gLastWakeTimestampMs > 0 ? fmtMsSince(gLastWakeTimestampMs) : String("none")));
     row(String("Last sleep attempt: ") + gLastSleepAttempt);
-    row(String("Input detected after wake: ") + (gInputDetectedAfterWake ? "yes" : "no"));
-    row("Light sleep uses timer wake. Hold screen 2-3s to wake.");
-    row("Nap duration: " + String(profileLightSleepDurationUs() / 1000000) + "s (" + String(powerProfileName()) + ")");
-    row("--- Wake source status ---");
-    row("Touch INT wake: unknown (GT911 GPIO not configured)");
-    row("Timer wake: supported (used for nap cycles)");
-    row("USB/UART wake: supported (ESP32-S3 auto)");
-    row("Button/GPIO wake: not configured");
-    row("Deep sleep: blocked (touch wake unverified)");
-    row("Hibernate: blocked (use arm button if added)");
-    // Sleep cycle button occupies body area — lay it out here
+    // Listen window state
+    {
+      const uint32_t now = millis();
+      const bool inWindow = gInWakeListenWindow && now < gWakeListenWindowEndMs;
+      row(String("Listen window: ") + (inWindow ? "ACTIVE" : "idle") +
+          "  dur: " + static_cast<unsigned>(gWakeListenWindowDurationMs / 1000) + "s" +
+          "  entered: " + static_cast<unsigned>(gWakeListenWindowEnteredCount));
+      if (inWindow) {
+        row(String("  window expires in: ") +
+            fmtDurationMs(gWakeListenWindowEndMs - now));
+      }
+    }
+    row(String("Input after wake: ") + (gInputDetectedAfterWake ? "yes (held)" : "no") +
+        "  listen touch: " + (gWakeListenWindowTouchDetected ? "yes" : "no"));
+    // Touch timing
+    row(String("Last touch down: ") + (gLastTouchDownMs > 0 ? fmtMsSince(gLastTouchDownMs) : String("none")) +
+        "  up: " + (gLastTouchUpMs > 0 ? fmtMsSince(gLastTouchUpMs) : String("none")));
+    row(String("Last hit: ") + gLastHitTarget +
+        "  last ignored: " + gLastIgnoredTouchReason);
+    // Input lock
+    row(String("Input locked: ") + (gInputLocked ? "YES" : "no") +
+        (gInputLocked && gInputLockedAtMs > 0
+           ? String("  for: ") + fmtDurationMs(millis() - gInputLockedAtMs)
+           : String("")) +
+        "  watchdog clears: " + static_cast<unsigned>(gInputLockWatchdogCount));
+    // Emergency long press
+    row(String("Long press escapes: ") + static_cast<unsigned>(gLongPressEscapeCount) +
+        (gSleepDisabledByLongPress ? "  (last: long press)" : ""));
+    // Wake source notes
+    row("--- Wake sources ---");
+    row("Timer: supported. Touch INT: not configured (GT911 GPIO unknown).");
+    row("Timer wake only: short taps during sleep are missed.");
+    row("After each wake, tap anywhere within listen window to stay awake.");
+    row("Long press anywhere (sleep on) disables sleep + goes to Power Lab.");
+    row("Deep sleep: blocked. Sleep Off on reboot (not sticky).");
+    // Sleep cycle button
     const int32_t sleepBtnY = maxY - 10;
     const int32_t sleepBtnH = 52;
     const int32_t sleepBtnW = display.width() - 52;
@@ -7636,6 +7731,11 @@ void handleTouch() {
 
   if (detail.wasPressed()) {
     gTouchActive = true;
+    gLastTouchDownMs = millis();
+    if (gInWakeListenWindow) {
+      Serial.printf("Listen window: touch press during window, window will close. screen=%s\n",
+                    screenName(gScreen));
+    }
     recordUserActivity("touch press");
     gLastTouchDownX = constrain(detail.x, 0, M5.Display.width());
     gLastTouchDownY = constrain(detail.y, 0, M5.Display.height());
@@ -7644,12 +7744,27 @@ void handleTouch() {
   }
   if (detail.wasClicked() || detail.wasReleased()) {
     gTouchActive = false;
+    gLastTouchUpMs = millis();
     recordUserActivity("touch release");
     gLastTouchUpX = constrain(detail.x, 0, M5.Display.width());
     gLastTouchUpY = constrain(detail.y, 0, M5.Display.height());
     Serial.printf("touch up coordinates: x=%ld y=%ld screen=%s\n", static_cast<long>(gLastTouchUpX),
                   static_cast<long>(gLastTouchUpY), screenName(gScreen));
   }
+  // Emergency escape: long press anywhere disables sleep and returns to Power Lab.
+  // Only active when Sleep mode is not Off — dev escape, not production behavior.
+  if (gSettings.badgeSleepMode != BadgeSleepMode::Off && detail.wasHold()) {
+    gSettings.badgeSleepMode = BadgeSleepMode::Off;
+    gInWakeListenWindow = false;
+    gSleepDisabledByLongPress = true;
+    ++gLongPressEscapeCount;
+    saveSettings();
+    Serial.printf("Emergency long press: sleep disabled, to Power Lab. screen=%s escapeCount=%u\n",
+                  screenName(gScreen), static_cast<unsigned>(gLongPressEscapeCount));
+    renderPowerLab("emergency long press");
+    return;
+  }
+
   if (gScreen == Screen::Badge && detail.wasHold() && detail.x > M5.Display.width() / 4 &&
       detail.x < (M5.Display.width() * 3) / 4 && detail.y > M5.Display.height() / 4 &&
       detail.y < (M5.Display.height() * 3) / 4) {
