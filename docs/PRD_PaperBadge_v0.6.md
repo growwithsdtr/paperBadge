@@ -59,14 +59,20 @@ Content is organized into categories. Practice cards include a Must Master subse
 
 Three user-facing controls on the Settings screen:
 
-**Reader size** (S / M / L) — controls body font size in Practice, Drills, Exam, Glossary.
-Also scales option button text size in MCQ drills and exams.
+**Reader size** (S / M / L) — controls body font size in **study content screens only**: Practice,
+Drills, Exam, and Glossary. Also scales option button text in MCQ drills and exams.
 
-| Size | Body px | Description |
-|------|---------|-------------|
-| S | 24 | Compact; more text per page |
-| M | 31 | Default; comfortable reading |
-| L | 40 | Large print; fewer items per page |
+App chrome (Settings, Advanced, Power Lab, and all other control screens) uses a fixed medium font
+independent of Reader size. Section labels and button text in Settings do not change with Reader size.
+
+| Size | Body px | Option text | Description |
+|------|---------|-------------|-------------|
+| S | 24 | 24px (Gothic_24) | Compact; more text per page |
+| M | 31 | 31px (Gothic_28) | Default; comfortable reading |
+| L | 40 | 36px (Gothic_36), 32px fallback | Large print; fewer items per page |
+
+The fallback applies when a specific option label is too long to fit in 2 lines at the preferred size.
+Only that individual label downgrades; other options on the same screen are not affected.
 
 **Refresh mode** (Fast / Bal / Clean) — controls e-ink refresh cadence.
 
@@ -103,6 +109,26 @@ LightNap is blocked (never entered) when:
 - Screen is a control/diagnostic screen (Settings, Advanced, Power Lab, etc.)
 - An exam question or MCQ drill option is awaiting a tap (answer-selection guard)
 - Input lock is active (including the 400ms post-wake debounce window)
+
+### Drill Post-Answer Navigation
+
+After a drill answer is selected, the drill item enters a two-page internal state:
+
+1. **Result page** — shows the question and all four option buttons. The selected option and the
+   correct option each receive a thick border (3-rect) and bold text. No filled backgrounds.
+2. **Feedback page** — shows the feedback/explanation (what the best answer is and why).
+   May paginate if the explanation is long.
+
+Transitions:
+- Bottom-half content tap on result page → advance to feedback page
+- Top-half content tap on feedback page 1 → return to result page
+- Top-half content tap on feedback page 2+ → previous feedback page
+- Bottom-half content tap on feedback page → next feedback page (no-op at last page)
+- Footer arrow buttons (← →) still advance to the next or previous drill item at any point
+- Home button returns to Home from either sub-page
+
+Top-half taps on the result page are ignored. This prevents accidental backwards navigation before
+the user has had a chance to confirm their answer.
 
 **Deep sleep:** Permanently blocked — the GT911 touch controller INT is on GPIO48, which is not
 in the ESP32-S3 RTC GPIO range (0–21). No verified deep sleep wake source exists.

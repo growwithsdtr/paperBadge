@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.8-dev12";
+constexpr const char* kFirmwareVersion = "v5.8-dev13";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -601,6 +601,7 @@ size_t gCoachIndex = 0;
 size_t gLastPracticeIndex = 0;
 uint8_t gCoachStage = 0;
 int8_t gSelectedOption = -1;
+bool gDrillShowFeedback = false;  // true = show feedback page; false = show result/options state
 uint8_t gMockStep = 0;
 uint8_t gBottomLeftTapCount = 0;
 uint32_t gLastBottomLeftTapMs = 0;
@@ -2366,6 +2367,7 @@ void clearCoachDeck() {
   gCoachIndex = 0;
   gCoachStage = 0;
   gSelectedOption = -1;
+  gDrillShowFeedback = false;
   gMockStep = 0;
 }
 
@@ -2870,6 +2872,7 @@ void startCoachMode(Screen screen) {
   gCoachIndex = findCoachItem(screen, 0);
   gCoachStage = 0;
   gSelectedOption = -1;
+  gDrillShowFeedback = false;
   gMockStep = 0;
   gCoachNeedsCleanEntryRefresh = true;
   Serial.printf("Coach mode entry: screen=%s cleanRefresh=queued\n", screenName(screen));
@@ -2886,6 +2889,7 @@ void startPracticeMode(bool mustOnly, bool continueLast) {
   gCoachIndex = findCoachItem(Screen::InterviewPractice, startIndex);
   gCoachStage = 0;
   gSelectedOption = -1;
+  gDrillShowFeedback = false;
   gMockStep = 0;
   gCoachNeedsCleanEntryRefresh = true;
   Serial.printf("Practice entry: filter=%s continue=%s index=%u cleanRefresh=queued\n", mustOnly ? "Must" : "All",
@@ -2906,6 +2910,7 @@ void nextCoachItem() {
   gCoachIndex = nextIndex;
   gCoachStage = 0;
   gSelectedOption = -1;
+  gDrillShowFeedback = false;
   // Always clean refresh on card change in Practice to prevent ghosting (v5.8-dev2)
   if (leavingFeedback || gScreen == Screen::InterviewPractice) {
     gCoachNeedsCleanEntryRefresh = true;
@@ -2929,6 +2934,7 @@ void previousCoachItem() {
   gCoachIndex = previousIndex;
   gCoachStage = 0;
   gSelectedOption = -1;
+  gDrillShowFeedback = false;
   // Always clean refresh on card change in Practice to prevent ghosting (v5.8-dev2)
   if (leavingFeedback || gScreen == Screen::InterviewPractice) {
     gCoachNeedsCleanEntryRefresh = true;
@@ -4766,6 +4772,11 @@ uint8_t optionTextPxFor(const String& label, int32_t buttonWidth) {
   if (largeLines.size() <= 2) {
     return largePx;
   }
+  // For XL/L mode: use 32px fallback (lgfxJapanGothic_32) so L options are visibly
+  // larger than M options (which use lgfxJapanGothic_28 at their 31px cap).
+  if (type.bodyPx >= 40) {
+    return 32;
+  }
   return compactPx;
 }
 
@@ -5425,6 +5436,10 @@ uint8_t currentCoachReaderPageCount() {
     return pageCount;
   }
   if (isOptionDrillScreen(gScreen, item) && gSelectedOption >= 0) {
+    if (!gDrillShowFeedback) {
+      gSettings.fontSizeMode = savedSize;
+      return 1;  // result view is a single combined page
+    }
     const uint8_t pageCount = feedbackPageCountFor(item, layout);
     gSettings.fontSizeMode = savedSize;
     return pageCount;
@@ -5995,6 +6010,52 @@ void renderInterviewPracticeScreen() {
                 pageCount, shortFontSizeModeName(renderSize));
 }
 
+// Show post-answer result view: question + all options with selected/correct borders.
+// No filled backgrounds; selected/correct options get 3-rect thick border + bold text.
+void drawDrillResultView(const CoachItemView& item, const PracticeLayout& layout) {
+  auto& display = M5.Display;
+  const uint8_t selected = static_cast<uint8_t>(gSelectedOption);
+  const bool validKey = hasValidAnswerKey(item);
+  const DrillPagePlan plan = buildDrillPagePlan(item, layout);
+
+  drawCompactDrillHeader(item, 1, 1);
+  gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
+
+  applyCoachQuestionFont();
+  drawReaderPage(plan.questionPages, 0, layout.contentX, layout.contentY, layout.questionLineHeight);
+
+  int32_t y = layout.contentY + plan.questionBlockHeight + 14;
+  const int32_t optionGap = 8;
+  for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
+    const String label = optionLabelWithLetter(item, option);
+    const int32_t buttonH = optionButtonHeightFor(label, layout.contentW);
+    const Rect rect = {layout.contentX, y, layout.contentW, buttonH};
+    const bool isSelected = (option == selected);
+    const bool isCorrect = validKey && (option == item.correctIndex);
+    const bool highlighted = isSelected || isCorrect;
+    display.drawRoundRect(rect.x, rect.y, rect.w, rect.h, 8, TFT_BLACK);
+    display.drawRoundRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 7, TFT_BLACK);
+    if (highlighted) {
+      display.drawRoundRect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4, 6, TFT_BLACK);
+    }
+    const uint8_t optionPx = optionTextPxFor(label, rect.w);
+    applyBodyFont(optionPx);
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    display.setTextDatum(textdatum_t::top_left);
+    std::vector<String> wlines;
+    wrapReaderTextToLines(label, rect.w - 32, wlines, "result-option");
+    const int32_t lineH = optionLineHeight(optionPx);
+    const int32_t textY = rect.y + 12;
+    for (size_t li = 0; li < wlines.size(); ++li) {
+      display.drawString(wlines[li], rect.x + 18, textY + static_cast<int32_t>(li) * lineH);
+      if (highlighted) {
+        display.drawString(wlines[li], rect.x + 19, textY + static_cast<int32_t>(li) * lineH);
+      }
+    }
+    y += buttonH + optionGap;
+  }
+}
+
 void renderCoachScreen() {
   if (gScreen == Screen::InterviewPractice) {
     renderInterviewPracticeScreen();
@@ -6059,6 +6120,14 @@ void renderCoachScreen() {
     const DrillPagePlan plan = buildDrillPagePlan(item, layout);
     if (gCoachStage >= plan.totalPages) {
       gCoachStage = plan.totalPages - 1;
+    }
+    {
+      const CoachTypography ct = coachTypography();
+      const uint8_t qPx = ct.bodyPx >= 34 ? ct.bodyPx : static_cast<uint8_t>(ct.bodyPx + 4);
+      const uint8_t opt0Px = item.optionCount > 0
+          ? optionTextPxFor(optionLabelWithLetter(item, 0), layout.contentW) : 0;
+      Serial.printf("Drill fonts: reader=%s qPx=%u opt0Px=%u bodyPx=%u\n",
+                    shortFontSizeModeName(renderSize), qPx, opt0Px, ct.bodyPx);
     }
     drawCompactDrillHeader(item, gCoachStage + 1, plan.totalPages);
     gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
@@ -6136,13 +6205,18 @@ void renderCoachScreen() {
   }
 
   if (optionDrill && gSelectedOption >= 0) {
-    drawFeedbackPage(item, layout);
+    if (!gDrillShowFeedback) {
+      drawDrillResultView(item, layout);
+    } else {
+      drawFeedbackPage(item, layout);
+    }
     drawCoachFooterNav(hasPreviousCoachItem(), hasNextCoachItem());
     gSettings.fontSizeMode = savedSize;
     finishDisplayRefresh();
-    Serial.printf("Feedback shown: item=%s page=%u/%u validKey=%s\n", coachDisplayId(item),
+    Serial.printf("Drill post-answer: item=%s mode=%s page=%u/%u validKey=%s reader=%s\n",
+                  coachDisplayId(item), gDrillShowFeedback ? "feedback" : "result",
                   static_cast<unsigned>(gCoachStage + 1), static_cast<unsigned>(currentCoachReaderPageCount()),
-                  hasValidAnswerKey(item) ? "yes" : "no");
+                  hasValidAnswerKey(item) ? "yes" : "no", shortFontSizeModeName(renderSize));
     return;
   }
 
@@ -7009,7 +7083,10 @@ void renderSettings(const char* refreshReason = "mode switch") {
   const int32_t barY = battBlockY + (battBlockH - barH) / 2;
   applyCoachTitleFont();
   const String battPctText = (battLevel >= 0) ? String(static_cast<unsigned>(battLevel)) + "%" : "--%";
-  display.drawString(battPctText, bx, battBlockY + 4);
+  const int32_t battCenterY = battBlockY + battBlockH / 2;
+  display.setTextDatum(textdatum_t::middle_left);
+  display.drawString(battPctText, bx, battCenterY);
+  display.setTextDatum(textdatum_t::top_left);
   drawBatteryBar(width - bx - barW, barY, barW, barH, battLevel);
   applyCoachMetadataFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
@@ -7033,6 +7110,8 @@ void renderSettings(const char* refreshReason = "mode switch") {
   drawSegmentedButton(gFontXlButton,     "L", activeReaderSize == FontSizeMode::XL);
 
   // Refresh — Fast / Balanced / Clean
+  applyCoachMetadataFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.drawString("Refresh", bx, 300);
   gRefreshFastButton     = {bx,    326, bw3, bh};
   gRefreshBalancedButton = {bx2_3, 326, bw3, bh};
@@ -7043,6 +7122,8 @@ void renderSettings(const char* refreshReason = "mode switch") {
   drawSegmentedButton(gRefreshCleanButton,    "Clean",    activeRefresh == RefreshMode::Clean);
 
   // Power — Responsive / Balanced / Max
+  applyCoachMetadataFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.drawString("Power", bx, 390);
   gPowerResponsiveButton = {bx,    416, bw3, bh};
   gPowerBalancedButton   = {bx2_3, 416, bw3, bh};
@@ -7055,6 +7136,8 @@ void renderSettings(const char* refreshReason = "mode switch") {
   drawSegmentedButton(gPowerMaxButton,        "Max",        activePower == PowerProfile::BadgeMax);
 
   // Orientation — Normal / Strap
+  applyCoachMetadataFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.drawString("Orientation", bx, 480);
   gOrientationButton      = {bx,    506, bw2, bh};
   gOrientationStrapButton = {bx2_2, 506, bw2, bh};
@@ -8434,6 +8517,7 @@ void handleTouch() {
         if (hitTarget(gOptionButtons[option], optionTarget.c_str(), tapX, tapY)) {
           recordDrillAnswer(item, option);
           gSelectedOption = option;
+          gDrillShowFeedback = false;
           gCoachStage = 0;
           gCoachNeedsCleanEntryRefresh = true;
           Serial.printf("Drill answer selected: item=%s selected=%c best=%c cleanRefresh=queued\n", coachDisplayId(item),
@@ -8448,6 +8532,43 @@ void handleTouch() {
     }
 
     if (gReaderContentRect.contains(tapX, tapY)) {
+      // Drill post-answer: two internal sub-pages (result ↔ feedback); no item skip.
+      if (isOptionDrillScreen(gScreen, item) && gSelectedOption >= 0) {
+        if (!gDrillShowFeedback) {
+          if (tapY >= gReaderContentRect.y + gReaderContentRect.h / 2) {
+            markHitTarget("drill result -> feedback", tapX, tapY);
+            gDrillShowFeedback = true;
+            gCoachStage = 0;
+            gCoachNeedsCleanEntryRefresh = true;
+            renderCoachScreen();
+          } else {
+            Serial.println("drill result: top tap ignored");
+          }
+        } else {
+          if (tapY < gReaderContentRect.y + gReaderContentRect.h / 2) {
+            markHitTarget("drill feedback nav up", tapX, tapY);
+            if (gCoachStage > 0) {
+              --gCoachStage;
+              renderCoachScreen();
+            } else {
+              gDrillShowFeedback = false;
+              gCoachNeedsCleanEntryRefresh = true;
+              renderCoachScreen();
+            }
+          } else {
+            const uint8_t feedbackPages = currentCoachReaderPageCount();
+            if (gCoachStage + 1 < feedbackPages) {
+              markHitTarget("drill feedback next page", tapX, tapY);
+              ++gCoachStage;
+              renderCoachScreen();
+            } else {
+              Serial.println("drill feedback: at last page");
+            }
+          }
+        }
+        return;
+      }
+
       const uint8_t pageCount = currentCoachReaderPageCount();
       // Only allow item-advance navigation on Glossary (not Drills/Exam option screens)
       const bool allowItemNav = (gScreen == Screen::Glossary);

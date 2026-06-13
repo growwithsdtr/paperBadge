@@ -1,4 +1,4 @@
-# PaperBadge Project State — v5.8-dev12 Handoff
+# PaperBadge Project State — v5.8-dev13 Handoff
 
 _Last updated: 2026-06-13_
 
@@ -15,10 +15,80 @@ _Last updated: 2026-06-13_
 
 ## Firmware
 
-- **Version:** `v5.8-dev12` (`src/main.cpp:20`)
-- **Build:** SUCCESS — RAM 49.5% · Flash 47.6%
+- **Version:** `v5.8-dev13` (`src/main.cpp:20`)
+- **Build:** SUCCESS — RAM 49.5% · Flash 47.7%
 - **Upload:** SUCCESS — `/dev/cu.usbmodem1101`
 - **Smoke test:** PASS (7/7 boot log checks)
+
+---
+
+## What Changed in v5.8-dev13
+
+### Fix 1: Settings section labels now fixed medium size
+
+All four section labels ("Reader size", "Refresh", "Power", "Orientation") now call
+`applyCoachMetadataFont()` immediately before `drawString`, ensuring a consistent fixed
+24px font regardless of what the preceding segmented-button draw left behind.
+
+Previously, only "Reader size" was reliably at 24px (it followed `applyCoachMetadataFont()` from
+the battery block). "Refresh", "Power", and "Orientation" were silently drawn at 20px (the
+`kSegmentedPx` font leftover from the preceding button row).
+
+Settings layout is unchanged — same Y positions, same buttons.
+
+### Fix 2: Battery % text vertically co-aligned with battery bar
+
+Battery percentage text now uses `middle_left` datum and draws at the bar's vertical centerline
+(`battBlockY + battBlockH / 2 = 99`). Previously it drew with `top_left` at `battBlockY + 4 = 76`,
+leaving the text visually higher than the bar center.
+
+### Fix 3: Drill/Exam Reader L option buttons now visibly larger than Reader M
+
+Root cause: when a label was too long to fit in 2 lines at 36px (XL/L's largePx cap),
+`optionTextPxFor` fell back to `compactPx = 31` (buttonPx for XL mode). `applyGothicFont(31)`
+picks `lgfxJapanGothic_28` — the same font as M's maximum of 31px. So long labels in L silently
+looked identical to M.
+
+Fix: for XL/L mode (`bodyPx >= 40`), use 32px fallback instead of 31. `applyGothicFont(32)` picks
+`lgfxJapanGothic_32`, which is visibly larger than `lgfxJapanGothic_28`.
+
+Updated option font table:
+
+| Reader | largePx | Fallback | Font (fits) | Font (fallback) |
+|--------|---------|----------|-------------|-----------------|
+| S | 24 | 24 | lgfxJapanGothic_24 | lgfxJapanGothic_24 |
+| M | 31 | 24 | lgfxJapanGothic_28 | lgfxJapanGothic_24 |
+| L | 36 | **32** | lgfxJapanGothic_36 | **lgfxJapanGothic_32** |
+
+Added `Serial.printf("Drill fonts: reader=%s qPx=%u opt0Px=%u bodyPx=%u\n", ...)` before
+each drill render for serial verification.
+
+### Fix 4: Drill post-answer tap behavior — result/feedback sub-pages
+
+Introduced `gDrillShowFeedback` (bool, default false) to split the post-answer state into
+two internal pages within a single drill item:
+
+1. **Result view** (`gDrillShowFeedback = false`): shows question + all option buttons with
+   selected/correct options highlighted (3-rect thick border + bold text). No item skip.
+2. **Feedback view** (`gDrillShowFeedback = true`): shows existing `drawFeedbackPage` content
+   (explanation, best answer, etc.). Paginated by `gCoachStage`.
+
+Touch behavior after answer selected:
+- Content bottom half on result view → switch to feedback (`gDrillShowFeedback = true`)
+- Content top half on feedback first page → switch back to result (`gDrillShowFeedback = false`)
+- Content top half on feedback page 2+ → previous feedback page (`--gCoachStage`)
+- Content bottom half on feedback → next feedback page (or no-op at last page)
+- Footer arrows (← →): still move to prev/next drill item (unchanged)
+- Home button: unchanged
+
+`gDrillShowFeedback` is reset to `false` whenever `gSelectedOption` is reset:
+`clearCoachData`, `startCoachMode`, `startPracticeMode`, `nextCoachItem`, `previousCoachItem`,
+and the answer-selection touch handler.
+
+`currentCoachReaderPageCount()` returns 1 for the result view and `feedbackPageCountFor()`
+for the feedback view.
+
+Exam answer recording is not changed.
 
 ---
 
@@ -27,136 +97,19 @@ _Last updated: 2026-06-13_
 ### Fix 1: UI chrome fonts fixed — Settings/Advanced/Power Lab stable regardless of Reader size
 
 `renderSettings`, `renderAdvanced`, and `renderPowerLab` now pin `gSettings.fontSizeMode = FontSizeMode::Large`
-at entry and restore it on exit. This means `coachTypography()` inside `drawButton()` always uses:
-
-- `buttonPx = 24` (consistent button text)
-- `titlePx = 40` (consistent header)
-- `metadataPx = 24` (consistent labels)
-
-Previously, Reader L (XL) made `buttonPx = 31`, causing Settings/Advanced/Power Lab button text to
-grow with Reader size, crowding the layout.
+at entry and restore it on exit.
 
 ### Fix 2: Settings segmented controls — thick-border selected state, no stars
 
-Replaced `drawButton(..., "S *")` pattern with a new `drawSegmentedButton(rect, label, selected)` helper:
-- **Selected**: 3-rect thick rounded border + fake-bold text (draw string twice, offset 1px)
-- **Unselected**: 2-rect normal border, regular text
+`drawSegmentedButton(rect, label, selected)` helper:
+- Selected: 3-rect thick border + fake-bold text
+- Unselected: 2-rect normal border, regular text
 - No filled background, no `*` marker
+- Labels at `kSegmentedPx = 20`
 
-Labels now use `kSegmentedPx = 20` (Gothic 20px bitmap) so full labels fit in 150px segmented buttons:
+### Fix 3: Drill/Exam Reader L visible (coachReaderSizeFor auto-downgrade removed)
 
-| Row | Labels |
-|-----|--------|
-| Reader | S / M / L |
-| Refresh | Fast / Balanced / Clean |
-| Power | Responsive / Balanced / Max |
-| Orientation | Normal / Strap |
-
-### Fix 3: Settings battery block vertical alignment
-
-Battery block redesigned for co-alignment of % text and bar:
-- `battBlockH = 54` containing both % text (40px font) and bar (44px tall)
-- Bar top computed as `battBlockY + (battBlockH - barH) / 2` — vertically centered within block
-- % text at `battBlockY + 4` — visually centers with bar
-- mV and USB details immediately below the block
-
-### Fix 4: Drill/Exam Reader L now visibly different from Reader M
-
-Root cause: `coachReaderSizeFor()` auto-downgraded Reader L (XL) → Reader M (Large) for choice-question
-screens. Both sizes rendered at 31px body — indistinguishable.
-
-Fix:
-1. Removed auto-downgrade from `coachReaderSizeFor()` — it now returns the canonical reader size directly.
-2. `applyCoachQuestionFont()`: removed the `> 36 ? 36 :` cap — Reader L now renders question stems at 40px.
-3. `optionTextPxFor()`: caps `largePx` at 36 (safe maximum for option buttons) instead of uncapping.
-
-Result:
-
-| Reader | Question stem | Option text |
-|--------|--------------|-------------|
-| S | 28px | 24px |
-| M | 35px | 31px |
-| L | 40px | 36px (capped) |
-
-Feedback/explanation pages use `applyCoachBodyFont()` → bodyPx (24/31/40px) — unchanged, visibly different.
-
----
-
-## What Changed in v5.8-dev11
-
-### Fix 1: Power Lab page 4 unreachable
-
-Touch handler used `kPlPageCount = 3` while `renderPowerLab()` defines `kPowerLabPageCount = 4`.
-Fixed: handler now uses `4`. Page button cycles through all four pages.
-
-### Fix 2: Settings power profile persistence
-
-Settings power profile buttons (Resp / Bal / Max) were missing `saveSettings()` calls.
-Fixed: all three handlers now call `saveSettings()` matching Power Lab behavior.
-
-### Fix 3: Power Lab LightNap label clarified
-
-"LightNap eligible:" renamed to **"LightNap (this screen):"** — makes clear that when viewing
-Power Lab (a control screen), the result of `no — control screen` reflects the current Power Lab
-screen, not a prior content screen the user came from.
-
-### Fix 4: Settings labels — always compact
-
-Removed the `isMediumSize` adaptive label expansion introduced in dev10. Labels are now always
-compact to prevent wrapping inside 150px segmented buttons:
-
-| Row | Labels |
-|-----|--------|
-| Reader | S / M / L |
-| Refresh | Fast / **Bal** / Clean |
-| Power | **Resp** / **Bal** / **Max** |
-| Orientation | Normal / Strap |
-
-### Fix 5: Drill/Exam option text scales with Reader size
-
-`optionTextPxFor()` was capping `largePx = min(bodyPx, 31)`, making Reader L (bodyPx=40)
-look identical to Reader M (bodyPx=31) for option buttons.
-
-Fixed: removed the `>= 31 ? 31` cap. Now uses `bodyPx` directly:
-
-| Reader | bodyPx | optionTextPx (if fits 2 lines) |
-|--------|--------|-------------------------------|
-| S | 24 | 24 (= buttonPx; no change) |
-| M | 31 | 31 |
-| L | 40 | 40 (or falls back to 31 if text is too long) |
-
-The existing 2-line overflow guard still applies: if a label doesn't fit in 2 lines at `largePx`,
-the function falls back to `compactPx` (buttonPx). No button height overflow possible.
-
-### Fix 6: Settings battery layout redesign
-
-Old layout: single metadata-font line with thin 22px bar inline.
-
-New layout for glanceability:
-
-```
-[  100%  ]                    [████████████████████]   ← thick bar (66×220px)
-4156mV
-USB: no  discharging
-```
-
-- Battery % uses `applyCoachTitleFont()` (31–40px depending on reader size), left at x=36
-- Thick bar: h=66px, w=220px, right-aligned at x=width-36-220, same y as % text
-- mV line below (metadata font), then USB+charging status below that
-- All settings rows shifted down ~68px to accommodate taller battery section:
-  - Reader size: label y=210, buttons y=236
-  - Refresh: label y=300, buttons y=326
-  - Power: label y=390, buttons y=416
-  - Orientation: label y=480, buttons y=506
-  - Advanced: y=570
-
-### Fix 7: Power Lab page 4 audit version string
-
-Changed hardcoded `"v5.8-dev9"` to `kFirmwareVersion` so it stays current automatically.
-
-### Docs
-
-- Created `docs/PRD_PaperBadge_v0.6.md` — product behavior reference and Japanese deck roadmap
+Removed auto-downgrade from `coachReaderSizeFor()`. `optionTextPxFor()` caps at 36px.
 
 ---
 
@@ -230,11 +183,11 @@ Those screens pin `fontSizeMode = Large` internally so their layout is stable.
 
 Font sizes at each Reader size:
 
-| Reader | Body | Question stem | Option text | Feedback |
-|--------|------|--------------|-------------|---------|
-| S | 24px | 28px | 24px | 24px |
-| M | 31px | 35px | 31px | 31px |
-| L | 40px | 40px | 36px (capped) | 40px |
+| Reader | Body | Question stem | Option text (fits) | Option text (fallback) | Feedback |
+|--------|------|--------------|---------------------|------------------------|---------|
+| S | 24px | 28px | 24px | 24px | 24px |
+| M | 31px | 35px | 31px (Gothic_28) | 24px (Gothic_24) | 31px |
+| L | 40px | 40px | 36px (Gothic_36) | **32px (Gothic_32)** | 40px |
 
 ---
 
@@ -263,15 +216,16 @@ Sleep Off resets on reboot (experimental flag, not sticky).
 
 ---
 
-## Physical QA Checklist (v5.8-dev12)
+## Physical QA Checklist (v5.8-dev13)
 
 ### Settings screen
 - [ ] Settings layout looks identical with Reader S, Reader M, and Reader L
+- [ ] All four section labels ("Reader size", "Refresh", "Power", "Orientation") appear at the same size and weight
 - [ ] "Reader size" row: selected option shows thick border + bold label (no `*`)
 - [ ] "Refresh" row: shows Fast / Balanced / Clean — no wrapping
 - [ ] "Power" row: shows Responsive / Balanced / Max — no wrapping
 - [ ] "Orientation" row: shows Normal / Strap — no wrapping
-- [ ] Battery %: left-aligned, bar right-aligned, both vertically co-level
+- [ ] Battery %: left-aligned, bar right-aligned, both vertically co-level on same centerline
 - [ ] mV and USB+charging lines visible below battery block
 - [ ] Advanced button visible, navigates to Advanced screen
 
@@ -287,11 +241,20 @@ Sleep Off resets on reboot (experimental flag, not sticky).
 
 ### Drill / Exam Reader size
 - [ ] Drill Reader M → L: question text visibly larger
-- [ ] Drill Reader M → L: option button text visibly larger
+- [ ] Drill Reader M → L: option button text visibly larger (Gothic_32 vs Gothic_28 in fallback case)
 - [ ] Drill Reader S → M → L: each step visibly different
 - [ ] Exam Reader M → L: question text visibly larger
 - [ ] Exam Reader M → L: option button text visibly larger
 - [ ] No option text clipping outside button borders
+- [ ] Serial log shows `Drill fonts: reader=L qPx=40 opt0Px=36` (or 32 for long options)
+
+### Drill post-answer navigation
+- [ ] After selecting answer: result view shown (question + options with thick border on selected/correct)
+- [ ] Tapping bottom half of result view → feedback/explanation page appears
+- [ ] Tapping top half of feedback page → result view returns
+- [ ] No accidental skip to next/previous item when tapping content area post-answer
+- [ ] Footer arrow buttons (← →) still advance to next/previous drill item
+- [ ] Home button returns to Home from both result and feedback views
 
 ### Power / sleep
 - [ ] Changing power profile in Settings persists after reboot
@@ -312,5 +275,5 @@ Sleep Off resets on reboot (experimental flag, not sticky).
 ## Next Steps
 
 1. **Japanese readiness implementation** — UTF-8 sanitizer, CJK word wrap, Japanese font path, generic deck schema (see `docs/PRD_PaperBadge_v0.6.md`)
-2. **Physical QA this checklist** — confirm Reader L is now visibly larger in Drill/Exam
+2. **Physical QA this checklist** — confirm Reader L visibly larger, settings labels consistent, drill post-answer nav correct
 3. Long-term: GT911 touch INT wake research if alternative GPIO mapping found
