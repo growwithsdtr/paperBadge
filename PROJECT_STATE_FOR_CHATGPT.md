@@ -1,6 +1,6 @@
-# PaperBadge Project State — v5.8-dev11 Handoff
+# PaperBadge Project State — v5.8-dev12 Handoff
 
-_Last updated: 2026-06-12_
+_Last updated: 2026-06-13_
 
 ---
 
@@ -15,10 +15,70 @@ _Last updated: 2026-06-12_
 
 ## Firmware
 
-- **Version:** `v5.8-dev11` (`src/main.cpp:20`)
+- **Version:** `v5.8-dev12` (`src/main.cpp:20`)
 - **Build:** SUCCESS — RAM 49.5% · Flash 47.6%
 - **Upload:** SUCCESS — `/dev/cu.usbmodem1101`
 - **Smoke test:** PASS (7/7 boot log checks)
+
+---
+
+## What Changed in v5.8-dev12
+
+### Fix 1: UI chrome fonts fixed — Settings/Advanced/Power Lab stable regardless of Reader size
+
+`renderSettings`, `renderAdvanced`, and `renderPowerLab` now pin `gSettings.fontSizeMode = FontSizeMode::Large`
+at entry and restore it on exit. This means `coachTypography()` inside `drawButton()` always uses:
+
+- `buttonPx = 24` (consistent button text)
+- `titlePx = 40` (consistent header)
+- `metadataPx = 24` (consistent labels)
+
+Previously, Reader L (XL) made `buttonPx = 31`, causing Settings/Advanced/Power Lab button text to
+grow with Reader size, crowding the layout.
+
+### Fix 2: Settings segmented controls — thick-border selected state, no stars
+
+Replaced `drawButton(..., "S *")` pattern with a new `drawSegmentedButton(rect, label, selected)` helper:
+- **Selected**: 3-rect thick rounded border + fake-bold text (draw string twice, offset 1px)
+- **Unselected**: 2-rect normal border, regular text
+- No filled background, no `*` marker
+
+Labels now use `kSegmentedPx = 20` (Gothic 20px bitmap) so full labels fit in 150px segmented buttons:
+
+| Row | Labels |
+|-----|--------|
+| Reader | S / M / L |
+| Refresh | Fast / Balanced / Clean |
+| Power | Responsive / Balanced / Max |
+| Orientation | Normal / Strap |
+
+### Fix 3: Settings battery block vertical alignment
+
+Battery block redesigned for co-alignment of % text and bar:
+- `battBlockH = 54` containing both % text (40px font) and bar (44px tall)
+- Bar top computed as `battBlockY + (battBlockH - barH) / 2` — vertically centered within block
+- % text at `battBlockY + 4` — visually centers with bar
+- mV and USB details immediately below the block
+
+### Fix 4: Drill/Exam Reader L now visibly different from Reader M
+
+Root cause: `coachReaderSizeFor()` auto-downgraded Reader L (XL) → Reader M (Large) for choice-question
+screens. Both sizes rendered at 31px body — indistinguishable.
+
+Fix:
+1. Removed auto-downgrade from `coachReaderSizeFor()` — it now returns the canonical reader size directly.
+2. `applyCoachQuestionFont()`: removed the `> 36 ? 36 :` cap — Reader L now renders question stems at 40px.
+3. `optionTextPxFor()`: caps `largePx` at 36 (safe maximum for option buttons) instead of uncapping.
+
+Result:
+
+| Reader | Question stem | Option text |
+|--------|--------------|-------------|
+| S | 28px | 24px |
+| M | 35px | 31px |
+| L | 40px | 36px (capped) |
+
+Feedback/explanation pages use `applyCoachBodyFont()` → bodyPx (24/31/40px) — unchanged, visibly different.
 
 ---
 
@@ -158,15 +218,23 @@ Power Lab → Home
 
 ## Reader Size
 
-Controls font size in:
+Controls font size in **content/study screens only**:
 - Practice body text
 - Glossary body text
 - Drill question stems and option buttons
 - Exam question stems and option buttons
 - Drill/Exam feedback and explanation pages
 
-Option buttons scale correctly at S/M/L: S→24px, M→31px, L→40px (falls back to next size down if
-label doesn't fit in 2 lines).
+**Does NOT affect** Settings, Advanced, Debug, Power Lab, or other control/diagnostic screens.
+Those screens pin `fontSizeMode = Large` internally so their layout is stable.
+
+Font sizes at each Reader size:
+
+| Reader | Body | Question stem | Option text | Feedback |
+|--------|------|--------------|-------------|---------|
+| S | 24px | 28px | 24px | 24px |
+| M | 31px | 35px | 31px | 31px |
+| L | 40px | 40px | 36px (capped) | 40px |
 
 ---
 
@@ -195,35 +263,54 @@ Sleep Off resets on reboot (experimental flag, not sticky).
 
 ---
 
-## Physical QA Checklist (v5.8-dev11)
+## Physical QA Checklist (v5.8-dev12)
 
-- [ ] Home screen shows 7 buttons (no Debug)
-- [ ] Settings: large battery % visible, thick bar to the right
-- [ ] Settings: mV line and USB+charging line below battery
-- [ ] Settings: Refresh shows Fast / Bal / Clean (no wrapping)
-- [ ] Settings: Power shows Resp / Bal / Max (no wrapping)
-- [ ] Settings "Advanced" button navigates to Advanced screen
-- [ ] Advanced: info text and button grid do not overlap
+### Settings screen
+- [ ] Settings layout looks identical with Reader S, Reader M, and Reader L
+- [ ] "Reader size" row: selected option shows thick border + bold label (no `*`)
+- [ ] "Refresh" row: shows Fast / Balanced / Clean — no wrapping
+- [ ] "Power" row: shows Responsive / Balanced / Max — no wrapping
+- [ ] "Orientation" row: shows Normal / Strap — no wrapping
+- [ ] Battery %: left-aligned, bar right-aligned, both vertically co-level
+- [ ] mV and USB+charging lines visible below battery block
+- [ ] Advanced button visible, navigates to Advanced screen
+
+### Advanced screen
+- [ ] Advanced looks the same with Reader S / M / L
+- [ ] Info text and button grid do not overlap
+
+### Power Lab
+- [ ] Power Lab looks the same with Reader S / M / L
 - [ ] Power Lab page 1: shows `LightNap (this screen): no — control screen`
 - [ ] Power Lab page 4: reachable via Page button tap (cycles 1→2→3→4→1)
 - [ ] Power Lab page 4: shows current firmware version in audit header
+
+### Drill / Exam Reader size
+- [ ] Drill Reader M → L: question text visibly larger
+- [ ] Drill Reader M → L: option button text visibly larger
+- [ ] Drill Reader S → M → L: each step visibly different
+- [ ] Exam Reader M → L: question text visibly larger
+- [ ] Exam Reader M → L: option button text visibly larger
+- [ ] No option text clipping outside button borders
+
+### Power / sleep
 - [ ] Changing power profile in Settings persists after reboot
 - [ ] Changing power profile in Power Lab persists after reboot
-- [ ] Drills Reader L: option buttons visibly larger than Reader M
-- [ ] Drills Reader S: option buttons visibly smaller than Reader M
-- [ ] Exam Reader L: option buttons visibly larger than Reader M
-- [ ] Practice: bottom tap on last page → next item
-- [ ] Practice: top tap on first page → previous item
 - [ ] Badge screen: LightNap activates in Balanced or Max Battery after idle
 - [ ] Settings screen: LightNap NOT eligible (control screen)
 - [ ] Responsive profile: no LightNap even with Sleep mode on
 - [ ] Exam active question: LightNap blocked (answer selection active)
 - [ ] Post-wake: first 400ms ignores taps
 
+### Navigation / regression
+- [ ] Home screen shows 7 buttons (no Debug)
+- [ ] Practice: bottom tap on last page → next item
+- [ ] Practice: top tap on first page → previous item
+
 ---
 
 ## Next Steps
 
 1. **Japanese readiness implementation** — UTF-8 sanitizer, CJK word wrap, Japanese font path, generic deck schema (see `docs/PRD_PaperBadge_v0.6.md`)
-2. **Physical QA this checklist** — especially Reader L option sizing and Power Lab page 4
+2. **Physical QA this checklist** — confirm Reader L is now visibly larger in Drill/Exam
 3. Long-term: GT911 touch INT wake research if alternative GPIO mapping found

@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.8-dev11";
+constexpr const char* kFirmwareVersion = "v5.8-dev12";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -3619,7 +3619,7 @@ void applyCoachBodyFont() {
 void applyCoachQuestionFont() {
   const CoachTypography type = coachTypography();
   const uint8_t questionPx = type.bodyPx >= 34 ? type.bodyPx : static_cast<uint8_t>(type.bodyPx + 4);
-  applyTypographyFont(questionPx > 36 ? 36 : questionPx);
+  applyTypographyFont(questionPx);
 }
 
 void applyCoachButtonFont() {
@@ -3628,6 +3628,30 @@ void applyCoachButtonFont() {
 
 void applyCoachFooterFont() {
   applyTypographyFont(coachTypography().footerPx);
+}
+
+// Fixed font size for segmented control buttons in Settings chrome.
+// Smaller than metadata (24px) so "Responsive" / "Balanced" fit in a 3-way button.
+static constexpr uint8_t kSegmentedPx = 20;
+
+// Draw a segmented control button. Selected state: 3-rect thick border + fake-bold text.
+void drawSegmentedButton(const Rect& rect, const char* label, bool selected) {
+  auto& display = M5.Display;
+  display.drawRoundRect(rect.x, rect.y, rect.w, rect.h, 8, TFT_BLACK);
+  display.drawRoundRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 7, TFT_BLACK);
+  if (selected) {
+    display.drawRoundRect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4, 6, TFT_BLACK);
+  }
+  applyTypographyFont(kSegmentedPx);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.setTextDatum(textdatum_t::middle_center);
+  const int32_t cx = rect.x + rect.w / 2;
+  const int32_t cy = rect.y + rect.h / 2;
+  display.drawString(label, cx, cy);
+  if (selected) {
+    display.drawString(label, cx + 1, cy);
+  }
+  display.setTextDatum(textdatum_t::top_left);
 }
 
 const char* fontTypeName(lgfx::IFont::font_type_t type) {
@@ -4711,13 +4735,13 @@ const char* drillHeaderLabel(const CoachItemView& item) {
 }
 
 FontSizeMode coachReaderSizeFor(const CoachItemView& item) {
-  const FontSizeMode requested = canonicalFontSizeMode(gSettings.fontSizeMode);
-  if (isChoiceQuestionScreen(gScreen, item) && requested == FontSizeMode::XL) {
-    Serial.printf("Choice auto-fit: item=%s from=Reader L to=Reader M reason=question-options-fit screen=%s\n",
-                  coachDisplayId(item), screenName(gScreen));
-    return FontSizeMode::Large;
-  }
-  return requested;
+  // Reader S/M/L applies to content screens — no auto-downgrade for drill/exam.
+  // Option buttons cap their own font at 36px via optionTextPxFor.
+  const FontSizeMode size = canonicalFontSizeMode(gSettings.fontSizeMode);
+  Serial.printf("coachReader: item=%s screen=%s size=%s bodyPx=%u\n",
+                coachDisplayId(item), screenName(gScreen), fontSizeModeName(),
+                coachTypography().bodyPx);
+  return size;
 }
 
 String optionLabelWithLetter(const CoachItemView& item, uint8_t option) {
@@ -4730,7 +4754,7 @@ int32_t optionLineHeight(uint8_t optionPx) {
 
 uint8_t optionTextPxFor(const String& label, int32_t buttonWidth) {
   const CoachTypography type = coachTypography();
-  const uint8_t largePx = type.bodyPx;
+  const uint8_t largePx = type.bodyPx > 36 ? 36 : type.bodyPx;  // cap option text for button safety
   const uint8_t compactPx = type.buttonPx;
   if (largePx <= compactPx) {
     return compactPx;
@@ -6949,85 +6973,97 @@ void renderSettings(const char* refreshReason = "mode switch") {
 
   auto& display = M5.Display;
   const int32_t width = display.width();
+
+  // Snapshot content state before pinning font for UI chrome stability.
+  // Settings layout is fixed regardless of Reader S/M/L.
+  const FontSizeMode activeReaderSize = canonicalFontSizeMode(gSettings.fontSizeMode);
+  const RefreshMode activeRefresh = gSettings.refreshMode;
+  const PowerProfile activePower = gPowerProfile;
+  const OrientationMode activeOrientation = gSettings.orientationMode;
+  const FontSizeMode savedSize = gSettings.fontSizeMode;
+  gSettings.fontSizeMode = FontSizeMode::Large;
+
   display.setTextDatum(textdatum_t::top_left);
   applyCoachTitleFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.drawString("Settings", 32, 26);
 
-  const int32_t bh = 48;   // segmented button height
-  const int32_t bx = 36;   // left margin
-  const int32_t bw = width - 72;  // full-width
-  const int32_t sg = 8;    // gap between segmented buttons
-  const int32_t bw3 = (bw - sg * 2) / 3;  // 3-way width
+  const int32_t bh = 48;
+  const int32_t bx = 36;
+  const int32_t bw = width - 72;
+  const int32_t sg = 8;
+  const int32_t bw3 = (bw - sg * 2) / 3;
   const int32_t bx2_3 = bx + bw3 + sg;
   const int32_t bx3_3 = bx + 2 * (bw3 + sg);
-  const int32_t bw2 = (bw - sg) / 2;      // 2-way width
+  const int32_t bw2 = (bw - sg) / 2;
   const int32_t bx2_2 = bx + bw2 + sg;
 
-  // Battery info — large % on left, thick bar on right, detail lines below
+  // Battery block: % left + bar right, vertically co-aligned
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  const int32_t battLevel = batteryLevelPercent();  // populates cache
+  const int32_t battLevel = batteryLevelPercent();
   const int16_t battMv = gCachedBatteryMv;
+  const int32_t battBlockY = 72;
+  const int32_t battBlockH = 54;
+  const int32_t barH = 44;
+  const int32_t barW = 210;
+  const int32_t barY = battBlockY + (battBlockH - barH) / 2;
   applyCoachTitleFont();
   const String battPctText = (battLevel >= 0) ? String(static_cast<unsigned>(battLevel)) + "%" : "--%";
-  display.drawString(battPctText, bx, 76);
-  const int32_t barH = 66;
-  const int32_t barW = 220;
-  drawBatteryBar(width - bx - barW, 76, barW, barH, battLevel);
+  display.drawString(battPctText, bx, battBlockY + 4);
+  drawBatteryBar(width - bx - barW, barY, barW, barH, battLevel);
   applyCoachMetadataFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
   const String mvText = (battMv > 0) ? String(battMv) + "mV" : "---mV";
-  display.drawString(mvText, bx, 150);
+  const int32_t detailY = battBlockY + battBlockH + 8;
+  display.drawString(mvText, bx, detailY);
   const String usbText = String("USB: ") + usbPowerName(gCachedVbusMv)
                        + "  " + chargingStateName(gCachedChargingState);
-  display.drawString(usbText, bx, 176);
+  display.drawString(usbText, bx, detailY + 26);
 
   // Reader size — S / M / L
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.drawString("Reader size", bx, 210);
-  const FontSizeMode activeReaderSize = canonicalFontSizeMode(gSettings.fontSizeMode);
-  gFontMediumButton = {bx,       236, bw3, bh};
-  gFontLargeButton  = {bx2_3,    236, bw3, bh};
-  gFontXlButton     = {bx3_3,    236, bw3, bh};
+  gFontMediumButton = {bx,    236, bw3, bh};
+  gFontLargeButton  = {bx2_3, 236, bw3, bh};
+  gFontXlButton     = {bx3_3, 236, bw3, bh};
   gFontXxlButton = {};
   gFontHugeButton = {};
-  drawButton(gFontMediumButton, activeReaderSize == FontSizeMode::Medium ? "S *" : "S");
-  drawButton(gFontLargeButton,  activeReaderSize == FontSizeMode::Large  ? "M *" : "M");
-  drawButton(gFontXlButton,     activeReaderSize == FontSizeMode::XL     ? "L *" : "L");
+  drawSegmentedButton(gFontMediumButton, "S", activeReaderSize == FontSizeMode::Medium);
+  drawSegmentedButton(gFontLargeButton,  "M", activeReaderSize == FontSizeMode::Large);
+  drawSegmentedButton(gFontXlButton,     "L", activeReaderSize == FontSizeMode::XL);
 
-  // Refresh — Fast / Bal / Clean
+  // Refresh — Fast / Balanced / Clean
   display.drawString("Refresh", bx, 300);
-  gRefreshFastButton     = {bx,      326, bw3, bh};
-  gRefreshBalancedButton = {bx2_3,   326, bw3, bh};
-  gRefreshCleanButton    = {bx3_3,   326, bw3, bh};
+  gRefreshFastButton     = {bx,    326, bw3, bh};
+  gRefreshBalancedButton = {bx2_3, 326, bw3, bh};
+  gRefreshCleanButton    = {bx3_3, 326, bw3, bh};
   gRefreshModeButton = {};
-  drawButton(gRefreshFastButton,     gSettings.refreshMode == RefreshMode::Fast     ? "Fast *"  : "Fast");
-  drawButton(gRefreshBalancedButton, gSettings.refreshMode == RefreshMode::Balanced ? "Bal *"   : "Bal");
-  drawButton(gRefreshCleanButton,    gSettings.refreshMode == RefreshMode::Clean    ? "Clean *" : "Clean");
+  drawSegmentedButton(gRefreshFastButton,     "Fast",     activeRefresh == RefreshMode::Fast);
+  drawSegmentedButton(gRefreshBalancedButton, "Balanced", activeRefresh == RefreshMode::Balanced);
+  drawSegmentedButton(gRefreshCleanButton,    "Clean",    activeRefresh == RefreshMode::Clean);
 
-  // Power — Resp / Bal / Max
+  // Power — Responsive / Balanced / Max
   display.drawString("Power", bx, 390);
-  gPowerResponsiveButton = {bx,      416, bw3, bh};
-  gPowerBalancedButton   = {bx2_3,   416, bw3, bh};
-  gPowerMaxButton        = {bx3_3,   416, bw3, bh};
+  gPowerResponsiveButton = {bx,    416, bw3, bh};
+  gPowerBalancedButton   = {bx2_3, 416, bw3, bh};
+  gPowerMaxButton        = {bx3_3, 416, bw3, bh};
   gPowerProfileButton = {};
   gBadgeSleepButton = {};
   gPowerModeButton = {};
-  drawButton(gPowerResponsiveButton, gPowerProfile == PowerProfile::Balanced   ? "Resp *" : "Resp");
-  drawButton(gPowerBalancedButton,   gPowerProfile == PowerProfile::Aggressive ? "Bal *"  : "Bal");
-  drawButton(gPowerMaxButton,        gPowerProfile == PowerProfile::BadgeMax   ? "Max *"  : "Max");
+  drawSegmentedButton(gPowerResponsiveButton, "Responsive", activePower == PowerProfile::Balanced);
+  drawSegmentedButton(gPowerBalancedButton,   "Balanced",   activePower == PowerProfile::Aggressive);
+  drawSegmentedButton(gPowerMaxButton,        "Max",        activePower == PowerProfile::BadgeMax);
 
-  // Badge orientation — Normal / Strap
-  display.drawString("Badge orientation", bx, 480);
-  gOrientationButton     = {bx,      506, bw2, bh};
-  gOrientationStrapButton = {bx2_2,  506, bw2, bh};
+  // Orientation — Normal / Strap
+  display.drawString("Orientation", bx, 480);
+  gOrientationButton      = {bx,    506, bw2, bh};
+  gOrientationStrapButton = {bx2_2, 506, bw2, bh};
   gLanguageAutoButton = {};
   gLanguageEnglishButton = {};
   gLanguageJapaneseButton = {};
   gFontStyleButton = {};
-  drawButton(gOrientationButton,
-             gSettings.orientationMode == OrientationMode::Handheld ? "Normal *" : "Normal");
-  drawButton(gOrientationStrapButton,
-             gSettings.orientationMode == OrientationMode::Strap ? "Strap *" : "Strap");
+  drawSegmentedButton(gOrientationButton,      "Normal", activeOrientation == OrientationMode::Handheld);
+  drawSegmentedButton(gOrientationStrapButton, "Strap",  activeOrientation == OrientationMode::Strap);
 
   // Advanced button
   gAdvancedButton = {bx, 570, bw, 58};
@@ -7037,6 +7073,7 @@ void renderSettings(const char* refreshReason = "mode switch") {
   gHomeButton = {bx, display.height() - 76, bw, 60};
   drawButton(gHomeButton, "", IconType::Home);
 
+  gSettings.fontSizeMode = savedSize;
   finishDisplayRefresh();
   logTypographySettings("settings screen");
   logPowerAudit("settings screen");
@@ -7155,6 +7192,9 @@ void renderAdvanced(const char* refreshReason = "mode switch") {
   applyAppRotation();
   prepareFullRefresh(refreshReason, true);
 
+  const FontSizeMode savedSize = gSettings.fontSizeMode;
+  gSettings.fontSizeMode = FontSizeMode::Large;
+
   auto& display = M5.Display;
   display.setTextDatum(textdatum_t::top_left);
   applyCoachMetadataFont();
@@ -7223,6 +7263,7 @@ void renderAdvanced(const char* refreshReason = "mode switch") {
   drawButton(gBadgeSleepButton, String("Sleep: ") + badgeSleepModeName());
   drawButton(gHomeButton, "", IconType::Home);
 
+  gSettings.fontSizeMode = savedSize;
   finishDisplayRefresh();
   logTypographySettings("advanced screen");
   logPowerAudit("advanced screen");
@@ -7250,6 +7291,9 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
   gScreen = Screen::PowerLab;
   applyAppRotation();
   prepareFullRefresh(refreshReason, true);
+
+  const FontSizeMode savedSize = gSettings.fontSizeMode;
+  gSettings.fontSizeMode = FontSizeMode::Large;
 
   auto& display = M5.Display;
   constexpr uint8_t kPowerLabPageCount = 4;
@@ -7404,6 +7448,7 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
   drawButton(gFilterButton, "Page");
   drawButton(gHomeButton, "", IconType::Home);
 
+  gSettings.fontSizeMode = savedSize;
   finishDisplayRefresh();
   logPowerAudit("power lab screen");
   Serial.printf("Power Lab shown: page=%u/%u profile=%s stage=%s scaleCount=%u lightNaps=%u\n",
