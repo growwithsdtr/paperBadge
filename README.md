@@ -10,9 +10,9 @@ PaperBadge is the hardware shell for the M5PaperS3 e-ink device. PaperCoach is t
 
 The current embedded PaperCoach content pack is senior AI/Product Manager interview practice. Future content packs should be able to support offline Japanese N3-style grammar, vocabulary, and kanji drills, including weak-area tracking and SRS-like review, without requiring Wi-Fi, cloud calls, or live AI services.
 
-It boots into a static conference badge and exposes a normal-orientation Home menu with Badge, Practice, Drills, Exam, Glossary, Results, Settings, and Debug.
+It boots into a static conference badge and exposes a normal-orientation Home menu with Badge, Practice, Drills, Exam, Glossary, Results, and Settings. Diagnostic tools are under Settings → Advanced.
 
-Current firmware version in source: `v5.8-dev16`.
+Current firmware version in source: `v5.8-dev17`.
 
 ## Quick Commands
 
@@ -39,11 +39,11 @@ Default upload and monitor port: `/dev/cu.usbmodem1101` (macOS — use `cu.` pre
 ## PaperCoach Modes
 
 - Practice: choose Must cards, All cards, Continue last card, or Help/Legend; read cards with content taps for page turns and footer arrows for previous/next card.
-- Drills: answer MCQ-style drill items; question and choices render together when they fit, and split choice pages repeat question context.
+- Drills: answer MCQ-style drill items; question and choices render together when they fit, and split choice pages repeat question context. After answering, all result pages are reachable before entering feedback.
 - Exam: run a 5- or 10-question mixed exam with no immediate feedback; summary appears at the end.
 - Glossary: category grid for AI/RAG, Evals, Metrics, Product, and Interview terms.
 - Results: paginated e-ink summary, category bars, weakest areas, recent misses, and recommended next practice.
-- Debug: render trace export, deck export, visual QA, font lab, and power audit.
+- Settings: reader size, refresh mode, power profile, orientation. Advanced (under Settings) contains typography lab, render trace export, deck export, visual QA, font lab, and power diagnostics.
 
 ## Current UX Decisions
 
@@ -57,7 +57,7 @@ Default upload and monitor port: `/dev/cu.usbmodem1101` (macOS — use `cu.` pre
 
 ## Badge And Power Behavior
 
-Badge mode is static by default and uses e-ink as intended: render once, hold the image, and avoid redraws unless the user acts. Wi-Fi and Bluetooth are shut off at boot and during power policy refreshes; speaker output is stopped; IMU polling is disabled in `M5.config()`. Settings includes `Badge sleep: Off / Light / Deep experiment`; Light uses short timer-based light sleep after static Badge idle, and Deep experiment is blocked until PaperS3 touch wake is physically verified.
+Badge mode is static by default and uses e-ink as intended: render once, hold the image, and avoid redraws unless the user acts. Wi-Fi and Bluetooth are shut off at boot and during power policy refreshes; speaker output is stopped; IMU polling is disabled in `M5.config()`. Sleep controls are under Settings → Advanced → Power Lab; Light uses short timer-based light sleep after static Badge idle, and Deep experiment is blocked until PaperS3 touch wake is physically verified.
 
 ## Known Limitations
 
@@ -146,7 +146,7 @@ pio run
 ## Upload
 
 ```bash
-pio run --target upload --upload-port /dev/tty.usbmodem1101
+pio run --target upload --upload-port /dev/cu.usbmodem1101
 ```
 
 The default upload speed is `1500000`. If upload is unstable through a cable or hub, change `upload_speed` in `platformio.ini` to `921600` and retry.
@@ -154,7 +154,7 @@ The default upload speed is `1500000`. If upload is unstable through a cable or 
 ## Monitor
 
 ```bash
-pio device monitor --port /dev/tty.usbmodem1101
+pio device monitor --port /dev/cu.usbmodem1101
 ```
 
 The serial monitor prints board/display/flash/PSRAM details, whether the SD card mounted, whether `/paperbadge/badge.json`, profile, and QR assets were found, JSON parse status, embedded fallback sizes, and whether the public screen used SD dynamic mode or embedded fallback mode.
@@ -263,7 +263,7 @@ Buttons use an invisible `10 px` hitbox expansion around their visible bounds. S
 
 ## Home/Menu
 
-v2.2 Home/Menu entries:
+Current Home/Menu entries:
 
 - Badge
 - Practice
@@ -272,13 +272,12 @@ v2.2 Home/Menu entries:
 - Glossary
 - Results
 - Settings
-- Debug
 
-Practice uses the embedded or SD deck and supports page-based study. Drills contains All Drills plus current deck-specific categories. Exam runs 5- or 10-question mixed sessions without immediate feedback. Results shows RAM/SD-backed session analytics. There is no spaced repetition, RTC scheduling, Wi-Fi, Bluetooth, or AI/API call behavior.
+Practice uses the embedded or SD deck and supports page-based study. Drills contains All Drills plus current deck-specific categories. Exam runs 5- or 10-question mixed sessions without immediate feedback. Results shows RAM/SD-backed session analytics. Diagnostic tools (render trace, deck export, visual QA, font lab, power audit) are under Settings → Advanced. There is no spaced repetition, RTC scheduling, Wi-Fi, Bluetooth, or AI/API call behavior.
 
 ## Visual QA
 
-Debug -> Visual QA shows the current reader size/style, refresh mode, power mode, whether `/paperbadge/fonts/reader_mid.vlw` was detected, and a short checklist for physical screenshots:
+Settings → Advanced → Visual QA shows the current reader size/style, refresh mode, power mode, whether `/paperbadge/fonts/reader_mid.vlw` was detected, and a short checklist for physical screenshots:
 
 - Practice first page
 - Practice long answer page

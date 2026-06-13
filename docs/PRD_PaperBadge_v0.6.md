@@ -19,7 +19,7 @@ first-class concern.
 
 ---
 
-## Current Behavior (v5.8-dev16)
+## Current Behavior (v5.8-dev17)
 
 ### Badge Mode
 
@@ -45,7 +45,7 @@ Content is organized into categories. Practice cards include a Must Master subse
 
 | Screen | Purpose |
 |--------|---------|
-| Home | Hub: 7 navigation buttons |
+| Home | Hub: 7 navigation buttons (Badge, Practice, Drills, Exam, Glossary, Results, Settings) |
 | Practice / InterviewPractice | Multi-page practice card reader |
 | Drills / DrillsMenu | MCQ drill selection and answer flow |
 | Exam | 5- or 10-question timed exam with scoring |
@@ -111,39 +111,42 @@ LightNap is blocked (never entered) when:
 - An exam question or MCQ drill option is awaiting a tap (answer-selection guard)
 - Input lock is active (including the 400ms post-wake debounce window)
 
-### Option Box Height — Tier-Based, Shared, Centered (v5.8-dev16)
+### Option Box Height — Tier-Based, Shared, Centered (v5.8-dev16, unchanged in dev17)
 
 All answer option boxes on a single question screen share the same height tier (1-line / 2-line /
 3-line). The tier is determined by the most-wrapped option. Text is vertically centered in each box.
 `sharedOptionButtonHeight` applies in all paths: combined, options-only, result view, and Exam.
 
-### Drill Post-Answer Navigation (v5.8-dev16)
+### Drill Post-Answer Navigation (v5.8-dev17)
 
 After a drill answer is selected, feedback is shown immediately. The state machine:
 
 1. **Feedback page** — shown immediately after answer tap. Shows "Selected", "Best", "Why this
-   is best". Paginates if explanation is long. Colon-label and hyphen-list patterns break to new lines.
-2. **Result view** — shows question + all options with selected/correct highlighting. May paginate
+   is best". Paginates if explanation is long.
+2. **Result view** — shows question + all options with selected/correct highlighting. Paginates
    using `gCoachStage` with the same fit-aware plan as pre-answer.
 
 Transitions:
 - Option box tap (before answer): selects answer → **immediately goes to feedback (page 0)**
-- Top-half tap on feedback page 1 → back to result view (gCoachStage reset to 0)
+- Top-half tap on feedback page 1 → back to result view at `gDrillLastResultPage`
 - Top-half tap on feedback page 2+ → previous feedback page
 - Top-half tap on result view (page 0) → no-op (does NOT navigate to previous item)
 - Top-half tap on result view (page 1+) → previous result page
-- Bottom-half tap on result view → feedback page 0
+- Bottom-half tap on result view (not last page) → advance to next result page
+- Bottom-half tap on result view (last page) → save `gDrillLastResultPage`, enter feedback at page 0
 - Bottom-half tap on feedback (last page) → next drill item
 - Footer arrow buttons (← →): advance to next/previous drill item from any state
 
-### Feedback and Body Text Formatting (v5.8-dev16)
+### Feedback and Body Text Formatting (v5.8-dev17)
 
-`formatFeedbackBody(text)` breaks feedback and practice body text at clause boundaries:
+`formatFeedbackBody(text)` breaks feedback and practice body text at structural boundaries only:
 - Numbered list items (`1. ` / `1) `) start on their own line
 - Semicolon-separated clauses (2+ `; ` → one clause per line)
-- Colon-label patterns (2+ `Label: ` → each label on its own line; skips URLs)
-- Hyphen-list patterns (2+ ` - ` → each item on its own line)
-- Prose, short phrases, decimal numbers, and URLs are unaffected
+- Colon-label patterns: only fires for known labels (`Q`, `A`, `Question`, `Answer`, `Problem`,
+  `Fix`, `Result`, `Selected`, `Best`, `Why`, `Risk`, `Action`, `Example`, `Note`) with 2+ present.
+  Random prose labels (`outcome:`, `output:`) are not split.
+- Hyphen-list splitting removed: `A - B - C` prose stays on one line.
+- Prose, short phrases, decimal numbers, and URLs are unaffected.
 
 Applies to: drill feedback sections, practice card body sections (Answer, Suggested response,
 Explanation, Anchor, Follow-up), and hostile follow-up answer stages in `buildCoachReaderStages`.

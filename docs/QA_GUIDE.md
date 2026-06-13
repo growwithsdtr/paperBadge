@@ -37,10 +37,10 @@ Port: `/dev/cu.usbmodem1101` (macOS). Use `cu.` prefix, not `tty.`.
 - Glossary category grid.
 - Glossary term page.
 - Results empty state and populated state after at least one answer.
-- Settings power and Badge sleep controls.
-- Debug Power Audit screen.
+- Settings power controls.
+- Settings → Advanced → Power Lab / Power Audit.
 
-## Photo Batches (v5.8-dev16)
+## Photo Batches (v5.8-dev17)
 
 10 photos per QA pass:
 
@@ -52,10 +52,11 @@ Port: `/dev/cu.usbmodem1101` (macOS). Use `cu.` prefix, not `tty.`.
 5. Metric Precision question/options at Reader M — confirm option boxes same height.
 6. A longer Exam question, plus options page if split.
 7. Drill feedback page with Selected / Best / Why this is best blocks.
-   Confirm colon-label patterns (e.g. "Question: ... Answer: ...") break to separate lines.
+   Confirm known colon-label patterns (e.g. "Question: ... Answer: ...") break to separate lines.
+   Confirm prose with spaced dashes ("risk - signal - stop") stays on one line (not split).
 8. Hostile Follow-up drill — confirm "Suggested response" label visible, body readable.
 9. Results page after 3+ answers — confirm Summary+Categories combined if ≤3 categories.
-10. Debug Power Audit.
+10. Settings → Advanced → Power Lab / Power Audit.
 
 ## Render Trace
 
@@ -65,11 +66,11 @@ Render traces append to:
 /papercoach/debug/render_trace.txt
 ```
 
-Use Debug -> Dump render trace to write the latest trace explicitly. Each trace should include screen/mode, item/card id, stage, page index/total, visible excerpt, line count, wrapped line range, font, reader size, split-layout flag, clean-refresh flag, truncation status, and warning.
+Use Settings → Advanced → Dump render trace to write the latest trace explicitly. Each trace should include screen/mode, item/card id, stage, page index/total, visible excerpt, line count, wrapped line range, font, reader size, split-layout flag, clean-refresh flag, truncation status, and warning.
 
 ## Export Deck Dump
 
-Use Debug -> Export deck text. If SD is mounted, firmware writes:
+Use Settings → Advanced → Export deck text. If SD is mounted, firmware writes:
 
 ```text
 /papercoach/debug/embedded_deck_dump.md

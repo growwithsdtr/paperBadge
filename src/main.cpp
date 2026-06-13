@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.8-dev16";
+constexpr const char* kFirmwareVersion = "v5.8-dev17";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -602,7 +602,8 @@ size_t gCoachIndex = 0;
 size_t gLastPracticeIndex = 0;
 uint8_t gCoachStage = 0;
 int8_t gSelectedOption = -1;
-bool gDrillShowFeedback = false;  // true = show feedback page; false = show result/options state
+bool gDrillShowFeedback = false;    // true = show feedback page; false = show result/options state
+uint8_t gDrillLastResultPage = 0;  // result page to restore when returning from feedback
 uint8_t gMockStep = 0;
 uint8_t gBottomLeftTapCount = 0;
 uint32_t gLastBottomLeftTapMs = 0;
@@ -2874,6 +2875,7 @@ void startCoachMode(Screen screen) {
   gCoachStage = 0;
   gSelectedOption = -1;
   gDrillShowFeedback = false;
+  gDrillLastResultPage = 0;
   gMockStep = 0;
   gCoachNeedsCleanEntryRefresh = true;
   Serial.printf("Coach mode entry: screen=%s cleanRefresh=queued\n", screenName(screen));
@@ -2912,6 +2914,7 @@ void nextCoachItem() {
   gCoachStage = 0;
   gSelectedOption = -1;
   gDrillShowFeedback = false;
+  gDrillLastResultPage = 0;
   // Always clean refresh on card change in Practice to prevent ghosting (v5.8-dev2)
   if (leavingFeedback || gScreen == Screen::InterviewPractice) {
     gCoachNeedsCleanEntryRefresh = true;
@@ -2936,6 +2939,7 @@ void previousCoachItem() {
   gCoachStage = 0;
   gSelectedOption = -1;
   gDrillShowFeedback = false;
+  gDrillLastResultPage = 0;
   // Always clean refresh on card change in Practice to prevent ghosting (v5.8-dev2)
   if (leavingFeedback || gScreen == Screen::InterviewPractice) {
     gCoachNeedsCleanEntryRefresh = true;
@@ -5294,15 +5298,16 @@ void appendGlossarySection(std::vector<GlossaryRenderLine>& lines, const char* l
   appendGlossaryWrappedBody(lines, sectionBody, width);
 }
 
-// Lightweight formatter for feedback/explanation body text on e-ink.
-// Inserts hard line breaks at numbered list items (1. / 1)) and at semicolons (2+ occurrences).
-// Does not modify prose, short phrases, or decimal numbers.
+// Conservative formatter for feedback/explanation body text on e-ink.
+// Inserts hard line breaks only for clear structural patterns; leaves prose unchanged.
 String formatFeedbackBody(const String& raw) {
   String text = raw;
   text.trim();
   if (text.length() < 10) return text;
 
-  // Numbered list items: "N. " or "N) " preceded by whitespace/start of string.
+  // Numbered list items: "N. " or "N) " preceded by whitespace or start of string.
+  // Example: "1. First 2. Second" → "1. First\n2. Second"
+  // Skips decimal numbers: "3.14" is not at a word break.
   {
     String result;
     const int len = (int)text.length();
@@ -5324,6 +5329,7 @@ String formatFeedbackBody(const String& raw) {
   }
 
   // Semicolon clause splitting: if 2+ "; " occurrences, render each clause on its own line.
+  // Example: "a; b; c" → "a\nb\nc"
   {
     int count = 0;
     int pos = 0;
@@ -5342,24 +5348,37 @@ String formatFeedbackBody(const String& raw) {
     }
   }
 
-  // Colon-label splitting: "Label: text Label2: text" splits before each label word.
-  // Condition: 2+ label-colon patterns; skips URLs (contain //) and single-colon prose.
+  // Colon-label splitting: restricted to a known allowlist of interview/feedback labels.
+  // Only fires when 2+ recognized labels appear in sequence; skips everything else.
+  // URLs are safe: "http://..." uses "://" not ": " so they never match the outer condition.
+  // Example: "Question: foo Answer: bar" → "Question: foo\nAnswer: bar"
+  // Non-example: "outcome: low output: high" → unchanged (not in allowlist)
   {
+    static const char* const kAllowedLabels[] = {
+      "Q", "A", "Question", "Answer", "Problem", "Fix", "Result",
+      "Selected", "Best", "Why", "Risk", "Action", "Example", "Note", nullptr
+    };
     struct ColonPos { int labelStart = 0; };
-    static constexpr int kMaxLabels = 12;
-    ColonPos labels[kMaxLabels];
+    static constexpr int kMaxColonLabels = 14;
+    ColonPos labels[kMaxColonLabels];
     int labelCount = 0;
     const int tlen = (int)text.length();
-    for (int i = 1; i < tlen - 1 && labelCount < kMaxLabels; ++i) {
+    for (int i = 1; i < tlen - 1 && labelCount < kMaxColonLabels; ++i) {
       if (text[i] == ':' && text[i + 1] == ' ') {
-        // Skip URLs: "://" pattern.
-        if (i + 2 < tlen && text[i + 1] == '/' && text[i + 2] == '/') continue;
-        if (i >= 1 && text[i - 1] == '/') continue;
-        // Find label word start (non-space, non-newline chars before colon).
+        // Find label word start (non-space, non-newline chars immediately before colon).
         int ls = i - 1;
         while (ls > 0 && text[ls - 1] != ' ' && text[ls - 1] != '\n') --ls;
         const int labelLen = i - ls;
-        if (labelLen >= 1 && labelLen <= 25) {
+        // Check against allowlist only.
+        bool inList = false;
+        for (int k = 0; kAllowedLabels[k]; ++k) {
+          if ((int)strlen(kAllowedLabels[k]) == labelLen &&
+              strncmp(text.c_str() + ls, kAllowedLabels[k], labelLen) == 0) {
+            inList = true;
+            break;
+          }
+        }
+        if (inList) {
           labels[labelCount].labelStart = ls;
           ++labelCount;
         }
@@ -5370,7 +5389,7 @@ String formatFeedbackBody(const String& raw) {
       int prev = 0;
       for (int j = 0; j < labelCount; ++j) {
         const int ls = labels[j].labelStart;
-        if (ls <= 0) continue;  // skip label at very start of text
+        if (ls <= 0) continue;            // label is at very start of text — no newline before it
         if (text[ls - 1] == '\n') continue;  // already on its own line
         result += text.substring(prev, ls);
         result += '\n';
@@ -5381,25 +5400,12 @@ String formatFeedbackBody(const String& raw) {
     }
   }
 
-  // Hyphen list splitting: " - item" pattern repeated 2+ times → split at each.
-  // Avoids breaking compound words or ranges; only fires on clear list-like usage.
-  {
-    int hyphenCount = 0;
-    int pos = 0;
-    while ((pos = text.indexOf(" - ", pos)) >= 0) { ++hyphenCount; pos += 3; }
-    if (hyphenCount >= 2) {
-      String result;
-      int start = 0;
-      int found;
-      while ((found = text.indexOf(" - ", start)) >= 0) {
-        result += text.substring(start, found);
-        result += '\n';
-        start = found + 1;  // keep "- item" on the new line
-      }
-      result += text.substring(start);
-      text = result;
-    }
-  }
+  // Hyphen list splitting: only fires on "\n- item" patterns already in the text.
+  // Does NOT split "A - B - C" prose or em-dash-converted "risk - signal - stop" sentences.
+  // If the text already has newline-prefixed hyphens they are already on separate lines.
+  // Example: "\n- point1\n- point2" stays unchanged.
+  // Non-example: "risk - strength - signal" → unchanged.
+  // (No code action needed — the rule is a guard against re-splitting already-formatted text.)
 
   return text;
 }
@@ -8820,6 +8826,7 @@ void handleTouch() {
           gSelectedOption = option;
           gDrillShowFeedback = true;  // immediately show feedback page on first tap
           gCoachStage = 0;
+          gDrillLastResultPage = 0;   // no result page viewed yet
           gCoachNeedsCleanEntryRefresh = true;
           Serial.printf("Drill answer selected: item=%s selected=%c best=%c -> feedback cleanRefresh=queued\n",
                         coachDisplayId(item), static_cast<char>('A' + option),
@@ -8835,41 +8842,64 @@ void handleTouch() {
 
     if (gReaderContentRect.contains(tapX, tapY)) {
       // Drill post-answer state machine (gSelectedOption >= 0):
-      //   States: result view (!gDrillShowFeedback) ↔ feedback view (gDrillShowFeedback)
-      //   Result view:   top-half → prev result page (or no-op); bottom-half → feedback
-      //   Feedback view: top-half → prev feedback page, or back to result view at page 0;
-      //                  bottom-half → next feedback page, or next drill item on last page
-      //   Footer arrows navigate between drill items regardless of view state.
+      //
+      // Two views toggle via gDrillShowFeedback:
+      //   Result view  (!gDrillShowFeedback): question + options with selected/correct borders.
+      //   Feedback view (gDrillShowFeedback): explanation/feedback pages.
+      //
+      // Result view taps:
+      //   Top-half    → prev result page if gCoachStage > 0; otherwise no-op.
+      //   Bottom-half → next result page if one exists; otherwise enter feedback at page 0.
+      //
+      // Feedback view taps:
+      //   Top-half    → prev feedback page if gCoachStage > 0; otherwise return to result view
+      //                 at the last result page the user reached (gDrillLastResultPage).
+      //   Bottom-half → next feedback page, or next drill item on last page.
+      //
+      // Footer ← → always navigate between drill items from any state.
       if (isOptionDrillScreen(gScreen, item) && gSelectedOption >= 0) {
         if (!gDrillShowFeedback) {
-          // Result view.
+          // Result view: compute page count using the same plan as the draw path.
+          const PracticeLayout rl = practiceLayoutFor(canonicalFontSizeMode(gSettings.fontSizeMode));
+          applyCoachButtonFont();
+          const DrillPagePlan rplan = buildDrillPagePlan(item, rl);
+          const uint8_t resultPages = rplan.totalPages;
           if (tapY >= gReaderContentRect.y + gReaderContentRect.h / 2) {
-            // Bottom-half: enter feedback at page 0.
-            markHitTarget("drill result -> feedback", tapX, tapY);
-            gDrillShowFeedback = true;
-            gCoachStage = 0;
-            gCoachNeedsCleanEntryRefresh = true;
-            renderCoachScreen();
+            if (gCoachStage + 1 < resultPages) {
+              // Bottom-half: advance to next result page.
+              markHitTarget("drill result next page", tapX, tapY);
+              ++gCoachStage;
+              renderCoachScreen();
+            } else {
+              // Bottom-half on last result page: enter feedback at page 0.
+              markHitTarget("drill result -> feedback", tapX, tapY);
+              gDrillLastResultPage = gCoachStage;
+              gDrillShowFeedback = true;
+              gCoachStage = 0;
+              gCoachNeedsCleanEntryRefresh = true;
+              renderCoachScreen();
+            }
           } else if (gCoachStage > 0) {
             // Top-half on a later result page: go to previous result page.
             markHitTarget("drill result prev page", tapX, tapY);
             --gCoachStage;
             renderCoachScreen();
           } else {
-            // Top-half on first result page: no-op (do not skip to previous item).
+            // Top-half on first result page: no-op (footer ← navigates to previous item).
             Serial.println("drill result: top-half at page 0, no action");
           }
         } else {
           // Feedback view.
           if (tapY < gReaderContentRect.y + gReaderContentRect.h / 2) {
-            // Top-half: go to previous feedback page, or back to result view.
+            // Top-half: go to previous feedback page, or return to result view.
             markHitTarget("drill feedback nav up", tapX, tapY);
             if (gCoachStage > 0) {
               --gCoachStage;
               renderCoachScreen();
             } else {
+              // Return to result view at the last page the user had viewed.
               gDrillShowFeedback = false;
-              gCoachStage = 0;
+              gCoachStage = gDrillLastResultPage;
               gCoachNeedsCleanEntryRefresh = true;
               renderCoachScreen();
             }

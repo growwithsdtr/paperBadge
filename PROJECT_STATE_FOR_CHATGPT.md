@@ -1,4 +1,4 @@
-# PaperBadge Project State — v5.8-dev16 Handoff
+# PaperBadge Project State — v5.8-dev17 Handoff
 
 _Last updated: 2026-06-13_
 
@@ -15,10 +15,80 @@ _Last updated: 2026-06-13_
 
 ## Firmware
 
-- **Version:** `v5.8-dev16` (`src/main.cpp:20`)
-- **Build:** SUCCESS — RAM 49.5% · Flash 47.7%
-- **Upload:** SUCCESS — `/dev/cu.usbmodem1101`
-- **Smoke test:** PASS (7/7 boot log checks)
+- **Version:** `v5.8-dev17` (`src/main.cpp:20`)
+- **Build:** pending
+- **Upload:** pending
+- **Smoke test:** pending
+
+---
+
+## What Changed in v5.8-dev17
+
+### Fix 1: Split drill result pages are now all reachable
+
+**Problem:** In the post-answer result view, the bottom-half tap always jumped straight to
+feedback regardless of whether more result pages existed. On a 2-page split drill, result page 1
+was unreachable.
+
+**Fix:**
+- Result view bottom-half: if `gCoachStage + 1 < resultPages`, advance to next result page.
+  Only enters feedback on the *last* result page.
+- Result view top-half: unchanged — goes to prev result page or no-op on page 0.
+- Feedback top-half returning to result view: restores `gDrillLastResultPage` (the page the user
+  was on when they entered feedback) instead of always resetting to page 0.
+- Added `gDrillLastResultPage` global; reset on item change and option selection.
+- State machine comment block updated to document all tap behaviors.
+- Result page count in tap handler now uses `buildDrillPagePlan` directly (same source as draw).
+
+### Fix 2: Conservative feedback formatting — colon-label and hyphen-list
+
+**Problem:** `formatFeedbackBody` split on any `Word: value` pattern, including prose like
+`outcome: low output: high`. It also split `A - B - C` prose on spaced dashes.
+
+**Fix:**
+- Colon-label splitting now requires the label to match a known allowlist:
+  `Q`, `A`, `Question`, `Answer`, `Problem`, `Fix`, `Result`, `Selected`, `Best`, `Why`,
+  `Risk`, `Action`, `Example`, `Note`.
+- Random lowercase prose labels (`outcome:`, `output:`, `signal:`, etc.) are no longer split.
+- Hyphen-list splitting removed: the old ` - ` prose splitting is gone. Text like
+  `"risk - signal - stop"` stays on one line. Newline-prefixed hyphens (`\n- item`) are already
+  on separate lines and need no action.
+- Numbered list and semicolon splitting unchanged.
+
+### Fix 3: Docs updated to v5.8-dev17
+
+`PROJECT_STATE_FOR_CHATGPT.md`, `docs/PRD_PaperBadge_v0.6.md`, `docs/QA_GUIDE.md`,
+and `README.md` updated:
+- Version bump to v5.8-dev17.
+- Debug removed as a top-level Home menu item; diagnostics now live under Settings → Advanced.
+- Port reference confirmed `/dev/cu.usbmodem1101` throughout.
+- Sleep controls path updated to Settings → Advanced → Power Lab.
+- QA checklist references updated (Debug → Settings → Advanced).
+
+---
+
+## Known Limitations
+
+- **Japanese support:** Not yet implemented. Font assets, deck format, and SRS logic are
+  planned for a future milestone after v5.8.
+- **Deep sleep:** Remains blocked — PaperS3 touch wake is not physically verified.
+- **Per-option explanations:** Not embedded; drill feedback shows shared explanation only.
+- **Interview mode freeze:** Pending final physical QA before freezing.
+
+---
+
+## Drill State Machine — summary (v5.8-dev17)
+
+After an option is tapped:
+1. `gSelectedOption = option`, `gDrillShowFeedback = true`, `gCoachStage = 0`, `gDrillLastResultPage = 0` → feedback shown.
+2. Feedback top-half on page 0: return to result view at `gDrillLastResultPage`.
+3. Feedback top-half on page N>0: go to prev feedback page.
+4. Feedback bottom-half (not last page): advance feedback page.
+5. Feedback bottom-half (last page): next drill item.
+6. Result view bottom-half (not last page): advance to next result page.
+7. Result view bottom-half (last page): save `gDrillLastResultPage`, enter feedback at page 0.
+8. Result view top-half: prev result page, or no-op on page 0.
+9. Footer ← →: always move between items from any state.
 
 ---
 
@@ -155,15 +225,7 @@ Key layout constants:
 
 ---
 
-## Drill State Machine — summary
-
-After an option is tapped:
-1. `gSelectedOption = option`, `gDrillShowFeedback = true`, `gCoachStage = 0` → feedback shown.
-2. Feedback top-half: prev feedback page OR back to result view (gCoachStage=0 reset).
-3. Result view bottom-half: enter feedback at page 0.
-4. Result view top-half: prev result page, or no-op on page 0.
-5. Feedback bottom-half (last page): next drill item.
-6. Footer ← →: always move between items.
+## Drill State Machine — summary (superseded by v5.8-dev17 section above)
 
 ---
 
