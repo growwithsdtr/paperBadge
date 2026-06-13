@@ -16,9 +16,9 @@ _Last updated: 2026-06-13_
 ## Firmware
 
 - **Version:** `v5.8-dev17` (`src/main.cpp:20`)
-- **Build:** pending
-- **Upload:** pending
-- **Smoke test:** pending
+- **Build:** SUCCESS — RAM 49.5% · Flash 47.7%
+- **Upload:** SUCCESS — `/dev/cu.usbmodem1101`
+- **Smoke test:** PASS (7/7 boot log checks)
 
 ---
 
