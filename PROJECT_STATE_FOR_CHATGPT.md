@@ -1,4 +1,4 @@
-# PaperBadge Project State — v5.8-dev13 Handoff
+# PaperBadge Project State — v5.8-dev14 Handoff
 
 _Last updated: 2026-06-13_
 
@@ -15,10 +15,66 @@ _Last updated: 2026-06-13_
 
 ## Firmware
 
-- **Version:** `v5.8-dev13` (`src/main.cpp:20`)
+- **Version:** `v5.8-dev14` (`src/main.cpp:20`)
 - **Build:** SUCCESS — RAM 49.5% · Flash 47.7%
 - **Upload:** SUCCESS — `/dev/cu.usbmodem1101`
 - **Smoke test:** PASS (7/7 boot log checks)
+
+---
+
+## What Changed in v5.8-dev14
+
+### Fix 1: Drill/Exam option text now truly scales — 32px fallback eliminated
+
+**Root cause of v5.8-dev13 failure:** `optionTextPxFor` capped Reader L at 36px as its "large"
+size. When a label overflowed 2 lines at 36px it returned 32px. For Gothic: gothic_32 vs M's
+gothic_28 is visually indistinguishable. For Sans (High Contrast): 36px → FreeSansBold18pt7b,
+the same font as M at 31px. Users saw no difference between M and L option text.
+
+**Fix:** Removed the 36px cap. `preferredPx = type.bodyPx` (40 for L, 31 for M, 24 for S).
+Overflow logic for Reader L:
+1. Try 40px (→ FreeSansBold24pt7b / gothic_36). If ≤2 lines → return 40px.
+2. If >2 lines at 40px, try 36px. If ≤2 lines → return 36px.
+3. If >2 lines at 36px → return 36px anyway (allow 3 lines, button grows). Never 32px.
+
+Updated option font table:
+
+| Reader | preferredPx | Overflow | Font (fits 1-2 lines) | Font (3 lines) |
+|--------|-------------|----------|----------------------|----------------|
+| S | 24 | — | Gothic_24 / SansBold12pt | n/a |
+| M | 31 | 24px | Gothic_28 / SansBold18pt | Gothic_24 |
+| L | 40 | 36px | Gothic_36 / SansBold24pt | Gothic_36 |
+
+`optionButtonHeightFor` grows automatically for 3-line labels (no separate min change needed).
+
+Serial log updated: `Drill fonts: screen=X reader=Y qPx=Z opt0Px=W opt0H=V feedbackPx=U bodyPx=T`
+
+### Fix 2: Drill answer tap immediately shows feedback
+
+**Was:** tapping an answer set `gDrillShowFeedback = false` → result view first → required second
+tap to reach feedback.
+
+**Now:** tapping an answer sets `gDrillShowFeedback = true` → feedback page shown immediately.
+
+### Fix 3: Drill post-answer content navigation complete
+
+Full tap map now:
+
+| Location | Top-half tap | Bottom-half tap |
+|----------|-------------|-----------------|
+| Result view (question+options) | previous item (if any) | feedback page |
+| Feedback page 1 | back to result view | next feedback page OR next item |
+| Feedback page 2+ | previous feedback page | next feedback page OR next item |
+
+- Footer arrows (← →): still move to prev/next item regardless of sub-page.
+- Home: unchanged.
+- `gDrillShowFeedback` resets to false on every item navigation (`nextCoachItem`, `previousCoachItem`).
+
+### Fix 4: Settings "Reader size" section label — explicit font call
+
+Added `applyCoachMetadataFont()` immediately before `drawString("Reader size", ...)` to match
+the explicit calls already present for "Refresh", "Power", and "Orientation". No visual change
+(the font was already 24px via carryover), but now all four labels are equally explicit.
 
 ---
 
@@ -26,69 +82,23 @@ _Last updated: 2026-06-13_
 
 ### Fix 1: Settings section labels now fixed medium size
 
-All four section labels ("Reader size", "Refresh", "Power", "Orientation") now call
-`applyCoachMetadataFont()` immediately before `drawString`, ensuring a consistent fixed
-24px font regardless of what the preceding segmented-button draw left behind.
-
-Previously, only "Reader size" was reliably at 24px (it followed `applyCoachMetadataFont()` from
-the battery block). "Refresh", "Power", and "Orientation" were silently drawn at 20px (the
-`kSegmentedPx` font leftover from the preceding button row).
-
-Settings layout is unchanged — same Y positions, same buttons.
+"Refresh", "Power", and "Orientation" labels were silently drawn at 20px (`kSegmentedPx`
+leftover from preceding button row). Now all four labels explicitly call `applyCoachMetadataFont()`
+(24px) before drawing.
 
 ### Fix 2: Battery % text vertically co-aligned with battery bar
 
-Battery percentage text now uses `middle_left` datum and draws at the bar's vertical centerline
-(`battBlockY + battBlockH / 2 = 99`). Previously it drew with `top_left` at `battBlockY + 4 = 76`,
-leaving the text visually higher than the bar center.
+Uses `middle_left` datum at vertical centerline of battery block.
 
-### Fix 3: Drill/Exam Reader L option buttons now visibly larger than Reader M
+### Fix 3: Drill/Exam Reader L option fallback raised to 32px
 
-Root cause: when a label was too long to fit in 2 lines at 36px (XL/L's largePx cap),
-`optionTextPxFor` fell back to `compactPx = 31` (buttonPx for XL mode). `applyGothicFont(31)`
-picks `lgfxJapanGothic_28` — the same font as M's maximum of 31px. So long labels in L silently
-looked identical to M.
-
-Fix: for XL/L mode (`bodyPx >= 40`), use 32px fallback instead of 31. `applyGothicFont(32)` picks
-`lgfxJapanGothic_32`, which is visibly larger than `lgfxJapanGothic_28`.
-
-Updated option font table:
-
-| Reader | largePx | Fallback | Font (fits) | Font (fallback) |
-|--------|---------|----------|-------------|-----------------|
-| S | 24 | 24 | lgfxJapanGothic_24 | lgfxJapanGothic_24 |
-| M | 31 | 24 | lgfxJapanGothic_28 | lgfxJapanGothic_24 |
-| L | 36 | **32** | lgfxJapanGothic_36 | **lgfxJapanGothic_32** |
-
-Added `Serial.printf("Drill fonts: reader=%s qPx=%u opt0Px=%u bodyPx=%u\n", ...)` before
-each drill render for serial verification.
+Changed fallback from 31 (gothic_28, same as M) to 32 (gothic_32). **Note:** physical QA showed
+this was insufficient — 32px is still too close to M. Fixed properly in v5.8-dev14.
 
 ### Fix 4: Drill post-answer tap behavior — result/feedback sub-pages
 
-Introduced `gDrillShowFeedback` (bool, default false) to split the post-answer state into
-two internal pages within a single drill item:
-
-1. **Result view** (`gDrillShowFeedback = false`): shows question + all option buttons with
-   selected/correct options highlighted (3-rect thick border + bold text). No item skip.
-2. **Feedback view** (`gDrillShowFeedback = true`): shows existing `drawFeedbackPage` content
-   (explanation, best answer, etc.). Paginated by `gCoachStage`.
-
-Touch behavior after answer selected:
-- Content bottom half on result view → switch to feedback (`gDrillShowFeedback = true`)
-- Content top half on feedback first page → switch back to result (`gDrillShowFeedback = false`)
-- Content top half on feedback page 2+ → previous feedback page (`--gCoachStage`)
-- Content bottom half on feedback → next feedback page (or no-op at last page)
-- Footer arrows (← →): still move to prev/next drill item (unchanged)
-- Home button: unchanged
-
-`gDrillShowFeedback` is reset to `false` whenever `gSelectedOption` is reset:
-`clearCoachData`, `startCoachMode`, `startPracticeMode`, `nextCoachItem`, `previousCoachItem`,
-and the answer-selection touch handler.
-
-`currentCoachReaderPageCount()` returns 1 for the result view and `feedbackPageCountFor()`
-for the feedback view.
-
-Exam answer recording is not changed.
+Introduced `gDrillShowFeedback` bool. After answer tap: result view first, then feedback on
+second tap. **Note:** flow updated in v5.8-dev14 to show feedback immediately on answer tap.
 
 ---
 
@@ -183,11 +193,11 @@ Those screens pin `fontSizeMode = Large` internally so their layout is stable.
 
 Font sizes at each Reader size:
 
-| Reader | Body | Question stem | Option text (fits) | Option text (fallback) | Feedback |
-|--------|------|--------------|---------------------|------------------------|---------|
+| Reader | Body | Question stem | Option text (1-2 lines) | Option text (3 lines) | Feedback |
+|--------|------|--------------|-------------------------|----------------------|---------|
 | S | 24px | 28px | 24px | 24px | 24px |
-| M | 31px | 35px | 31px (Gothic_28) | 24px (Gothic_24) | 31px |
-| L | 40px | 40px | 36px (Gothic_36) | **32px (Gothic_32)** | 40px |
+| M | 31px | 35px | 31px (Gothic_28 / Sans18pt) | 24px | 31px |
+| L | 40px | 40px | 40px (Gothic_36 / **Sans24pt**) | 36px (Gothic_36) | 40px |
 
 ---
 
@@ -216,7 +226,7 @@ Sleep Off resets on reboot (experimental flag, not sticky).
 
 ---
 
-## Physical QA Checklist (v5.8-dev13)
+## Physical QA Checklist (v5.8-dev14)
 
 ### Settings screen
 - [ ] Settings layout looks identical with Reader S, Reader M, and Reader L
@@ -240,21 +250,28 @@ Sleep Off resets on reboot (experimental flag, not sticky).
 - [ ] Power Lab page 4: shows current firmware version in audit header
 
 ### Drill / Exam Reader size
+- [ ] Drill Reader S → M: question text and option text both visibly larger
 - [ ] Drill Reader M → L: question text visibly larger
-- [ ] Drill Reader M → L: option button text visibly larger (Gothic_32 vs Gothic_28 in fallback case)
-- [ ] Drill Reader S → M → L: each step visibly different
-- [ ] Exam Reader M → L: question text visibly larger
-- [ ] Exam Reader M → L: option button text visibly larger
-- [ ] No option text clipping outside button borders
-- [ ] Serial log shows `Drill fonts: reader=L qPx=40 opt0Px=36` (or 32 for long options)
+- [ ] Drill Reader M → L: **option button text visibly larger** (Sans24pt vs Sans18pt for High Contrast; Gothic_36 vs Gothic_28 for default)
+- [ ] Exam same as Drill for all three reader sizes
+- [ ] No option text clipping outside button borders at any size
+- [ ] For long labels: option button grows taller rather than shrinking text below M level
+- [ ] Serial log shows `Drill fonts: screen=Drills reader=L qPx=40 opt0Px=40 opt0H=NNN feedbackPx=40`
+- [ ] Serial log shows `optionText: L 40->36px label=... midLines=... fits=yes/allow3` for overflow labels
 
-### Drill post-answer navigation
-- [ ] After selecting answer: result view shown (question + options with thick border on selected/correct)
-- [ ] Tapping bottom half of result view → feedback/explanation page appears
-- [ ] Tapping top half of feedback page → result view returns
-- [ ] No accidental skip to next/previous item when tapping content area post-answer
-- [ ] Footer arrow buttons (← →) still advance to next/previous drill item
-- [ ] Home button returns to Home from both result and feedback views
+### Drill answer tap flow
+- [ ] **Tap an answer option → feedback/explanation page shown immediately** (no second tap needed)
+- [ ] On feedback page: tap top half → result view (question + options with selected/correct highlighted)
+- [ ] On result view: tap bottom half → feedback page
+- [ ] On result view: tap top half → previous drill item (same as ← arrow)
+- [ ] On feedback last page: tap bottom half → next drill item (same as → arrow)
+- [ ] Footer arrow buttons (← →) advance to prev/next item from both result and feedback views
+- [ ] Home button returns to Home from both views
+- [ ] Tapping content area before selecting any answer does NOT skip item or show feedback
+
+### Drill / Exam — no regression
+- [ ] Practice, Glossary, Badge screens unaffected
+- [ ] Exam option tap still records answer; Exam result screen unchanged
 
 ### Power / sleep
 - [ ] Changing power profile in Settings persists after reboot
@@ -274,6 +291,6 @@ Sleep Off resets on reboot (experimental flag, not sticky).
 
 ## Next Steps
 
-1. **Japanese readiness implementation** — UTF-8 sanitizer, CJK word wrap, Japanese font path, generic deck schema (see `docs/PRD_PaperBadge_v0.6.md`)
-2. **Physical QA this checklist** — confirm Reader L visibly larger, settings labels consistent, drill post-answer nav correct
+1. **Physical QA v5.8-dev14** — confirm Reader L option text visibly larger than M, drill answer tap immediately shows feedback, post-answer navigation, no regressions
+2. **Japanese readiness implementation** — UTF-8 sanitizer, CJK word wrap, Japanese font path, generic deck schema (see `docs/PRD_PaperBadge_v0.6.md`)
 3. Long-term: GT911 touch INT wake research if alternative GPIO mapping found

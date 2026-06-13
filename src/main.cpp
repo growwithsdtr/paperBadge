@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.8-dev13";
+constexpr const char* kFirmwareVersion = "v5.8-dev14";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -4760,23 +4760,33 @@ int32_t optionLineHeight(uint8_t optionPx) {
 
 uint8_t optionTextPxFor(const String& label, int32_t buttonWidth) {
   const CoachTypography type = coachTypography();
-  const uint8_t largePx = type.bodyPx > 36 ? 36 : type.bodyPx;  // cap option text for button safety
+  const uint8_t preferredPx = type.bodyPx;  // 40 for Reader L, 31 for M, 24 for S — no cap
   const uint8_t compactPx = type.buttonPx;
-  if (largePx <= compactPx) {
+  if (preferredPx <= compactPx) {
     return compactPx;
   }
 
-  applyTypographyFont(largePx);
+  applyTypographyFont(preferredPx);
   std::vector<String> largeLines;
   wrapReaderTextToLines(label, buttonWidth - 32, largeLines, "option-large-probe");
   if (largeLines.size() <= 2) {
-    return largePx;
+    return preferredPx;
   }
-  // For XL/L mode: use 32px fallback (lgfxJapanGothic_32) so L options are visibly
-  // larger than M options (which use lgfxJapanGothic_28 at their 31px cap).
-  if (type.bodyPx >= 40) {
-    return 32;
+
+  // Reader L (bodyPx=40): step to 36px; if still >2 lines, stay at 36px and allow 3 lines.
+  // Never fall back to 32px — it is too close to Reader M's 31px (gothic_28 vs gothic_32
+  // are visually indistinguishable at reading distance).
+  if (type.bodyPx > 36) {
+    const uint8_t midPx = 36;
+    applyTypographyFont(midPx);
+    std::vector<String> midLines;
+    wrapReaderTextToLines(label, buttonWidth - 32, midLines, "option-mid-probe");
+    const bool midFits = midLines.size() <= 2;
+    Serial.printf("optionText: L 40->36px label=%.24s midLines=%u fits=%s\n",
+                  label.c_str(), static_cast<unsigned>(midLines.size()), midFits ? "yes" : "allow3");
+    return midPx;  // 36px always for Reader L; allow 3 lines when needed
   }
+
   return compactPx;
 }
 
@@ -6124,10 +6134,14 @@ void renderCoachScreen() {
     {
       const CoachTypography ct = coachTypography();
       const uint8_t qPx = ct.bodyPx >= 34 ? ct.bodyPx : static_cast<uint8_t>(ct.bodyPx + 4);
+      const uint8_t feedbackPx = ct.bodyPx;
       const uint8_t opt0Px = item.optionCount > 0
           ? optionTextPxFor(optionLabelWithLetter(item, 0), layout.contentW) : 0;
-      Serial.printf("Drill fonts: reader=%s qPx=%u opt0Px=%u bodyPx=%u\n",
-                    shortFontSizeModeName(renderSize), qPx, opt0Px, ct.bodyPx);
+      const int32_t opt0H = item.optionCount > 0
+          ? optionButtonHeightFor(optionLabelWithLetter(item, 0), layout.contentW) : 0;
+      Serial.printf("Drill fonts: screen=%s reader=%s qPx=%u opt0Px=%u opt0H=%ld feedbackPx=%u bodyPx=%u\n",
+                    screenName(gScreen), shortFontSizeModeName(renderSize), qPx, opt0Px,
+                    static_cast<long>(opt0H), feedbackPx, ct.bodyPx);
     }
     drawCompactDrillHeader(item, gCoachStage + 1, plan.totalPages);
     gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
@@ -7098,6 +7112,7 @@ void renderSettings(const char* refreshReason = "mode switch") {
   display.drawString(usbText, bx, detailY + 26);
 
   // Reader size — S / M / L
+  applyCoachMetadataFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.drawString("Reader size", bx, 210);
   gFontMediumButton = {bx,    236, bw3, bh};
@@ -8517,11 +8532,12 @@ void handleTouch() {
         if (hitTarget(gOptionButtons[option], optionTarget.c_str(), tapX, tapY)) {
           recordDrillAnswer(item, option);
           gSelectedOption = option;
-          gDrillShowFeedback = false;
+          gDrillShowFeedback = true;  // immediately show feedback page on first tap
           gCoachStage = 0;
           gCoachNeedsCleanEntryRefresh = true;
-          Serial.printf("Drill answer selected: item=%s selected=%c best=%c cleanRefresh=queued\n", coachDisplayId(item),
-                        static_cast<char>('A' + option), static_cast<char>('A' + item.correctIndex));
+          Serial.printf("Drill answer selected: item=%s selected=%c best=%c -> feedback cleanRefresh=queued\n",
+                        coachDisplayId(item), static_cast<char>('A' + option),
+                        static_cast<char>('A' + item.correctIndex));
           renderCoachScreen();
           break;
         }
@@ -8542,7 +8558,13 @@ void handleTouch() {
             gCoachNeedsCleanEntryRefresh = true;
             renderCoachScreen();
           } else {
-            Serial.println("drill result: top tap ignored");
+            if (hasPreviousCoachItem()) {
+              markHitTarget("drill result -> prev item", tapX, tapY);
+              previousCoachItem();
+              renderCoachScreen();
+            } else {
+              Serial.println("drill result: no previous item");
+            }
           }
         } else {
           if (tapY < gReaderContentRect.y + gReaderContentRect.h / 2) {
@@ -8562,7 +8584,13 @@ void handleTouch() {
               ++gCoachStage;
               renderCoachScreen();
             } else {
-              Serial.println("drill feedback: at last page");
+              if (hasNextCoachItem()) {
+                markHitTarget("drill feedback -> next item", tapX, tapY);
+                nextCoachItem();
+                renderCoachScreen();
+              } else {
+                Serial.println("drill feedback: no next item");
+              }
             }
           }
         }
