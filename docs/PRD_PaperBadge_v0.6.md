@@ -19,7 +19,7 @@ first-class concern.
 
 ---
 
-## Current Behavior (v5.8)
+## Current Behavior (v5.8-dev15)
 
 ### Badge Mode
 
@@ -110,25 +110,69 @@ LightNap is blocked (never entered) when:
 - An exam question or MCQ drill option is awaiting a tap (answer-selection guard)
 - Input lock is active (including the 400ms post-wake debounce window)
 
+### Option Box Height Normalization (v5.8-dev15)
+
+All answer option boxes on a single question screen share the same height — the maximum required
+by any individual option on that screen. If option A needs 2 lines and B–D need 1, all four boxes
+grow to the 2-line height so the layout looks visually consistent.
+
+`sharedOptionButtonHeight(item, width)` computes the max, applied in all option drawing paths:
+combined, options-only, result view (post-answer), and Exam.
+
 ### Drill Post-Answer Navigation
 
-After a drill answer is selected, the drill item enters a two-page internal state:
+After a drill answer is selected, the selected option is immediately registered and the feedback
+page is shown. The drill item then allows toggling between two internal sub-pages:
 
-1. **Result page** — shows the question and all four option buttons. The selected option and the
-   correct option each receive a thick border (3-rect) and bold text. No filled backgrounds.
-2. **Feedback page** — shows the feedback/explanation (what the best answer is and why).
-   May paginate if the explanation is long.
+1. **Feedback page** — shown immediately after answer tap. Shows "Selected", "Best", "Why this
+   is best" sections. Text with numbered lists or multiple semicolons is formatted to break at
+   clause boundaries for readability. May paginate if the explanation is long.
+2. **Result view** — accessible from feedback by tapping the top-half (page 1 only). Shows the
+   question stem + all four option boxes with the selected and correct options highlighted (triple
+   border + bold text).
 
 Transitions:
-- Bottom-half content tap on result page → advance to feedback page
-- Top-half content tap on feedback page 1 → return to result page
-- Top-half content tap on feedback page 2+ → previous feedback page
-- Bottom-half content tap on feedback page → next feedback page (no-op at last page)
+- Option box tap (before answer): selects answer → **immediately goes to feedback**
+- Top-half tap on feedback page 1 → return to result view
+- Top-half tap on feedback page 2+ → previous feedback page
+- Bottom-half tap on result view → feedback page
+- Bottom-half tap on feedback page → next feedback page OR next drill item
 - Footer arrow buttons (← →) still advance to the next or previous drill item at any point
 - Home button returns to Home from either sub-page
 
-Top-half taps on the result page are ignored. This prevents accidental backwards navigation before
-the user has had a chance to confirm their answer.
+### Feedback and Body Text Formatting (v5.8-dev15)
+
+`formatFeedbackBody(text)` is applied to feedback and practice body text before wrapping:
+- Numbered list items (`1. ` / `1) `) start on their own line
+- Semicolon-separated clauses (2+ `;` → one clause per line)
+- Prose, short phrases, decimal numbers, and URLs are unaffected
+
+Applies to: drill feedback sections (Selected, Best, Why this is best), practice card body
+sections (Answer, Defense/Suggested response, Explanation, Anchor, Follow-up).
+
+### Results Pages — Combined Summary+Categories (v5.8-dev15)
+
+When the session has ≤3 category stats, the Summary and Categories content is merged into a
+single first page (condensed summary block + divider line + category bars). Separate pages are
+only created when category stats exceed 3 (requiring a second category page).
+
+Page count: 3 pages for ≤3 categories; 4 pages for 4–6; 5 pages for 7–8.
+
+### Settings Page — Fixed Medium UI (v5.8-dev15)
+
+Settings uses a consistent fixed-medium font style independent of Reader S/M/L:
+
+| Element | Font size | Notes |
+|---------|-----------|-------|
+| Screen title | 40px (title) | unchanged |
+| Battery % | 40px (title) | large, vertically centered with bar |
+| mV / USB detail | 28px | was 24px (metadata) |
+| Section labels | 28px | was 24px — now noticeably larger |
+| Segmented buttons | 24px | was 20px — "Responsive" / "Balanced" fit |
+| Selected state | triple border + bold text | no `*`, no fill |
+| Button height | 52px | was 48px — better touch targets |
+
+Full labels used for all controls: Fast / Balanced / Clean; Responsive / Balanced / Max; Normal / Strap.
 
 **Deep sleep:** Permanently blocked — the GT911 touch controller INT is on GPIO48, which is not
 in the ESP32-S3 RTC GPIO range (0–21). No verified deep sleep wake source exists.

@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.8-dev14";
+constexpr const char* kFirmwareVersion = "v5.8-dev15";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -3637,8 +3637,8 @@ void applyCoachFooterFont() {
 }
 
 // Fixed font size for segmented control buttons in Settings chrome.
-// Smaller than metadata (24px) so "Responsive" / "Balanced" fit in a 3-way button.
-static constexpr uint8_t kSegmentedPx = 20;
+// 24px (Gothic_24) — larger than before; "Responsive" / "Balanced" fit in a 3-way ~150px button.
+static constexpr uint8_t kSegmentedPx = 24;
 
 // Draw a segmented control button. Selected state: 3-rect thick border + fake-bold text.
 void drawSegmentedButton(const Rect& rect, const char* label, bool selected) {
@@ -4822,6 +4822,20 @@ void drawOptionButton(const Rect& rect, const String& label) {
                static_cast<int32_t>(lines.size()) * lineHeight + 24 > rect.h);
 }
 
+// Compute a shared (uniform) option box height for all options on a screen.
+// All boxes are drawn at the same height (max across options) so the layout is visually consistent.
+int32_t sharedOptionButtonHeight(const CoachItemView& item, int32_t buttonWidth) {
+  const uint8_t optionCount = item.optionCount < kMaxOptions ? item.optionCount : kMaxOptions;
+  int32_t maxH = 0;
+  for (uint8_t i = 0; i < optionCount; ++i) {
+    String label = optionLabelWithLetter(item, i);
+    label.trim();
+    const int32_t h = optionButtonHeightFor(label, buttonWidth);
+    if (h > maxH) maxH = h;
+  }
+  return maxH > 0 ? maxH : optionButtonHeightFor(String("A. "), buttonWidth);
+}
+
 String compactQuestionReminder(const String& prompt) {
   String safe = sanitizeCoachText(prompt, "question-reminder");
   safe.replace("\n", " ");
@@ -4871,10 +4885,20 @@ DrillPagePlan buildDrillPagePlan(const CoachItemView& item, const PracticeLayout
 
   int32_t optionHeights[kMaxOptions] = {};
   const int32_t optionGap = 8;
-  int32_t allOptionsHeight = 0;
+  // Compute per-option heights then normalize to max for visual consistency.
   for (uint8_t option = 0; option < optionCount; ++option) {
     const String label = optionLabelWithLetter(item, option);
     optionHeights[option] = optionButtonHeightFor(label, layout.contentW);
+  }
+  int32_t maxOptionH = 0;
+  for (uint8_t option = 0; option < optionCount; ++option) {
+    if (optionHeights[option] > maxOptionH) maxOptionH = optionHeights[option];
+  }
+  for (uint8_t option = 0; option < optionCount; ++option) {
+    optionHeights[option] = maxOptionH;
+  }
+  int32_t allOptionsHeight = 0;
+  for (uint8_t option = 0; option < optionCount; ++option) {
     if (optionHeights[option] > layout.contentH) {
       Serial.printf("Drill option fit warning: item=%s option=%c height=%ld contentH=%ld\n", coachDisplayId(item),
                     static_cast<char>('A' + option), static_cast<long>(optionHeights[option]),
@@ -5263,16 +5287,74 @@ void appendGlossarySection(std::vector<GlossaryRenderLine>& lines, const char* l
   appendGlossaryWrappedBody(lines, sectionBody, width);
 }
 
+// Lightweight formatter for feedback/explanation body text on e-ink.
+// Inserts hard line breaks at numbered list items (1. / 1)) and at semicolons (2+ occurrences).
+// Does not modify prose, short phrases, or decimal numbers.
+String formatFeedbackBody(const String& raw) {
+  String text = raw;
+  text.trim();
+  if (text.length() < 10) return text;
+
+  // Numbered list items: "N. " or "N) " preceded by whitespace/start of string.
+  {
+    String result;
+    const int len = (int)text.length();
+    for (int i = 0; i < len; ++i) {
+      const char c = text[i];
+      if (isDigit(c) && i + 2 < len) {
+        const char n1 = text[i + 1];
+        const char n2 = text[i + 2];
+        if ((n1 == '.' || n1 == ')') && n2 == ' ') {
+          const bool atBreak = (i == 0) || text[i - 1] == ' ' || text[i - 1] == '\n';
+          if (atBreak && i > 0 && result.length() > 0 && result[result.length() - 1] != '\n') {
+            result += '\n';
+          }
+        }
+      }
+      result += c;
+    }
+    text = result;
+  }
+
+  // Semicolon clause splitting: if 2+ "; " occurrences, render each clause on its own line.
+  {
+    int count = 0;
+    int pos = 0;
+    while ((pos = text.indexOf("; ", pos)) >= 0) { ++count; pos += 2; }
+    if (count >= 2) {
+      String result;
+      int start = 0;
+      int found;
+      while ((found = text.indexOf("; ", start)) >= 0) {
+        result += text.substring(start, found);
+        result += '\n';
+        start = found + 2;
+      }
+      result += text.substring(start);
+      text = result;
+    }
+  }
+
+  return text;
+}
+
+// Append a glossary section with formatFeedbackBody applied to the body text.
+void appendGlossarySectionFormatted(std::vector<GlossaryRenderLine>& lines, const char* label,
+                                     const char* body, int32_t width) {
+  String formatted = formatFeedbackBody(sanitizeCoachText(body ? body : "", "glossary-fmt"));
+  appendGlossarySection(lines, label, formatted.c_str(), width);
+}
+
 void buildPracticeLines(const CoachItemView& item, const PracticeLayout& layout,
                         std::vector<GlossaryRenderLine>& lines) {
   lines.clear();
   if (item.type == CoachItemType::HostileFollowup) {
     appendGlossarySection(lines, "Follow-up", coachPromptFor(item).c_str(), layout.contentW);
-    appendGlossarySection(lines, "Defense", item.answer, layout.contentW);
-    appendGlossarySection(lines, "Anchor", item.rubric, layout.contentW);
+    appendGlossarySectionFormatted(lines, "Suggested response", item.answer, layout.contentW);
+    appendGlossarySectionFormatted(lines, "Anchor", item.rubric, layout.contentW);
   } else if (item.type == CoachItemType::WeakAnswer) {
     appendGlossarySection(lines, "Question", coachPromptFor(item).c_str(), layout.contentW);
-    appendGlossarySection(lines, "Explanation", coachAnswerFor(item).c_str(), layout.contentW);
+    appendGlossarySectionFormatted(lines, "Explanation", coachAnswerFor(item).c_str(), layout.contentW);
   } else {
     String questionText = sanitizeCoachText(item.title, "practice-title");
     if (questionText.length() == 0) {
@@ -5280,10 +5362,10 @@ void buildPracticeLines(const CoachItemView& item, const PracticeLayout& layout,
     }
     appendGlossarySection(lines, "Question", questionText.c_str(), layout.contentW);
     appendGlossarySection(lines, "Confidence", item.confidence, layout.contentW);
-    appendGlossarySection(lines, "Answer", item.spoken, layout.contentW);
-    appendGlossarySection(lines, "Anchor", item.anchor, layout.contentW);
+    appendGlossarySectionFormatted(lines, "Answer", item.spoken, layout.contentW);
+    appendGlossarySectionFormatted(lines, "Anchor", item.anchor, layout.contentW);
     appendGlossarySection(lines, "Watch-out", item.watch, layout.contentW);
-    appendGlossarySection(lines, "Follow-up", item.explanation, layout.contentW);
+    appendGlossarySectionFormatted(lines, "Follow-up", item.explanation, layout.contentW);
   }
   if (lines.empty()) {
     appendGlossarySection(lines, "Card", "No content available.", layout.contentW);
@@ -5352,6 +5434,7 @@ void appendFeedbackSection(std::vector<GlossaryRenderLine>& lines, const char* l
                            int32_t width) {
   String sectionBody = sanitizeCoachText(body, "feedback-section");
   sectionBody.trim();
+  sectionBody = formatFeedbackBody(sectionBody);
   if (sectionBody.length() == 0) {
     return;
   }
@@ -6027,6 +6110,7 @@ void drawDrillResultView(const CoachItemView& item, const PracticeLayout& layout
   const uint8_t selected = static_cast<uint8_t>(gSelectedOption);
   const bool validKey = hasValidAnswerKey(item);
   const DrillPagePlan plan = buildDrillPagePlan(item, layout);
+  const int32_t sharedH = sharedOptionButtonHeight(item, layout.contentW);
 
   drawCompactDrillHeader(item, 1, 1);
   gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
@@ -6038,8 +6122,7 @@ void drawDrillResultView(const CoachItemView& item, const PracticeLayout& layout
   const int32_t optionGap = 8;
   for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
     const String label = optionLabelWithLetter(item, option);
-    const int32_t buttonH = optionButtonHeightFor(label, layout.contentW);
-    const Rect rect = {layout.contentX, y, layout.contentW, buttonH};
+    const Rect rect = {layout.contentX, y, layout.contentW, sharedH};
     const bool isSelected = (option == selected);
     const bool isCorrect = validKey && (option == item.correctIndex);
     const bool highlighted = isSelected || isCorrect;
@@ -6062,7 +6145,7 @@ void drawDrillResultView(const CoachItemView& item, const PracticeLayout& layout
         display.drawString(wlines[li], rect.x + 19, textY + static_cast<int32_t>(li) * lineH);
       }
     }
-    y += buttonH + optionGap;
+    y += sharedH + optionGap;
   }
 }
 
@@ -6152,20 +6235,20 @@ void renderCoachScreen() {
       logReaderPagination("Question", plan.questionPages, layout);
       int32_t y = layout.contentY + plan.questionBlockHeight + 14;
       const int32_t optionGap = 8;
+      const int32_t sharedH = sharedOptionButtonHeight(item, layout.contentW);
       String traceBody = String(item.prompt) + "\n";
       for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
         const String label = optionLabelWithLetter(item, option);
-        const int32_t buttonH = optionButtonHeightFor(label, layout.contentW);
-        gOptionButtons[option] = {layout.contentX, y, layout.contentW, buttonH};
+        gOptionButtons[option] = {layout.contentX, y, layout.contentW, sharedH};
         drawOptionButton(gOptionButtons[option], label);
         traceBody += "\n";
         traceBody += label;
-        y += buttonH + optionGap;
+        y += sharedH + optionGap;
       }
       ReaderPageSet combinedTrace = buildReaderPages(traceBody, layout.contentW, layout.linesPerPage, "Question+Options");
       recordRenderTrace(item, "Question+Options", traceBody, combinedTrace, 0, false);
-      Serial.printf("Drill combined shown: item=%s options=%u totalPages=%u\n", coachDisplayId(item), item.optionCount,
-                    plan.totalPages);
+      Serial.printf("Drill combined shown: item=%s options=%u sharedH=%ld totalPages=%u\n", coachDisplayId(item),
+                    item.optionCount, static_cast<long>(sharedH), plan.totalPages);
     } else if (gCoachStage < plan.questionPages.pageCount) {
       applyCoachQuestionFont();
       drawReaderPage(plan.questionPages, gCoachStage, layout.contentX, layout.contentY, layout.questionLineHeight);
@@ -6190,6 +6273,7 @@ void renderCoachScreen() {
                           "question-reminder", 1);
       y += reminderLayout.height + 12;
       display.setTextColor(TFT_BLACK, TFT_WHITE);
+      const int32_t sharedH = sharedOptionButtonHeight(item, layout.contentW);
       String traceBody = plan.reminder;
       for (uint8_t offset = 0; offset < optionPage.optionCount; ++offset) {
         const uint8_t option = optionPage.firstOption + offset;
@@ -6197,14 +6281,13 @@ void renderCoachScreen() {
           continue;
         }
         const String label = optionLabelWithLetter(item, option);
-        const int32_t buttonH = optionButtonHeightFor(label, layout.contentW);
-        gOptionButtons[option] = {layout.contentX, y, layout.contentW, buttonH};
+        gOptionButtons[option] = {layout.contentX, y, layout.contentW, sharedH};
         drawOptionButton(gOptionButtons[option], label);
         if (traceBody.length() > 0) {
           traceBody += "\n";
         }
         traceBody += label;
-        y += buttonH + optionGap;
+        y += sharedH + optionGap;
       }
       ReaderPageSet optionTrace = buildReaderPages(traceBody, layout.contentW, layout.linesPerPage, "Options");
       recordRenderTrace(item, "Options", traceBody, optionTrace, 0, true);
@@ -6673,15 +6756,15 @@ void renderExamQuestion(const char* refreshReason = "exam question") {
     drawReaderPage(plan.questionPages, 0, layout.contentX, layout.contentY, layout.questionLineHeight);
     int32_t y = layout.contentY + plan.questionBlockHeight + 14;
     const int32_t optionGap = 8;
+    const int32_t sharedH = sharedOptionButtonHeight(item, layout.contentW);
     String traceBody = String(item.prompt) + "\n";
     for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
       const String label = optionLabelWithLetter(item, option);
-      const int32_t buttonH = optionButtonHeightFor(label, layout.contentW);
-      gOptionButtons[option] = {layout.contentX, y, layout.contentW, buttonH};
+      gOptionButtons[option] = {layout.contentX, y, layout.contentW, sharedH};
       drawOptionButton(gOptionButtons[option], label);
       traceBody += "\n";
       traceBody += label;
-      y += buttonH + optionGap;
+      y += sharedH + optionGap;
     }
     ReaderPageSet combinedTrace = buildReaderPages(traceBody, layout.contentW, layout.linesPerPage, "ExamQuestion");
     recordRenderTrace(item, "ExamQuestion", traceBody, combinedTrace, 0, false);
@@ -6707,6 +6790,7 @@ void renderExamQuestion(const char* refreshReason = "exam question") {
                         "exam-question-reminder", 1);
     y += reminderLayout.height + 12;
     display.setTextColor(TFT_BLACK, TFT_WHITE);
+    const int32_t sharedH = sharedOptionButtonHeight(item, layout.contentW);
     String traceBody = plan.reminder;
     const int32_t optionGap = 8;
     for (uint8_t offset = 0; offset < optionPage.optionCount; ++offset) {
@@ -6715,12 +6799,11 @@ void renderExamQuestion(const char* refreshReason = "exam question") {
         continue;
       }
       const String label = optionLabelWithLetter(item, option);
-      const int32_t buttonH = optionButtonHeightFor(label, layout.contentW);
-      gOptionButtons[option] = {layout.contentX, y, layout.contentW, buttonH};
+      gOptionButtons[option] = {layout.contentX, y, layout.contentW, sharedH};
       drawOptionButton(gOptionButtons[option], label);
       traceBody += "\n";
       traceBody += label;
-      y += buttonH + optionGap;
+      y += sharedH + optionGap;
     }
     ReaderPageSet optionTrace = buildReaderPages(traceBody, layout.contentW, layout.linesPerPage, "ExamOptions");
     recordRenderTrace(item, "ExamOptions", traceBody, optionTrace, 0, true);
@@ -6790,11 +6873,23 @@ uint8_t resultsCategoryPageCount(uint8_t statCount) {
   return static_cast<uint8_t>((statCount + kResultsStatsPerPage - 1) / kResultsStatsPerPage);
 }
 
+// When statCount fits on one category page (≤3), combine summary + categories on page 0.
+// Page layout: [combined summary+cats] [extra cat pages if any] [weakest] [recent]
+bool resultsCombinedFirstPage(uint8_t statCount) {
+  return gSessionResultCount > 0 && statCount <= 3;
+}
+
 uint8_t resultsPageCountFor(uint8_t statCount) {
   if (gSessionResultCount == 0) {
     return 1;
   }
-  return static_cast<uint8_t>(1 + resultsCategoryPageCount(statCount) + 2);
+  const uint8_t categoryPages = resultsCategoryPageCount(statCount);
+  if (resultsCombinedFirstPage(statCount)) {
+    // Combined page absorbs the first category page; remaining cats + weakest + recent
+    const uint8_t extraCatPages = categoryPages > 1 ? static_cast<uint8_t>(categoryPages - 1) : 0;
+    return static_cast<uint8_t>(1 + extraCatPages + 2);
+  }
+  return static_cast<uint8_t>(1 + categoryPages + 2);
 }
 
 uint8_t currentResultsPageCount() {
@@ -6847,6 +6942,67 @@ void renderResultsSummaryPage(uint16_t total, uint16_t correct, uint8_t accuracy
   display.drawString(String(static_cast<unsigned>(correct)) + " correct of " + static_cast<unsigned>(total), 36, y);
   y += 42;
   drawResultBar(36, y, display.width() - 72, 28, accuracy);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+}
+
+// Combined page 0: summary block (numbers + bar) followed by category stats (if ≤3 categories).
+void renderResultsSummaryAndCategoriesPage(uint16_t total, uint16_t correct, uint8_t accuracy,
+                                            const CategoryStat* stats, uint8_t statCount) {
+  auto& display = M5.Display;
+  int32_t y = 144;
+
+  // Summary block (condensed)
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString(gResultsStorageStatus, 36, y);
+  y += 44;
+
+  applyCoachContentFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Answered", 36, y);
+  display.drawString("Correct", 306, y);
+  y += 44;
+
+  applyCoachTitleFont();
+  display.drawString(String(total), 36, y);
+  display.drawString(String(accuracy) + "%", 306, y);
+  y += 76;
+
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString(String(static_cast<unsigned>(correct)) + " correct of " + static_cast<unsigned>(total), 36, y);
+  y += 36;
+  drawResultBar(36, y, display.width() - 72, 22, accuracy);
+  y += 38;
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+
+  if (statCount == 0) {
+    return;
+  }
+
+  // Divider
+  y += 14;
+  display.drawLine(36, y, display.width() - 36, y, metadataTextColor());
+  y += 18;
+
+  // Category stats (up to 3 on this combined page)
+  const uint8_t shown = statCount < 3 ? statCount : 3;
+  for (uint8_t index = 0; index < shown; ++index) {
+    const uint8_t statAccuracy = resultAccuracyPercent(stats[index].correct, stats[index].total);
+    applyCoachMetadataFont();
+    display.setTextColor(metadataTextColor(), TFT_WHITE);
+    TextLayoutResult labelLayout =
+        drawWrappedText(stats[index].name, 36, y, display.width() - 140, coachTypography().metadataLineHeight, 2,
+                        "results-category-name", 1);
+    applyCoachContentFont();
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    display.setTextDatum(textdatum_t::top_right);
+    display.drawString(String(statAccuracy) + "%", display.width() - 36, y - 4);
+    display.setTextDatum(textdatum_t::top_left);
+    y += labelLayout.height + 12;
+    drawResultBar(36, y, display.width() - 72, 20, statAccuracy);
+    y += 62;
+  }
   display.setTextColor(TFT_BLACK, TFT_WHITE);
 }
 
@@ -7033,18 +7189,34 @@ void renderResultsScreen(const char* refreshReason = "mode switch") {
   }
   gReaderContentRect = {34, 132, display.width() - 68, coachFooterTop() - 132 - 10};
 
+  const bool combined = resultsCombinedFirstPage(statCount);
+  // Extra category pages beyond those absorbed by the combined first page.
+  const uint8_t extraCatPages = combined && categoryPages > 1 ? static_cast<uint8_t>(categoryPages - 1) : 0;
+
   if (gResultsPage == 0) {
-    drawResultsPageLabel("Summary", gResultsPage + 1, pageCount);
-    renderResultsSummaryPage(total, correct, accuracy);
-  } else if (gResultsPage <= categoryPages) {
+    if (combined) {
+      drawResultsPageLabel("Summary", gResultsPage + 1, pageCount);
+      renderResultsSummaryAndCategoriesPage(total, correct, accuracy, stats, statCount);
+    } else {
+      drawResultsPageLabel("Summary", gResultsPage + 1, pageCount);
+      renderResultsSummaryPage(total, correct, accuracy);
+    }
+  } else if (!combined && gResultsPage <= categoryPages) {
     drawResultsPageLabel("Categories", gResultsPage + 1, pageCount);
     renderResultsCategoriesPage(stats, statCount, gResultsPage - 1, categoryPages);
-  } else if (gResultsPage == categoryPages + 1) {
-    drawResultsPageLabel("Weakest areas", gResultsPage + 1, pageCount);
-    renderResultsWeakestPage(stats, statCount);
+  } else if (combined && gResultsPage <= extraCatPages) {
+    // Extra category pages beyond the combined first page (show starting from cat page 1)
+    drawResultsPageLabel("Categories", gResultsPage + 1, pageCount);
+    renderResultsCategoriesPage(stats, statCount, gResultsPage, categoryPages);
   } else {
-    drawResultsPageLabel("Recent / next", gResultsPage + 1, pageCount);
-    renderResultsRecentPage();
+    const uint8_t weakestPage = combined ? extraCatPages + 1 : categoryPages + 1;
+    if (gResultsPage == weakestPage) {
+      drawResultsPageLabel("Weakest areas", gResultsPage + 1, pageCount);
+      renderResultsWeakestPage(stats, statCount);
+    } else {
+      drawResultsPageLabel("Recent / next", gResultsPage + 1, pageCount);
+      renderResultsRecentPage();
+    }
   }
 
   drawResultsFooter(pageCount);
@@ -7076,7 +7248,7 @@ void renderSettings(const char* refreshReason = "mode switch") {
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.drawString("Settings", 32, 26);
 
-  const int32_t bh = 48;
+  const int32_t bh = 52;   // button height — was 48, now 52 for better touch targets
   const int32_t bx = 36;
   const int32_t bw = width - 72;
   const int32_t sg = 8;
@@ -7085,14 +7257,16 @@ void renderSettings(const char* refreshReason = "mode switch") {
   const int32_t bx3_3 = bx + 2 * (bw3 + sg);
   const int32_t bw2 = (bw - sg) / 2;
   const int32_t bx2_2 = bx + bw2 + sg;
+  // 28px for section labels — one step above metadata (24px), clearly readable
+  static constexpr uint8_t kSettingsLabelPx = 28;
 
   // Battery block: % left + bar right, vertically co-aligned
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   const int32_t battLevel = batteryLevelPercent();
   const int16_t battMv = gCachedBatteryMv;
   const int32_t battBlockY = 72;
-  const int32_t battBlockH = 54;
-  const int32_t barH = 44;
+  const int32_t battBlockH = 52;
+  const int32_t barH = 38;
   const int32_t barW = 210;
   const int32_t barY = battBlockY + (battBlockH - barH) / 2;
   applyCoachTitleFont();
@@ -7102,22 +7276,22 @@ void renderSettings(const char* refreshReason = "mode switch") {
   display.drawString(battPctText, bx, battCenterY);
   display.setTextDatum(textdatum_t::top_left);
   drawBatteryBar(width - bx - barW, barY, barW, barH, battLevel);
-  applyCoachMetadataFont();
+  applyTypographyFont(kSettingsLabelPx);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   const String mvText = (battMv > 0) ? String(battMv) + "mV" : "---mV";
-  const int32_t detailY = battBlockY + battBlockH + 8;
+  const int32_t detailY = battBlockY + battBlockH + 10;
   display.drawString(mvText, bx, detailY);
   const String usbText = String("USB: ") + usbPowerName(gCachedVbusMv)
                        + "  " + chargingStateName(gCachedChargingState);
-  display.drawString(usbText, bx, detailY + 26);
+  display.drawString(usbText, bx, detailY + 32);
 
   // Reader size — S / M / L
-  applyCoachMetadataFont();
+  applyTypographyFont(kSettingsLabelPx);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.drawString("Reader size", bx, 210);
-  gFontMediumButton = {bx,    236, bw3, bh};
-  gFontLargeButton  = {bx2_3, 236, bw3, bh};
-  gFontXlButton     = {bx3_3, 236, bw3, bh};
+  display.drawString("Reader size", bx, 206);
+  gFontMediumButton = {bx,    242, bw3, bh};
+  gFontLargeButton  = {bx2_3, 242, bw3, bh};
+  gFontXlButton     = {bx3_3, 242, bw3, bh};
   gFontXxlButton = {};
   gFontHugeButton = {};
   drawSegmentedButton(gFontMediumButton, "S", activeReaderSize == FontSizeMode::Medium);
@@ -7125,24 +7299,24 @@ void renderSettings(const char* refreshReason = "mode switch") {
   drawSegmentedButton(gFontXlButton,     "L", activeReaderSize == FontSizeMode::XL);
 
   // Refresh — Fast / Balanced / Clean
-  applyCoachMetadataFont();
+  applyTypographyFont(kSettingsLabelPx);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.drawString("Refresh", bx, 300);
-  gRefreshFastButton     = {bx,    326, bw3, bh};
-  gRefreshBalancedButton = {bx2_3, 326, bw3, bh};
-  gRefreshCleanButton    = {bx3_3, 326, bw3, bh};
+  display.drawString("Refresh", bx, 310);
+  gRefreshFastButton     = {bx,    346, bw3, bh};
+  gRefreshBalancedButton = {bx2_3, 346, bw3, bh};
+  gRefreshCleanButton    = {bx3_3, 346, bw3, bh};
   gRefreshModeButton = {};
   drawSegmentedButton(gRefreshFastButton,     "Fast",     activeRefresh == RefreshMode::Fast);
   drawSegmentedButton(gRefreshBalancedButton, "Balanced", activeRefresh == RefreshMode::Balanced);
   drawSegmentedButton(gRefreshCleanButton,    "Clean",    activeRefresh == RefreshMode::Clean);
 
   // Power — Responsive / Balanced / Max
-  applyCoachMetadataFont();
+  applyTypographyFont(kSettingsLabelPx);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.drawString("Power", bx, 390);
-  gPowerResponsiveButton = {bx,    416, bw3, bh};
-  gPowerBalancedButton   = {bx2_3, 416, bw3, bh};
-  gPowerMaxButton        = {bx3_3, 416, bw3, bh};
+  display.drawString("Power", bx, 414);
+  gPowerResponsiveButton = {bx,    450, bw3, bh};
+  gPowerBalancedButton   = {bx2_3, 450, bw3, bh};
+  gPowerMaxButton        = {bx3_3, 450, bw3, bh};
   gPowerProfileButton = {};
   gBadgeSleepButton = {};
   gPowerModeButton = {};
@@ -7151,11 +7325,11 @@ void renderSettings(const char* refreshReason = "mode switch") {
   drawSegmentedButton(gPowerMaxButton,        "Max",        activePower == PowerProfile::BadgeMax);
 
   // Orientation — Normal / Strap
-  applyCoachMetadataFont();
+  applyTypographyFont(kSettingsLabelPx);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.drawString("Orientation", bx, 480);
-  gOrientationButton      = {bx,    506, bw2, bh};
-  gOrientationStrapButton = {bx2_2, 506, bw2, bh};
+  display.drawString("Orientation", bx, 518);
+  gOrientationButton      = {bx,    554, bw2, bh};
+  gOrientationStrapButton = {bx2_2, 554, bw2, bh};
   gLanguageAutoButton = {};
   gLanguageEnglishButton = {};
   gLanguageJapaneseButton = {};
@@ -7164,11 +7338,11 @@ void renderSettings(const char* refreshReason = "mode switch") {
   drawSegmentedButton(gOrientationStrapButton, "Strap",  activeOrientation == OrientationMode::Strap);
 
   // Advanced button
-  gAdvancedButton = {bx, 570, bw, 58};
+  gAdvancedButton = {bx, 632, bw, 58};
   drawButton(gAdvancedButton, "Advanced");
 
   // Home button
-  gHomeButton = {bx, display.height() - 76, bw, 60};
+  gHomeButton = {bx, display.height() - 82, bw, 62};
   drawButton(gHomeButton, "", IconType::Home);
 
   gSettings.fontSizeMode = savedSize;

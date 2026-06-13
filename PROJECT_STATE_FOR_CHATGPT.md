@@ -1,4 +1,4 @@
-# PaperBadge Project State — v5.8-dev14 Handoff
+# PaperBadge Project State — v5.8-dev15 Handoff
 
 _Last updated: 2026-06-13_
 
@@ -15,10 +15,88 @@ _Last updated: 2026-06-13_
 
 ## Firmware
 
-- **Version:** `v5.8-dev14` (`src/main.cpp:20`)
+- **Version:** `v5.8-dev15` (`src/main.cpp:20`)
 - **Build:** SUCCESS — RAM 49.5% · Flash 47.7%
 - **Upload:** SUCCESS — `/dev/cu.usbmodem1101`
 - **Smoke test:** PASS (7/7 boot log checks)
+
+---
+
+## What Changed in v5.8-dev15
+
+### Fix 1: Normalized option box heights across Drill/Exam screens
+
+All answer option boxes on a single question screen now share the same height (the max height
+required by any option on that screen). Previously, if option A needed 2 lines and B–D needed 1,
+the boxes had inconsistent heights which looked broken.
+
+**Implementation:** `sharedOptionButtonHeight(item, width)` computes the per-option max and
+normalizes before drawing. Applied to the combined and options-only paths in `renderCoachScreen`,
+`renderExamQuestion`, and `drawDrillResultView`. `buildDrillPagePlan` also normalizes heights
+internally so the fit calculation is consistent with the draw result.
+
+Serial log updated: `Drill combined shown: item=X options=N sharedH=H totalPages=P`
+
+### Fix 2: Drill answer tap flow — verified correct from dev14
+
+The immediate-feedback-on-tap flow (set `gDrillShowFeedback = true` on first option tap) was
+implemented in v5.8-dev14 and remains stable. No code change in dev15; behavior documented:
+
+| Location | Top-half tap | Bottom-half tap |
+|----------|-------------|-----------------|
+| Question/options screen (pre-answer) | prev page / item | options page / next drill item |
+| Result view (post-answer, options shown) | previous item (if any) | feedback page |
+| Feedback page 1 | back to result view | next feedback page OR next item |
+| Feedback page 2+ | previous feedback page | next feedback page OR next item |
+
+### Fix 3: Feedback and body text formatting for readability
+
+New `formatFeedbackBody(text)` helper inserts hard line breaks at:
+- Numbered list items (`1. ` / `1) ` preceded by whitespace)
+- Semicolon-separated clauses (2+ occurrences of `; ` → one clause per line)
+
+Applied in:
+- `appendFeedbackSection` → "Selected", "Best", "Why this is best" on the drill feedback page
+- `appendGlossarySectionFormatted` → body sections in Practice cards (Answer, Defense, Explanation, Anchor, Follow-up)
+
+Does not split prose, short phrases, decimal numbers, or URLs.
+
+### Fix 4: Drill follow-up / hostile-followup label updated
+
+`buildPracticeLines` for `HostileFollowup` items now labels the answer section
+**"Suggested response"** (was "Defense") to make the question/answer hierarchy explicit.
+Formatting is applied via `appendGlossarySectionFormatted`.
+
+### Fix 5: Results pages — combined summary + categories on page 1
+
+When the session has ≤3 category stats (fits on one category page), the Summary and Categories
+content is combined onto a single first page. The condensed summary block is followed by a
+thin divider line and then the category bars.
+
+Page count logic:
+- 0 answers: 1 page (empty state)
+- 1–3 stats: 3 pages (combined summary+cats · weakest · recent)
+- 4–6 stats: 4 pages (combined + cats2 · weakest · recent)
+- 7–8 stats: 5 pages (combined + cats2 + cats3 · weakest · recent)
+
+New function: `renderResultsSummaryAndCategoriesPage()`. `resultsCombinedFirstPage()` controls
+the branching. `resultsPageCountFor()` adjusted accordingly.
+
+### Fix 6: Settings page — larger labels, bigger buttons, improved layout
+
+- `kSegmentedPx`: 20 → **24** (segmented button font, Gothic_24 / SansBold12pt)
+- Section labels: `applyCoachMetadataFont()` (24px) → **`applyTypographyFont(28)`** (28px)
+- mV / USB detail lines: also bumped to 28px for consistency
+- Button height `bh`: 48 → **52** for better touch targets
+- Y-positions adjusted throughout to accommodate larger fonts and uniform spacing:
+  - Reader size: label y=206, buttons y=242
+  - Refresh: label y=310, buttons y=346
+  - Power: label y=414, buttons y=450
+  - Orientation: label y=518, buttons y=554
+  - Advanced: y=632
+  - Home: y=height-82
+- Battery bar height: 44 → 38px (proportional to taller block now using 52px height)
+- Selected state: unchanged (triple border + fake-bold; no `*`)
 
 ---
 
@@ -226,18 +304,34 @@ Sleep Off resets on reboot (experimental flag, not sticky).
 
 ---
 
-## Physical QA Checklist (v5.8-dev14)
+## Physical QA Checklist (v5.8-dev15)
 
-### Settings screen
+### Settings screen (v5.8-dev15)
 - [ ] Settings layout looks identical with Reader S, Reader M, and Reader L
-- [ ] All four section labels ("Reader size", "Refresh", "Power", "Orientation") appear at the same size and weight
+- [ ] Section labels ("Reader size", "Refresh", "Power", "Orientation") are visibly **larger** than before (28px, not 24px)
+- [ ] Button text ("Fast", "Responsive", "Normal", etc.) is visibly larger (24px, not 20px)
+- [ ] "Responsive" and "Balanced" fit cleanly in their button without wrapping or clipping
 - [ ] "Reader size" row: selected option shows thick border + bold label (no `*`)
-- [ ] "Refresh" row: shows Fast / Balanced / Clean — no wrapping
-- [ ] "Power" row: shows Responsive / Balanced / Max — no wrapping
-- [ ] "Orientation" row: shows Normal / Strap — no wrapping
 - [ ] Battery %: left-aligned, bar right-aligned, both vertically co-level on same centerline
-- [ ] mV and USB+charging lines visible below battery block
+- [ ] mV and USB+charging lines visible below battery block at 28px
 - [ ] Advanced button visible, navigates to Advanced screen
+
+### Results screen (v5.8-dev15)
+- [ ] With ≤3 categories: page 1 shows summary block + divider + category bars on same page
+- [ ] With ≤3 categories: page count is 3 (summary+cats · weakest · recent)
+- [ ] No important results data is missing from any page
+- [ ] Navigation arrows work correctly on all pages
+
+### Drill/Exam option height (v5.8-dev15)
+- [ ] All four option boxes on a screen have the same height
+- [ ] When one option needs 2 lines, all boxes grow to 2-line height (not just that one)
+- [ ] Single-line options still use compact height when all four fit on one line
+- [ ] Serial log shows `Drill combined shown: item=X options=4 sharedH=N totalPages=1`
+
+### Practice feedback formatting (v5.8-dev15)
+- [ ] Numbered list items in feedback (1. / 2. / 3.) start on their own line
+- [ ] Semicolon-separated clauses (3+) each appear on their own line
+- [ ] Prose and short phrases are NOT split
 
 ### Advanced screen
 - [ ] Advanced looks the same with Reader S / M / L
@@ -291,6 +385,6 @@ Sleep Off resets on reboot (experimental flag, not sticky).
 
 ## Next Steps
 
-1. **Physical QA v5.8-dev14** — confirm Reader L option text visibly larger than M, drill answer tap immediately shows feedback, post-answer navigation, no regressions
-2. **Japanese readiness implementation** — UTF-8 sanitizer, CJK word wrap, Japanese font path, generic deck schema (see `docs/PRD_PaperBadge_v0.6.md`)
+1. **Physical QA v5.8-dev15** — verify: option boxes all same height on each question screen; drill first answer tap goes directly to feedback; results combined page fits cleanly; Settings labels and buttons larger; no regressions
+2. **Japanese readiness implementation** — UTF-8 sanitizer, CJK word wrap, Japanese font path, generic deck schema (see `docs/PRD_PaperBadge_v0.6.md`). **Not implemented yet.**
 3. Long-term: GT911 touch INT wake research if alternative GPIO mapping found
