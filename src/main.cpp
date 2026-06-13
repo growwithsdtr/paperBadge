@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.8-dev15";
+constexpr const char* kFirmwareVersion = "v5.8-dev16";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -474,6 +474,7 @@ struct GlossaryRenderLine {
 
 uint8_t interviewStageCount(const CoachItemView& item);
 PracticeLayout practiceLayoutFor(FontSizeMode renderSize);
+String formatFeedbackBody(const String& raw);
 uint8_t glossaryPageCountFor(const CoachItemView& item, const PracticeLayout& layout);
 uint8_t paginateGlossaryLines(const std::vector<GlossaryRenderLine>& lines, const PracticeLayout& layout,
                               uint16_t* pageStarts, uint8_t maxPages);
@@ -4792,13 +4793,17 @@ uint8_t optionTextPxFor(const String& label, int32_t buttonWidth) {
 
 int32_t optionButtonHeightFor(const String& label, int32_t buttonWidth) {
   const uint8_t optionPx = optionTextPxFor(label, buttonWidth);
-  applyTypographyFont(optionPx);
+  applyTypographyFont(optionPx);  // same font as drawing — must match drawOptionButton
   std::vector<String> lines;
   wrapReaderTextToLines(label, buttonWidth - 32, lines, "option-measure");
-  const int32_t lineHeight = optionLineHeight(optionPx);
-  const int32_t desiredHeight = static_cast<int32_t>(lines.size()) * lineHeight + 26;
-  const int32_t minHeight = optionPx >= 31 ? 72 : 62;
-  return desiredHeight > minHeight ? desiredHeight : minHeight;
+  const int32_t lineH = optionLineHeight(optionPx);
+  const size_t lineCount = lines.empty() ? 1 : lines.size();
+  // Snap to tier (1-line/2-line/3-line) so all boxes sharing a screen stay visually uniform.
+  const size_t tier = lineCount <= 1 ? 1 : (lineCount <= 2 ? 2 : 3);
+  const int32_t vPad = optionPx >= 31 ? 24 : 20;  // balanced top+bottom padding
+  const int32_t minH = optionPx >= 31 ? 70 : 60;
+  const int32_t tieredH = static_cast<int32_t>(tier) * lineH + vPad;
+  return tieredH > minH ? tieredH : minH;
 }
 
 void drawOptionButton(const Rect& rect, const String& label) {
@@ -4814,12 +4819,13 @@ void drawOptionButton(const Rect& rect, const String& label) {
   std::vector<String> lines;
   wrapReaderTextToLines(label, rect.w - 32, lines, "option-button");
   const int32_t lineHeight = optionLineHeight(optionPx);
-  const int32_t textY = rect.y + 12;
+  // Center text block vertically so top and bottom padding look balanced.
+  const int32_t textBlockH = static_cast<int32_t>(lines.size()) * lineHeight;
+  const int32_t textY = rect.y + (rect.h - textBlockH) / 2;
   for (size_t line = 0; line < lines.size(); ++line) {
     display.drawString(lines[line], rect.x + 18, textY + static_cast<int32_t>(line) * lineHeight);
   }
-  logLayoutBox("option-button", rect, static_cast<int32_t>(lines.size()) * lineHeight + 24, 1,
-               static_cast<int32_t>(lines.size()) * lineHeight + 24 > rect.h);
+  logLayoutBox("option-button", rect, textBlockH + 24, 1, textBlockH + 24 > rect.h);
 }
 
 // Compute a shared (uniform) option box height for all options on a screen.
@@ -5201,7 +5207,8 @@ uint8_t buildCoachReaderStages(const CoachItemView& item, const PracticeLayout& 
 
   if (item.type == CoachItemType::HostileFollowup) {
     addStage("Follow-up", coachPromptFor(item));
-    addStage("Defense", coachAnswerFor(item));
+    // "Suggested response" separates the interviewer prompt from the candidate answer.
+    addStage("Suggested response", formatFeedbackBody(sanitizeCoachText(coachAnswerFor(item), "hostile-answer")));
     addStage("Anchor", coachRubricFor(item));
   } else if (item.type == CoachItemType::Glossary) {
     addStage("Term", String(item.term) + "\n" + coachAnswerFor(item));
@@ -5329,6 +5336,65 @@ String formatFeedbackBody(const String& raw) {
         result += text.substring(start, found);
         result += '\n';
         start = found + 2;
+      }
+      result += text.substring(start);
+      text = result;
+    }
+  }
+
+  // Colon-label splitting: "Label: text Label2: text" splits before each label word.
+  // Condition: 2+ label-colon patterns; skips URLs (contain //) and single-colon prose.
+  {
+    struct ColonPos { int labelStart = 0; };
+    static constexpr int kMaxLabels = 12;
+    ColonPos labels[kMaxLabels];
+    int labelCount = 0;
+    const int tlen = (int)text.length();
+    for (int i = 1; i < tlen - 1 && labelCount < kMaxLabels; ++i) {
+      if (text[i] == ':' && text[i + 1] == ' ') {
+        // Skip URLs: "://" pattern.
+        if (i + 2 < tlen && text[i + 1] == '/' && text[i + 2] == '/') continue;
+        if (i >= 1 && text[i - 1] == '/') continue;
+        // Find label word start (non-space, non-newline chars before colon).
+        int ls = i - 1;
+        while (ls > 0 && text[ls - 1] != ' ' && text[ls - 1] != '\n') --ls;
+        const int labelLen = i - ls;
+        if (labelLen >= 1 && labelLen <= 25) {
+          labels[labelCount].labelStart = ls;
+          ++labelCount;
+        }
+      }
+    }
+    if (labelCount >= 2) {
+      String result;
+      int prev = 0;
+      for (int j = 0; j < labelCount; ++j) {
+        const int ls = labels[j].labelStart;
+        if (ls <= 0) continue;  // skip label at very start of text
+        if (text[ls - 1] == '\n') continue;  // already on its own line
+        result += text.substring(prev, ls);
+        result += '\n';
+        prev = ls;
+      }
+      result += text.substring(prev);
+      text = result;
+    }
+  }
+
+  // Hyphen list splitting: " - item" pattern repeated 2+ times → split at each.
+  // Avoids breaking compound words or ranges; only fires on clear list-like usage.
+  {
+    int hyphenCount = 0;
+    int pos = 0;
+    while ((pos = text.indexOf(" - ", pos)) >= 0) { ++hyphenCount; pos += 3; }
+    if (hyphenCount >= 2) {
+      String result;
+      int start = 0;
+      int found;
+      while ((found = text.indexOf(" - ", start)) >= 0) {
+        result += text.substring(start, found);
+        result += '\n';
+        start = found + 1;  // keep "- item" on the new line
       }
       result += text.substring(start);
       text = result;
@@ -5530,8 +5596,11 @@ uint8_t currentCoachReaderPageCount() {
   }
   if (isOptionDrillScreen(gScreen, item) && gSelectedOption >= 0) {
     if (!gDrillShowFeedback) {
+      // Result view uses the same fit-aware plan as the pre-answer screen.
+      applyCoachButtonFont();
+      const DrillPagePlan plan = buildDrillPagePlan(item, layout);
       gSettings.fontSizeMode = savedSize;
-      return 1;  // result view is a single combined page
+      return plan.totalPages;
     }
     const uint8_t pageCount = feedbackPageCountFor(item, layout);
     gSettings.fontSizeMode = savedSize;
@@ -6103,29 +6172,25 @@ void renderInterviewPracticeScreen() {
                 pageCount, shortFontSizeModeName(renderSize));
 }
 
-// Show post-answer result view: question + all options with selected/correct borders.
-// No filled backgrounds; selected/correct options get 3-rect thick border + bold text.
+// Show post-answer result view: question + options with selected/correct borders.
+// Paginates using gCoachStage with the same fit-aware plan as the pre-answer screen.
 void drawDrillResultView(const CoachItemView& item, const PracticeLayout& layout) {
   auto& display = M5.Display;
   const uint8_t selected = static_cast<uint8_t>(gSelectedOption);
   const bool validKey = hasValidAnswerKey(item);
   const DrillPagePlan plan = buildDrillPagePlan(item, layout);
   const int32_t sharedH = sharedOptionButtonHeight(item, layout.contentW);
+  const uint8_t resultPages = plan.totalPages;
+  if (gCoachStage >= resultPages) gCoachStage = resultPages - 1;
 
-  drawCompactDrillHeader(item, 1, 1);
+  drawCompactDrillHeader(item, gCoachStage + 1, resultPages);
   gReaderContentRect = {layout.contentX, layout.contentY, layout.contentW, layout.contentH};
 
-  applyCoachQuestionFont();
-  drawReaderPage(plan.questionPages, 0, layout.contentX, layout.contentY, layout.questionLineHeight);
-
-  int32_t y = layout.contentY + plan.questionBlockHeight + 14;
-  const int32_t optionGap = 8;
-  for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
+  // Helper: draw one option box with selected/correct highlighting and vertically centered text.
+  auto drawResultOption = [&](uint8_t option, int32_t optY) {
     const String label = optionLabelWithLetter(item, option);
-    const Rect rect = {layout.contentX, y, layout.contentW, sharedH};
-    const bool isSelected = (option == selected);
-    const bool isCorrect = validKey && (option == item.correctIndex);
-    const bool highlighted = isSelected || isCorrect;
+    const Rect rect = {layout.contentX, optY, layout.contentW, sharedH};
+    const bool highlighted = (option == selected) || (validKey && option == item.correctIndex);
     display.drawRoundRect(rect.x, rect.y, rect.w, rect.h, 8, TFT_BLACK);
     display.drawRoundRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 7, TFT_BLACK);
     if (highlighted) {
@@ -6138,15 +6203,53 @@ void drawDrillResultView(const CoachItemView& item, const PracticeLayout& layout
     std::vector<String> wlines;
     wrapReaderTextToLines(label, rect.w - 32, wlines, "result-option");
     const int32_t lineH = optionLineHeight(optionPx);
-    const int32_t textY = rect.y + 12;
+    const int32_t textBlockH = static_cast<int32_t>(wlines.size()) * lineH;
+    const int32_t textY = rect.y + (rect.h - textBlockH) / 2;
     for (size_t li = 0; li < wlines.size(); ++li) {
       display.drawString(wlines[li], rect.x + 18, textY + static_cast<int32_t>(li) * lineH);
       if (highlighted) {
         display.drawString(wlines[li], rect.x + 19, textY + static_cast<int32_t>(li) * lineH);
       }
     }
-    y += sharedH + optionGap;
+  };
+
+  const int32_t optionGap = 8;
+  if (plan.combinedQuestionOptions) {
+    // All fits on one page: question followed by all options.
+    applyCoachQuestionFont();
+    drawReaderPage(plan.questionPages, 0, layout.contentX, layout.contentY, layout.questionLineHeight);
+    int32_t y = layout.contentY + plan.questionBlockHeight + 14;
+    for (uint8_t option = 0; option < item.optionCount && option < kMaxOptions; ++option) {
+      drawResultOption(option, y);
+      y += sharedH + optionGap;
+    }
+  } else if (gCoachStage < plan.questionPages.pageCount) {
+    // Question page(s) — same as pre-answer.
+    applyCoachQuestionFont();
+    drawReaderPage(plan.questionPages, gCoachStage, layout.contentX, layout.contentY, layout.questionLineHeight);
+  } else {
+    // Options page(s) with compact question reminder + selected/correct state.
+    const uint8_t opPageIdx = gCoachStage - plan.questionPages.pageCount;
+    const DrillOptionPage& opPage =
+        plan.optionPages[opPageIdx < plan.optionPageCount ? opPageIdx : plan.optionPageCount - 1];
+    int32_t y = layout.contentY;
+    applyCoachMetadataFont();
+    display.setTextColor(metadataTextColor(), TFT_WHITE);
+    TextLayoutResult reminderLayout =
+        drawWrappedText(plan.reminder, layout.contentX, y, layout.contentW,
+                        coachTypography().metadataLineHeight, 2, "result-reminder", 1);
+    y += reminderLayout.height + 12;
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    for (uint8_t offset = 0; offset < opPage.optionCount; ++offset) {
+      const uint8_t option = opPage.firstOption + offset;
+      if (option >= item.optionCount || option >= kMaxOptions) continue;
+      drawResultOption(option, y);
+      y += sharedH + optionGap;
+    }
   }
+  Serial.printf("Drill result view: item=%s page=%u/%u combined=%s\n", coachDisplayId(item),
+                static_cast<unsigned>(gCoachStage + 1), static_cast<unsigned>(resultPages),
+                plan.combinedQuestionOptions ? "yes" : "no");
 }
 
 void renderCoachScreen() {
@@ -6873,10 +6976,19 @@ uint8_t resultsCategoryPageCount(uint8_t statCount) {
   return static_cast<uint8_t>((statCount + kResultsStatsPerPage - 1) / kResultsStatsPerPage);
 }
 
-// When statCount fits on one category page (≤3), combine summary + categories on page 0.
-// Page layout: [combined summary+cats] [extra cat pages if any] [weakest] [recent]
+// Combine summary + categories on page 0 only when the content actually fits.
+// Measures worst-case height: condensed summary block + per-category bars (2-line label cap).
 bool resultsCombinedFirstPage(uint8_t statCount) {
-  return gSessionResultCount > 0 && statCount <= 3;
+  if (gSessionResultCount == 0 || statCount > 3) return false;
+  const int32_t metaLH = coachTypography().metadataLineHeight;
+  // Condensed summary: status+44, headers+44, numbers+76, detail+36, bar+38, divider+14+18 = 270
+  const int32_t summaryH = 44 + 44 + 76 + 36 + 38 + 14 + 18;
+  // Per category: up to 2-line label (drawWrappedText maxLines=2) + gap + bar increment
+  const int32_t perCatMaxH = metaLH * 2 + 12 + 62;
+  const int32_t needed = summaryH + static_cast<int32_t>(statCount) * perCatMaxH;
+  // Available: display(960) - resultHeader(132) - footer(86) = 742px
+  const int32_t available = 742;
+  return needed <= available;
 }
 
 uint8_t resultsPageCountFor(uint8_t statCount) {
@@ -7337,9 +7449,9 @@ void renderSettings(const char* refreshReason = "mode switch") {
   drawSegmentedButton(gOrientationButton,      "Normal", activeOrientation == OrientationMode::Handheld);
   drawSegmentedButton(gOrientationStrapButton, "Strap",  activeOrientation == OrientationMode::Strap);
 
-  // Advanced button
+  // Advanced button — uses same 24px font as segmented controls for visual consistency.
   gAdvancedButton = {bx, 632, bw, 58};
-  drawButton(gAdvancedButton, "Advanced");
+  drawSegmentedButton(gAdvancedButton, "Advanced", false);
 
   // Home button
   gHomeButton = {bx, display.height() - 82, bw, 62};
@@ -8722,49 +8834,58 @@ void handleTouch() {
     }
 
     if (gReaderContentRect.contains(tapX, tapY)) {
-      // Drill post-answer: two internal sub-pages (result ↔ feedback); no item skip.
+      // Drill post-answer state machine (gSelectedOption >= 0):
+      //   States: result view (!gDrillShowFeedback) ↔ feedback view (gDrillShowFeedback)
+      //   Result view:   top-half → prev result page (or no-op); bottom-half → feedback
+      //   Feedback view: top-half → prev feedback page, or back to result view at page 0;
+      //                  bottom-half → next feedback page, or next drill item on last page
+      //   Footer arrows navigate between drill items regardless of view state.
       if (isOptionDrillScreen(gScreen, item) && gSelectedOption >= 0) {
         if (!gDrillShowFeedback) {
+          // Result view.
           if (tapY >= gReaderContentRect.y + gReaderContentRect.h / 2) {
+            // Bottom-half: enter feedback at page 0.
             markHitTarget("drill result -> feedback", tapX, tapY);
             gDrillShowFeedback = true;
             gCoachStage = 0;
             gCoachNeedsCleanEntryRefresh = true;
             renderCoachScreen();
+          } else if (gCoachStage > 0) {
+            // Top-half on a later result page: go to previous result page.
+            markHitTarget("drill result prev page", tapX, tapY);
+            --gCoachStage;
+            renderCoachScreen();
           } else {
-            if (hasPreviousCoachItem()) {
-              markHitTarget("drill result -> prev item", tapX, tapY);
-              previousCoachItem();
-              renderCoachScreen();
-            } else {
-              Serial.println("drill result: no previous item");
-            }
+            // Top-half on first result page: no-op (do not skip to previous item).
+            Serial.println("drill result: top-half at page 0, no action");
           }
         } else {
+          // Feedback view.
           if (tapY < gReaderContentRect.y + gReaderContentRect.h / 2) {
+            // Top-half: go to previous feedback page, or back to result view.
             markHitTarget("drill feedback nav up", tapX, tapY);
             if (gCoachStage > 0) {
               --gCoachStage;
               renderCoachScreen();
             } else {
               gDrillShowFeedback = false;
+              gCoachStage = 0;
               gCoachNeedsCleanEntryRefresh = true;
               renderCoachScreen();
             }
           } else {
+            // Bottom-half: advance feedback page, or next item on last feedback page.
             const uint8_t feedbackPages = currentCoachReaderPageCount();
             if (gCoachStage + 1 < feedbackPages) {
               markHitTarget("drill feedback next page", tapX, tapY);
               ++gCoachStage;
               renderCoachScreen();
+            } else if (hasNextCoachItem()) {
+              markHitTarget("drill feedback -> next item", tapX, tapY);
+              nextCoachItem();
+              renderCoachScreen();
             } else {
-              if (hasNextCoachItem()) {
-                markHitTarget("drill feedback -> next item", tapX, tapY);
-                nextCoachItem();
-                renderCoachScreen();
-              } else {
-                Serial.println("drill feedback: no next item");
-              }
+              Serial.println("drill feedback: no next item");
             }
           }
         }

@@ -12,17 +12,18 @@ The current embedded PaperCoach content pack is senior AI/Product Manager interv
 
 It boots into a static conference badge and exposes a normal-orientation Home menu with Badge, Practice, Drills, Exam, Glossary, Results, Settings, and Debug.
 
-Current firmware version in source: `v5.6`.
+Current firmware version in source: `v5.8-dev16`.
 
 ## Quick Commands
 
 ```bash
 pio run
-pio run -t upload
-pio device monitor -p /dev/tty.usbmodem1101 -b 115200
+pio run -t upload --upload-port /dev/cu.usbmodem1101
+python3 .claude/skills/run-paperbadge/serial_capture.py --no-reset --tail 30
+UPLOAD=0 bash .claude/skills/run-paperbadge/smoke.sh
 ```
 
-Default upload and monitor port: `/dev/tty.usbmodem1101`.
+Default upload and monitor port: `/dev/cu.usbmodem1101` (macOS — use `cu.` prefix).
 
 ## Current SD Paths
 

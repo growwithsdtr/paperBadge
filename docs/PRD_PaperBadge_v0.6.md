@@ -19,7 +19,7 @@ first-class concern.
 
 ---
 
-## Current Behavior (v5.8-dev15)
+## Current Behavior (v5.8-dev16)
 
 ### Badge Mode
 
@@ -65,14 +65,15 @@ Drills, Exam, and Glossary. Also scales option button text in MCQ drills and exa
 App chrome (Settings, Advanced, Power Lab, and all other control screens) uses a fixed medium font
 independent of Reader size. Section labels and button text in Settings do not change with Reader size.
 
-| Size | Body px | Option text | Description |
-|------|---------|-------------|-------------|
-| S | 24 | 24px (Gothic_24) | Compact; more text per page |
-| M | 31 | 31px (Gothic_28) | Default; comfortable reading |
-| L | 40 | 36px (Gothic_36), 32px fallback | Large print; fewer items per page |
+| Size | Body px | Option text | 1-line box | 2-line box |
+|------|---------|-------------|-----------|-----------|
+| S | 24 | 24px | 60px | 84px |
+| M | 31 | 31px | 70px | 106px |
+| L | 40 | 36–40px | 74px | 124px |
 
-The fallback applies when a specific option label is too long to fit in 2 lines at the preferred size.
-Only that individual label downgrades; other options on the same screen are not affected.
+Option boxes snap to discrete tier heights (1-line / 2-line / 3-line). All options on a single
+screen share the max tier so that the layout is visually uniform. Text is centered vertically inside
+each box. Reader S/M/L affects study screens only — Settings uses fixed medium font.
 
 **Refresh mode** (Fast / Bal / Clean) — controls e-ink refresh cadence.
 
@@ -110,55 +111,60 @@ LightNap is blocked (never entered) when:
 - An exam question or MCQ drill option is awaiting a tap (answer-selection guard)
 - Input lock is active (including the 400ms post-wake debounce window)
 
-### Option Box Height Normalization (v5.8-dev15)
+### Option Box Height — Tier-Based, Shared, Centered (v5.8-dev16)
 
-All answer option boxes on a single question screen share the same height — the maximum required
-by any individual option on that screen. If option A needs 2 lines and B–D need 1, all four boxes
-grow to the 2-line height so the layout looks visually consistent.
+All answer option boxes on a single question screen share the same height tier (1-line / 2-line /
+3-line). The tier is determined by the most-wrapped option. Text is vertically centered in each box.
+`sharedOptionButtonHeight` applies in all paths: combined, options-only, result view, and Exam.
 
-`sharedOptionButtonHeight(item, width)` computes the max, applied in all option drawing paths:
-combined, options-only, result view (post-answer), and Exam.
+### Drill Post-Answer Navigation (v5.8-dev16)
 
-### Drill Post-Answer Navigation
-
-After a drill answer is selected, the selected option is immediately registered and the feedback
-page is shown. The drill item then allows toggling between two internal sub-pages:
+After a drill answer is selected, feedback is shown immediately. The state machine:
 
 1. **Feedback page** — shown immediately after answer tap. Shows "Selected", "Best", "Why this
-   is best" sections. Text with numbered lists or multiple semicolons is formatted to break at
-   clause boundaries for readability. May paginate if the explanation is long.
-2. **Result view** — accessible from feedback by tapping the top-half (page 1 only). Shows the
-   question stem + all four option boxes with the selected and correct options highlighted (triple
-   border + bold text).
+   is best". Paginates if explanation is long. Colon-label and hyphen-list patterns break to new lines.
+2. **Result view** — shows question + all options with selected/correct highlighting. May paginate
+   using `gCoachStage` with the same fit-aware plan as pre-answer.
 
 Transitions:
-- Option box tap (before answer): selects answer → **immediately goes to feedback**
-- Top-half tap on feedback page 1 → return to result view
+- Option box tap (before answer): selects answer → **immediately goes to feedback (page 0)**
+- Top-half tap on feedback page 1 → back to result view (gCoachStage reset to 0)
 - Top-half tap on feedback page 2+ → previous feedback page
-- Bottom-half tap on result view → feedback page
-- Bottom-half tap on feedback page → next feedback page OR next drill item
-- Footer arrow buttons (← →) still advance to the next or previous drill item at any point
-- Home button returns to Home from either sub-page
+- Top-half tap on result view (page 0) → no-op (does NOT navigate to previous item)
+- Top-half tap on result view (page 1+) → previous result page
+- Bottom-half tap on result view → feedback page 0
+- Bottom-half tap on feedback (last page) → next drill item
+- Footer arrow buttons (← →): advance to next/previous drill item from any state
 
-### Feedback and Body Text Formatting (v5.8-dev15)
+### Feedback and Body Text Formatting (v5.8-dev16)
 
-`formatFeedbackBody(text)` is applied to feedback and practice body text before wrapping:
+`formatFeedbackBody(text)` breaks feedback and practice body text at clause boundaries:
 - Numbered list items (`1. ` / `1) `) start on their own line
-- Semicolon-separated clauses (2+ `;` → one clause per line)
+- Semicolon-separated clauses (2+ `; ` → one clause per line)
+- Colon-label patterns (2+ `Label: ` → each label on its own line; skips URLs)
+- Hyphen-list patterns (2+ ` - ` → each item on its own line)
 - Prose, short phrases, decimal numbers, and URLs are unaffected
 
-Applies to: drill feedback sections (Selected, Best, Why this is best), practice card body
-sections (Answer, Defense/Suggested response, Explanation, Anchor, Follow-up).
+Applies to: drill feedback sections, practice card body sections (Answer, Suggested response,
+Explanation, Anchor, Follow-up), and hostile follow-up answer stages in `buildCoachReaderStages`.
 
-### Results Pages — Combined Summary+Categories (v5.8-dev15)
+### Hostile Follow-up — "Suggested response" stage (v5.8-dev16)
 
-When the session has ≤3 category stats, the Summary and Categories content is merged into a
-single first page (condensed summary block + divider line + category bars). Separate pages are
-only created when category stats exceed 3 (requiring a second category page).
+In `buildCoachReaderStages`, `CoachItemType::HostileFollowup` answer stage renamed from "Defense"
+to "Suggested response". Answer body passes through `formatFeedbackBody` before page building.
+Matches the label already used in `buildPracticeLines` for the Practice view.
+
+### Results Pages — Fit-Based Combined Summary+Categories (v5.8-dev16)
+
+`resultsCombinedFirstPage()` uses a measured fit check instead of a raw count comparison:
+- Condensed summary block: 270px
+- Per-category worst case (2-line label): 126px
+- Available height: 742px
+- For ≤3 categories: 648px needed < 742px → combine
 
 Page count: 3 pages for ≤3 categories; 4 pages for 4–6; 5 pages for 7–8.
 
-### Settings Page — Fixed Medium UI (v5.8-dev15)
+### Settings Page — Fixed Medium UI (v5.8-dev15/dev16)
 
 Settings uses a consistent fixed-medium font style independent of Reader S/M/L:
 
@@ -166,13 +172,13 @@ Settings uses a consistent fixed-medium font style independent of Reader S/M/L:
 |---------|-----------|-------|
 | Screen title | 40px (title) | unchanged |
 | Battery % | 40px (title) | large, vertically centered with bar |
-| mV / USB detail | 28px | was 24px (metadata) |
-| Section labels | 28px | was 24px — now noticeably larger |
-| Segmented buttons | 24px | was 20px — "Responsive" / "Balanced" fit |
+| mV / USB detail | 28px | readable secondary info |
+| Section labels | 28px | `kSettingsLabelPx` — above metadata |
+| Segmented buttons | 24px | `kSegmentedPx` — all buttons including Advanced |
 | Selected state | triple border + bold text | no `*`, no fill |
-| Button height | 52px | was 48px — better touch targets |
+| Button height | 52px | better touch targets |
 
-Full labels used for all controls: Fast / Balanced / Clean; Responsive / Balanced / Max; Normal / Strap.
+Full labels: Reader: S / M / L — Refresh: Fast / Balanced / Clean — Power: Responsive / Balanced / Max — Orientation: Normal / Strap
 
 **Deep sleep:** Permanently blocked — the GT911 touch controller INT is on GPIO48, which is not
 in the ESP32-S3 RTC GPIO range (0–21). No verified deep sleep wake source exists.

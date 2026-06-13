@@ -3,10 +3,12 @@
 ## Firmware Update Checklist
 
 1. Build: `pio run`
-2. Upload: `pio run -t upload`
-3. Monitor briefly: `pio device monitor -p /dev/tty.usbmodem1101 -b 115200`
-4. Stop monitor with `Ctrl+C` so the port is free.
+2. Upload: `pio run -t upload --upload-port /dev/cu.usbmodem1101`
+3. Smoke test: `UPLOAD=0 bash .claude/skills/run-paperbadge/smoke.sh`
+4. Monitor briefly: `python3 .claude/skills/run-paperbadge/serial_capture.py --no-reset --tail 30`
 5. Photograph the required screen batch below.
+
+Port: `/dev/cu.usbmodem1101` (macOS). Use `cu.` prefix, not `tty.`.
 
 ## Physical QA After Each Firmware Update
 
@@ -38,19 +40,21 @@
 - Settings power and Badge sleep controls.
 - Debug Power Audit screen.
 
-## Photo Batches
+## Photo Batches (v5.8-dev16)
 
-Maximum 10 photos after v5.6:
+10 photos per QA pass:
 
 1. Static Badge.
-2. Settings power row showing `Conf. Badge` / Badge sleep labels.
+2. Settings screen — confirm all buttons (Reader S/M/L, Fast/Balanced/Clean, Responsive/Balanced/Max,
+   Normal/Strap, Advanced) use the same visual font size. Selected state shows triple border.
 3. Practice large Answer page with paragraph spacing.
-4. Weak Answer A01 question/options at Reader M.
-5. Metric Precision metric-01 question/options at Reader M.
+4. Weak Answer A01 question/options at Reader L — confirm option boxes same height, text centered.
+5. Metric Precision question/options at Reader M — confirm option boxes same height.
 6. A longer Exam question, plus options page if split.
 7. Drill feedback page with Selected / Best / Why this is best blocks.
-8. Help / Legend showing wrapped long lines.
-9. Results Recent misses page after at least one miss.
+   Confirm colon-label patterns (e.g. "Question: ... Answer: ...") break to separate lines.
+8. Hostile Follow-up drill — confirm "Suggested response" label visible, body readable.
+9. Results page after 3+ answers — confirm Summary+Categories combined if ≤3 categories.
 10. Debug Power Audit.
 
 ## Render Trace
