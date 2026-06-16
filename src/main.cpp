@@ -53,6 +53,7 @@ constexpr size_t kMaxExamPool = 180;
 constexpr uint8_t kMaxOptions = 4;
 constexpr uint8_t kMaxWrappedLines = 18;
 constexpr uint8_t kMaxReaderPageCount = 32;
+constexpr size_t kMaxJapaneseResults = 64;
 constexpr int32_t kCoachMargin = 20;
 constexpr int32_t kCoachHeaderBottom = 132;
 constexpr const char* kHeaderSep = " | ";
@@ -464,6 +465,131 @@ struct CategoryStat {
   uint16_t correct = 0;
 };
 
+// Embedded Japanese Daily Questions item — Week 1 Day 1 sample only. const char* fields point at
+// flash string literals (no heap allocation), independent of CoachItem/CoachItemView.
+struct JapaneseItem {
+  const char* sourceId;
+  const char* bookId;
+  const char* jlptLevel;
+  uint8_t week;
+  uint8_t day;
+  const char* lessonId;
+  const char* itemId;
+  uint16_t sourceQuestionNumber;
+  const char* categoryJapanese;   // もじ / ごい / ぶんぽう
+  const char* macroArea;          // kanji / vocabulary / grammar
+  const char* promptJapanese;
+  const char* choiceJapanese[4];
+  uint8_t correctChoice;          // 0-3
+  const char* answerSentenceJapanese;
+  const char* explanationJapanese;
+  const char* explanationEnglish;
+  const char* grammarPattern;
+  const char* vocabularyItems;
+  const char* kanjiItems;
+  const char* conceptIds;
+};
+
+// RAM-only result record for Japanese Daily Questions — intentionally separate from
+// SessionResult/gSessionResults (Interview Practice/Drills/Exam), per the requirement that
+// Japanese results never appear inside Interview Results.
+struct JapaneseSessionResult {
+  uint32_t millisAt = 0;
+  char itemId[24] = {};
+  char sourceId[24] = {};
+  char macroArea[16] = {};
+  char categoryJapanese[16] = {};
+  uint8_t week = 0;
+  uint8_t day = 0;
+  uint8_t selectedChoice = 0;
+  uint8_t correctChoice = 0;
+  bool correct = false;
+};
+
+// Embedded Japanese Daily Questions dataset — Week 1 Day 1 sample only (originally written,
+// N3-style; not extracted from any copyrighted book). Covers もじ (kanji)/ごい (vocabulary)/
+// ぶんぽう (grammar). Do not import the full 500-question book here.
+static const JapaneseItem kJapaneseDayItems[] = {
+    {"n3sample_w1d1_001", "n3_sample_w1d1", "N3", 1, 1, "w1d1_kanji", "w1d1_q001", 1, "もじ", "kanji",
+     "「郵便局」の読み方として正しいものはどれですか。",
+     {"ゆうびんきょく", "ゆうべんきょく", "ゆびんきょく", "ゆうびんきょうく"}, 0,
+     "彼は郵便局へ荷物を取りに行きました。",
+     "「郵便局」は「ゆうびんきょく」と読みます。郵便局は荷物や手紙を送る場所です。",
+     "Post office is read 'yuubinkyoku'. It is a place to send packages and letters.", "",
+     "郵便局,荷物", "郵,便,局", "kanji_yuubinkyoku"},
+    {"n3sample_w1d1_002", "n3_sample_w1d1", "N3", 1, 1, "w1d1_kanji", "w1d1_q002", 2, "もじ", "kanji",
+     "「荷物」の読み方として正しいものはどれですか。",
+     {"にもつ", "かもつ", "にぶつ", "かぶつ"}, 0,
+     "引っ越したので、荷物がたくさんあります。",
+     "「荷物」は「にもつ」と読みます。引っ越しの時は荷物が多くなります。",
+     "Luggage/baggage is read 'nimotsu'. There is a lot of luggage when moving.", "",
+     "荷物,引っ越す", "荷,物", "kanji_nimotsu"},
+    {"n3sample_w1d1_003", "n3_sample_w1d1", "N3", 1, 1, "w1d1_kanji", "w1d1_q003", 3, "もじ", "kanji",
+     "「違っていました」の「違う」の読み方として正しいものはどれですか。",
+     {"ちがう", "いちがう", "たがう", "ちかう"}, 0,
+     "子供のころに聞いた話と、実際の話は違っていました。",
+     "「違う」は「ちがう」と読みます。「違っていました」は過去形です。",
+     "'Chigau' means to differ/be wrong. '違っていました' is its past-tense form.", "",
+     "違う,子供のころ", "違", "kanji_chigau"},
+    {"n3sample_w1d1_004", "n3_sample_w1d1", "N3", 1, 1, "w1d1_vocab", "w1d1_q004", 4, "ごい", "vocabulary",
+     "「引っ越した」の意味として正しいものはどれですか。",
+     {"住む場所を変えた", "仕事を変えた", "学校を変えた", "名前を変えた"}, 0,
+     "先月、新しいアパートに引っ越したばかりです。",
+     "「引っ越す」は住む場所を変えることです。「引っ越した」はその過去形です。",
+     "'Hikkosu' means to move (change residence). '引っ越した' is its past form.", "",
+     "引っ越す", "引,越", "vocab_hikkosu"},
+    {"n3sample_w1d1_005", "n3_sample_w1d1", "N3", 1, 1, "w1d1_vocab", "w1d1_q005", 5, "ごい", "vocabulary",
+     "「子供のころ」の意味として正しいものはどれですか。",
+     {"子供だった時", "子供を産む時", "子供を育てる時", "子供に会う時"}, 0,
+     "子供のころ、毎日公園で遊んでいました。",
+     "「子供のころ」は「子供だった時」という意味です。",
+     "'Kodomo no koro' means 'when one was a child.'", "",
+     "子供のころ", "子,供", "vocab_kodomonokoro"},
+    {"n3sample_w1d1_006", "n3_sample_w1d1", "N3", 1, 1, "w1d1_vocab", "w1d1_q006", 6, "ごい", "vocabulary",
+     "郵便局でできることとして正しいものはどれですか。",
+     {"荷物を送る", "映画を見る", "野菜を買う", "お風呂に入る"}, 0,
+     "郵便局で荷物を送ってから、買い物に行きました。",
+     "郵便局では荷物や手紙を送ることができます。",
+     "At the post office, you can send packages and letters.", "",
+     "郵便局,荷物", "郵,便,局,荷,物", "vocab_yuubinkyoku_use"},
+    {"n3sample_w1d1_007", "n3_sample_w1d1", "N3", 1, 1, "w1d1_grammar", "w1d1_q007", 7, "ぶんぽう", "grammar",
+     "（　）に入る正しい言葉を選びなさい。「子供のころ、よくこの公園で遊んだ（　）。」",
+     {"ものだ", "ことだ", "はずだ", "べきだ"}, 0,
+     "子供のころ、よくこの公園で遊んだものだ。",
+     "「～ものだ」は昔の習慣や思い出を懐かしんで言う時に使います。",
+     "'~monoda' is used to reminisce about past habits, like 'used to ~.'", "～ものだ", "", "",
+     "grammar_monoda"},
+    {"n3sample_w1d1_008", "n3_sample_w1d1", "N3", 1, 1, "w1d1_grammar", "w1d1_q008", 8, "ぶんぽう", "grammar",
+     "（　）に入る正しい言葉を選びなさい。「弟はゲーム（　）て、勉強しません。」",
+     {"をしてばかりい", "をしたところ", "をしてから", "をするはず"}, 0,
+     "弟はゲームをしてばかりいて、勉強しません。",
+     "「～てばかりいる」は同じことばかりするという意味です。",
+     "'~tebakari iru' means doing nothing but ~ / always ~ing.", "～てばかりいる", "", "",
+     "grammar_tebakariiru"},
+    {"n3sample_w1d1_009", "n3_sample_w1d1", "N3", 1, 1, "w1d1_grammar", "w1d1_q009", 9, "ぶんぽう", "grammar",
+     "（　）に入る正しい言葉を選びなさい。「これは大事な物だから、（　）よ。」",
+     {"とっちゃいけない", "とってもいい", "とったらしい", "とるそうだ"}, 0,
+     "これは大事な物だから、とっちゃいけないよ。",
+     "「とっちゃいけない」は「取ってはいけない」のくだけた言い方です。",
+     "'Tocchaikenai' is a casual contraction of 'totte wa ikenai' (must not take).",
+     "～ちゃいけない（～てはいけない）", "", "", "grammar_tcha_ikenai"},
+    {"n3sample_w1d1_010", "n3_sample_w1d1", "N3", 1, 1, "w1d1_grammar", "w1d1_q010", 10, "ぶんぽう", "grammar",
+     "（　）に入る正しい言葉を選びなさい。「もうご飯を食べ（　）たよ。」",
+     {"ちゃっ", "てい", "ながら", "そうに"}, 0,
+     "もうご飯を食べちゃったよ。",
+     "「ちゃう」は「てしまう」のくだけた言い方です。「食べちゃった」は「食べてしまった」のことです。",
+     "'Chau' is a casual contraction of 'teshimau'. '食べちゃった' = '食べてしまった' (already ate).",
+     "～ちゃう（～てしまう）", "", "", "grammar_chau"},
+    {"n3sample_w1d1_011", "n3_sample_w1d1", "N3", 1, 1, "w1d1_grammar", "w1d1_q011", 11, "ぶんぽう", "grammar",
+     "（　）に入る正しい言葉を選びなさい。「出かける前に、窓を閉め（　）。」",
+     {"とこう", "るところ", "たばかり", "るはず"}, 0,
+     "出かける前に、窓を閉めとこう。",
+     "「とく」は「ておく」のくだけた言い方です。「閉めとこう」は「閉めておこう」のことです。",
+     "'Toku' is a casual contraction of 'te oku'. '閉めとこう' = '閉めておこう' (let's close it in advance).",
+     "～とく（～ておく）", "", "", "grammar_toku"},
+};
+constexpr size_t kJapaneseDayItemCount = sizeof(kJapaneseDayItems) / sizeof(kJapaneseDayItems[0]);
+
 enum class GlossaryLineKind : uint8_t {
   Term,
   Label,
@@ -656,6 +782,8 @@ SessionResult gSessionResults[kMaxSessionResults];
 size_t gSessionResultCount = 0;
 uint32_t gSessionId = 0;
 String gResultsStorageStatus = "RAM session only";
+JapaneseSessionResult gJapaneseResults[kMaxJapaneseResults];
+size_t gJapaneseResultCount = 0;
 uint8_t gResultsPage = 0;
 size_t gExamItemIndices[kMaxExamQuestions];
 uint8_t gExamCount = 0;
@@ -6824,7 +6952,7 @@ void renderJapaneseMenu(const char* refreshReason = "mode switch") {
   display.drawString("Japanese", 32, 34);
   applyCoachMetadataFont();
   display.setTextColor(metadataTextColor(), TFT_WHITE);
-  display.drawString("N3 sample · Week 1 Day 1", 34, 92);
+  display.drawString("N3 sample - Week 1 Day 1", 34, 92);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
 
   const int32_t buttonX = 34;
@@ -6849,6 +6977,115 @@ void renderJapaneseMenu(const char* refreshReason = "mode switch") {
 
   finishDisplayRefresh();
   Serial.println("Japanese menu shown.");
+}
+
+// RAM-only — intentionally not gSessionResults/SessionResult (Interview Practice/Drills/Exam).
+void recordJapaneseAnswer(const JapaneseItem& item, uint8_t selectedChoice) {
+  if (gJapaneseResultCount >= kMaxJapaneseResults) {
+    for (size_t i = 1; i < kMaxJapaneseResults; ++i) {
+      gJapaneseResults[i - 1] = gJapaneseResults[i];
+    }
+    gJapaneseResultCount = kMaxJapaneseResults - 1;
+  }
+  JapaneseSessionResult& result = gJapaneseResults[gJapaneseResultCount++];
+  result.millisAt = millis();
+  copyToBuffer(result.itemId, sizeof(result.itemId), item.itemId);
+  copyToBuffer(result.sourceId, sizeof(result.sourceId), item.sourceId);
+  copyToBuffer(result.macroArea, sizeof(result.macroArea), item.macroArea);
+  copyToBuffer(result.categoryJapanese, sizeof(result.categoryJapanese), item.categoryJapanese);
+  result.week = item.week;
+  result.day = item.day;
+  result.selectedChoice = selectedChoice;
+  result.correctChoice = item.correctChoice;
+  result.correct = selectedChoice == item.correctChoice;
+  Serial.printf("Japanese answer recorded: item=%s selected=%u correct=%u total=%u\n", item.itemId,
+                static_cast<unsigned>(selectedChoice), result.correct ? 1 : 0,
+                static_cast<unsigned>(gJapaneseResultCount));
+}
+
+void renderJapaneseDaily(const char* refreshReason = "mode switch") {
+  gScreen = Screen::JapaneseDaily;
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  if (gJapaneseQuestionIndex >= kJapaneseDayItemCount) {
+    gJapaneseQuestionIndex = 0;
+  }
+  const JapaneseItem& item = kJapaneseDayItems[gJapaneseQuestionIndex];
+  const int32_t contentW = display.width() - 64;
+
+  display.setTextDatum(textdatum_t::top_left);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  applyJapaneseBodyFont(20);
+  char qNumber[8];
+  snprintf(qNumber, sizeof(qNumber), "Q%03u", static_cast<unsigned>(item.sourceQuestionNumber));
+  String header = String(item.jlptLevel) + " · W" + String(item.week) + "D" + String(item.day) + " · " +
+                  qNumber + " · " + item.categoryJapanese;
+  drawJapaneseWrappedText(header, 32, 30, contentW, japaneseLineHeight(20), 1, "japanese-header");
+
+  if (!gJapaneseShowFeedback) {
+    applyJapaneseBodyFont(26);
+    TextLayoutResult promptLayout =
+        drawJapaneseWrappedText(item.promptJapanese, 32, 86, contentW, japaneseLineHeight(26), 5, "japanese-prompt");
+    int32_t y = 86 + promptLayout.height + 24;
+    const int32_t buttonX = 32;
+    const int32_t buttonH = 86;
+    const int32_t gap = 14;
+    for (uint8_t i = 0; i < 4; ++i) {
+      gJapaneseOptionButtons[i] = {buttonX, y, contentW, buttonH};
+      String label = String(static_cast<char>('A' + i)) + ". " + item.choiceJapanese[i];
+      drawJapaneseOptionButton(gJapaneseOptionButtons[i], label);
+      y += buttonH + gap;
+    }
+    gHomeButton = {buttonX, display.height() - 110, contentW, 76};
+    drawButton(gHomeButton, "", IconType::Home);
+  } else {
+    const bool correct = gJapaneseSelectedOption == static_cast<int8_t>(item.correctChoice);
+    applyJapaneseTitleFont();
+    display.drawString(correct ? "Correct" : "Wrong", 32, 86);
+
+    int32_t y = 138;
+    applyJapaneseBodyFont(22);
+    String correctLine = String("Correct: ") + static_cast<char>('A' + item.correctChoice) + ". " +
+                         item.choiceJapanese[item.correctChoice];
+    TextLayoutResult l1 =
+        drawJapaneseWrappedText(correctLine, 32, y, contentW, japaneseLineHeight(22), 2, "japanese-correct");
+    y += l1.height + 14;
+
+    TextLayoutResult l2 = drawJapaneseWrappedText(item.answerSentenceJapanese, 32, y, contentW,
+                                                   japaneseLineHeight(22), 3, "japanese-answer-sentence");
+    y += l2.height + 14;
+
+    TextLayoutResult l3 = drawJapaneseWrappedText(item.explanationJapanese, 32, y, contentW,
+                                                   japaneseLineHeight(22), 3, "japanese-explanation");
+    y += l3.height + 14;
+
+    applyJapaneseBodyFont(18);
+    String englishLine = String("EN: ") + item.explanationEnglish;
+    TextLayoutResult l4 =
+        drawJapaneseWrappedText(englishLine, 32, y, contentW, japaneseLineHeight(18), 3, "japanese-english");
+    y += l4.height + 14;
+
+    String tags;
+    if (item.grammarPattern[0] != '\0') tags += String("Grammar: ") + item.grammarPattern + "  ";
+    if (item.vocabularyItems[0] != '\0') tags += String("Vocab: ") + item.vocabularyItems + "  ";
+    if (item.kanjiItems[0] != '\0') tags += String("Kanji: ") + item.kanjiItems;
+    if (tags.length() > 0) {
+      drawJapaneseWrappedText(tags, 32, y, contentW, japaneseLineHeight(18), 2, "japanese-tags");
+    }
+
+    const int32_t buttonX = 32;
+    const int32_t navW = (contentW - 14) / 2;
+    gJapaneseNextButton = {buttonX, display.height() - 110, navW, 76};
+    gHomeButton = {buttonX + navW + 14, display.height() - 110, navW, 76};
+    drawButton(gJapaneseNextButton, "Next", IconType::Next);
+    drawButton(gHomeButton, "", IconType::Home);
+  }
+
+  finishDisplayRefresh();
+  Serial.printf("Japanese daily question shown: item=%s feedback=%s\n", item.itemId,
+                gJapaneseShowFeedback ? "yes" : "no");
 }
 
 void renderPlaceholderScreen(Screen screen, const char* title, const char* body, const char* refreshReason = "mode switch") {
@@ -8896,6 +9133,45 @@ void handleTouch() {
     if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
       renderHome();
+    } else if (hitTarget(gJapaneseDailyButton, "japanese daily questions", tapX, tapY)) {
+      gJapaneseQuestionIndex = 0;
+      gJapaneseSelectedOption = -1;
+      gJapaneseShowFeedback = false;
+      renderJapaneseDaily();
+    }
+    noteIgnoredIfNoHit(tapX, tapY);
+    return;
+  }
+
+  if (gScreen == Screen::JapaneseDaily) {
+    if (!gJapaneseShowFeedback) {
+      const JapaneseItem& item = kJapaneseDayItems[gJapaneseQuestionIndex];
+      bool optionHit = false;
+      for (uint8_t i = 0; i < 4 && !optionHit; ++i) {
+        char target[24];
+        snprintf(target, sizeof(target), "japanese option %u", static_cast<unsigned>(i));
+        if (hitTarget(gJapaneseOptionButtons[i], target, tapX, tapY)) {
+          gJapaneseSelectedOption = static_cast<int8_t>(i);
+          gJapaneseShowFeedback = true;
+          recordJapaneseAnswer(item, i);
+          renderJapaneseDaily("answer selected");
+          optionHit = true;
+        }
+      }
+      if (!optionHit && hitTarget(gHomeButton, "home", tapX, tapY)) {
+        Serial.println("entering Home");
+        renderHome();
+      }
+    } else {
+      if (hitTarget(gJapaneseNextButton, "japanese next question", tapX, tapY)) {
+        gJapaneseQuestionIndex = (gJapaneseQuestionIndex + 1) % kJapaneseDayItemCount;
+        gJapaneseSelectedOption = -1;
+        gJapaneseShowFeedback = false;
+        renderJapaneseDaily("next question");
+      } else if (hitTarget(gHomeButton, "home", tapX, tapY)) {
+        Serial.println("entering Home");
+        renderHome();
+      }
     }
     noteIgnoredIfNoHit(tapX, tapY);
     return;
