@@ -1,4 +1,4 @@
-# PaperBadge Project State — v5.8-dev18 Handoff
+# PaperBadge Project State — v5.8-dev19 Handoff
 
 _Last updated: 2026-06-16_
 
@@ -15,10 +15,47 @@ _Last updated: 2026-06-16_
 
 ## Firmware
 
-- **Version:** `v5.8-dev18` (`src/main.cpp:20`)
+- **Version:** `v5.8-dev19` (`src/main.cpp:20`)
 - **Build:** SUCCESS — RAM 49.5% · Flash 47.7%
 - **Upload:** SUCCESS — `/dev/cu.usbmodem1101`
 - **Smoke test:** PASS (7/7 boot log checks)
+
+---
+
+## What Changed in v5.8-dev19
+
+### Home/Menu power verification patch (WarmIdle eligibility + Power Lab diagnostics)
+
+**Problem (independent review):** Home was LightNap-eligible but never reached WarmIdle, so it
+stayed at 240 MHz indefinitely regardless of profile. Separately, `idleScaleBlockedReason()` and
+`maybeScaleIdleCpu()` carried a leftover restriction from v5.8-dev8 that blocked WarmIdle CPU
+scaling on the Max Battery profile for every screen except Badge — so even screens that *were*
+WarmIdle-eligible (Settings, Advanced, Glossary, Results, Power Lab, etc.) never scaled down under
+Max Battery. This explained the reported battery drain on Home with Power = Max. Power Lab also
+lacked explicit WarmIdle/LightNap countdown and current-screen/refresh-age fields needed to verify
+the fix on real hardware.
+
+**Fix:**
+- `isStaticIdleScreen()`: added `Screen::Home`, `Screen::PracticeMenu`, `Screen::GlossaryMenu`,
+  `Screen::DrillsMenu` — all read-only navigation/display screens with no answer-timing concerns.
+  Badge was deliberately left out of WarmIdle (stays LightNap-eligible only) to avoid touching
+  static badge/auto-rotate behavior in this patch.
+- Removed the `gPowerProfile == PowerProfile::BadgeMax && gScreen != Screen::Badge` restriction
+  from `idleScaleBlockedReason()` and `maybeScaleIdleCpu()`. Max Battery now scales CPU down on any
+  static-idle-eligible screen as soon as its 5s threshold elapses, matching Responsive/Balanced
+  semantics (just with a shorter threshold).
+- LightNap eligibility, the answer-selection guard (`isAnswerSelectionActive()`), and Settings/
+  Advanced/Power Lab's LightNap-ineligibility are all unchanged.
+- Power Lab page 1 gained: explicit "WarmIdle: ACTIVE/inactive  in: <countdown|due now|blocked>"
+  row; "LightNap (this screen): eligible/no — reason  in: <countdown|due now|blocked>"; "Screen:"
+  row now reports the live current screen plus age of the last display refresh. Threshold values,
+  CPU MHz, scale/restore counters, 80MHz duration stats, and battery poll age were already present
+  and are unchanged.
+- Touch-down (`recordUserActivity("touch press")`) already restores CPU to 240 MHz before any tap
+  is processed, so adding WarmIdle to Home/menus does not introduce any tap-latency regression.
+- No changes to Interview UI, drill/exam behavior, badge rendering, deck content, typography, or
+  Japanese code. Deep sleep remains untouched and blocked (`BadgeSleepMode::DeepExperiment`, GT911
+  wake, RTC wake logic all untouched). Japanese implementation has not been started.
 
 ---
 

@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.8-dev18";
+constexpr const char* kFirmwareVersion = "v5.8-dev19";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -1295,6 +1295,10 @@ const char* wakeReasonName(esp_sleep_wakeup_cause_t reason) {
 
 bool isStaticIdleScreen(Screen screen) {
   switch (screen) {
+    case Screen::Home:
+    case Screen::PracticeMenu:
+    case Screen::GlossaryMenu:
+    case Screen::DrillsMenu:
     case Screen::InterviewPractice:
     case Screen::Glossary:
     case Screen::Results:
@@ -1452,7 +1456,6 @@ String idleScaleBlockedReason() {
   if (gInputLocked) return "input locked";
   if (gTouchActive) return "touch active";
   if (!isStaticIdleScreen(gScreen)) return "screen not static";
-  if (gPowerProfile == PowerProfile::BadgeMax && gScreen != Screen::Badge) return "Max Battery: only Badge screen";
   return "";
 }
 
@@ -1489,9 +1492,6 @@ void restoreActiveCpu(const char* reason) {
 
 void maybeScaleIdleCpu(const char* reason) {
   if (!kEnableIdleCpuScaling || gIdleCpuScaled || !isStaticIdleScreen(gScreen)) {
-    return;
-  }
-  if (gPowerProfile == PowerProfile::BadgeMax && gScreen != Screen::Badge) {
     return;
   }
   setCpuFrequencyMhz(kIdleCpuMhz);
@@ -7728,24 +7728,43 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
         "  longest: " + fmtDurationMs(gLongestLightSleepMs));
     {
       const uint32_t sinceInput = gLastUserActivityMs > 0 ? millis() - gLastUserActivityMs : 0;
-      row(String("Last input: ") + fmtDurationMs(sinceInput) + " ago");
+      row(String("Last input: ") + fmtDurationMs(sinceInput) + " ago" +
+          "  idle entries: " + static_cast<unsigned>(gIdleEntryCount));
     }
     {
       const String blocked = idleScaleBlockedReason();
-      if (blocked.length() > 0) {
-        row(String("Idle blocked: ") + blocked);
+      const uint32_t sinceInput = gLastUserActivityMs > 0 ? millis() - gLastUserActivityMs : 0;
+      const uint32_t warmThreshold = profileIdleScaleThresholdMs();
+      String eta;
+      if (gIdleCpuScaled) {
+        eta = "active";
+      } else if (blocked.length() > 0) {
+        eta = "blocked";
+      } else if (sinceInput >= warmThreshold) {
+        eta = "due now";
       } else {
-        row(String("Idle: ") + (gIdleModeActive ? "active" : "awake") +
-            "  idle entries: " + static_cast<unsigned>(gIdleEntryCount));
+        eta = fmtDurationMs(warmThreshold - sinceInput) + " left";
       }
+      row(String("WarmIdle: ") + (gIdleCpuScaled ? "ACTIVE" : "inactive") + "  in: " + eta +
+          (blocked.length() > 0 ? (String("  (") + blocked + ")") : String("")));
     }
     row(String("Loop delay: ") + static_cast<unsigned>(loopDelayMs()) + "ms" +
         "  redraws while idle: " + static_cast<unsigned>(gRedrawWhileIdleCount));
-    row(String("Screen: ") + screenName(gLastRenderedScreen) +
-        "  refreshes: " + static_cast<unsigned>(gDisplayRefreshCount));
+    row(String("Screen: ") + screenName(gScreen) +
+        "  refreshes: " + static_cast<unsigned>(gDisplayRefreshCount) +
+        "  last: " + fmtMsSince(gLastRefreshEndMs));
     {
       const String napBlocked = lightNapBlockedReason();
-      row(String("LightNap (this screen): ") + (napBlocked.length() == 0 ? "yes" : String("no — ") + napBlocked));
+      String napEta;
+      if (napBlocked.length() > 0) {
+        napEta = "blocked";
+      } else {
+        const uint32_t sinceInput = gLastUserActivityMs > 0 ? millis() - gLastUserActivityMs : 0;
+        const uint32_t napThreshold = profileLightSleepIdleMs();
+        napEta = sinceInput >= napThreshold ? "due now" : fmtDurationMs(napThreshold - sinceInput) + " left";
+      }
+      row(String("LightNap (this screen): ") + (napBlocked.length() == 0 ? "eligible" : String("no — ") + napBlocked) +
+          "  in: " + napEta);
     }
   } else if (gPowerLabPage == 1) {
     // Page 2: battery / peripherals

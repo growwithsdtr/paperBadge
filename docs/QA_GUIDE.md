@@ -40,7 +40,21 @@ Port: `/dev/cu.usbmodem1101` (macOS). Use `cu.` prefix, not `tty.`.
 - Settings power controls.
 - Settings → Advanced → Power Lab pages 1–4.
 
-## Photo Batches (v5.8-dev18)
+## Power Verification (Home/Menu WarmIdle, v5.8-dev19)
+
+- Power = Max, Refresh = Balanced.
+- Go to Home, do not touch.
+- After the WarmIdle threshold (5s on Max), confirm CPU MHz drops — check serial log for
+  `Power CPU scale: idle ...` or revisit Power Lab page 1 and read "Last scaled"/"80MHz last"
+  (visiting Power Lab itself restores CPU, so these history fields are read after the fact).
+- Wait toward the LightNap threshold; Power Lab page 1's "LightNap (this screen)" row shows
+  a countdown or a block reason.
+- Repeat the Home check on: Badge, Home, Interview Results, Glossary, Settings, Advanced, Power Lab.
+- Confirm Drills/Exam pre-answer screens still block WarmIdle/LightNap while an option is awaiting a tap.
+- Confirm no deep sleep behavior is introduced (Sleep mode stays Off/Light only; Deep experiment
+  stays blocked).
+
+## Photo Batches (v5.8-dev19)
 
 10 photos per QA pass:
 
