@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.8-dev19";
+constexpr const char* kFirmwareVersion = "v5.9-dev1";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -132,6 +132,11 @@ enum class Screen {
   GlossaryMenu,
   Glossary,
   MockInterview,
+  JapaneseMenu,
+  JapaneseDaily,
+  JapaneseReference,
+  JapaneseResults,
+  JapaneseMockTest,
 };
 
 enum class BadgeLanguage {
@@ -536,6 +541,13 @@ Rect gMetricPrecisionButton;
 Rect gHostileFollowupButton;
 Rect gGlossaryButton;
 Rect gMockInterviewButton;
+Rect gJapaneseButton;
+Rect gJapaneseDailyButton;
+Rect gJapaneseMockTestButton;
+Rect gJapaneseReferenceButton;
+Rect gJapaneseResultsButton;
+Rect gJapaneseOptionButtons[kMaxOptions];
+Rect gJapaneseNextButton;
 Rect gSettingsButton;
 Rect gDebugButton;
 Rect gAdvancedButton;
@@ -604,6 +616,9 @@ uint8_t gCoachStage = 0;
 int8_t gSelectedOption = -1;
 bool gDrillShowFeedback = false;    // true = show feedback page; false = show result/options state
 uint8_t gDrillLastResultPage = 0;  // result page to restore when returning from feedback
+size_t gJapaneseQuestionIndex = 0;
+int8_t gJapaneseSelectedOption = -1;
+bool gJapaneseShowFeedback = false;
 uint8_t gMockStep = 0;
 uint8_t gBottomLeftTapCount = 0;
 uint32_t gLastBottomLeftTapMs = 0;
@@ -1310,6 +1325,10 @@ bool isStaticIdleScreen(Screen screen) {
     case Screen::VisualQa:
     case Screen::HelpLegend:
     case Screen::FontLab:
+    case Screen::JapaneseMenu:
+    case Screen::JapaneseReference:
+    case Screen::JapaneseResults:
+    case Screen::JapaneseMockTest:
       return true;
     default:
       return false;
@@ -1317,6 +1336,8 @@ bool isStaticIdleScreen(Screen screen) {
 }
 
 // LightNap eligibility: only normal content/display screens — never control or diagnostic screens.
+// JapaneseDaily mirrors Drills/Exam: eligible here, but guarded out during pre-answer by
+// isAnswerSelectionActive() below.
 bool isLightNapEligibleScreen(Screen screen) {
   switch (screen) {
     case Screen::Badge:
@@ -1329,19 +1350,25 @@ bool isLightNapEligibleScreen(Screen screen) {
     case Screen::Results:
     case Screen::Drills:
     case Screen::Exam:
+    case Screen::JapaneseMenu:
+    case Screen::JapaneseDaily:
+    case Screen::JapaneseReference:
+    case Screen::JapaneseResults:
       return true;
     default:
       return false;
   }
 }
 
-// True when the user's next tap could record an exam or drill answer — never nap here.
+// True when the user's next tap could record an exam, drill, or Japanese Daily Question answer —
+// never nap here.
 bool isAnswerSelectionActive() {
   if (gScreen == Screen::Exam && gExamActive && !gExamSummary) return true;
   if (gScreen == Screen::Drills && gSelectedOption < 0 && gCoachIndex < gCoachItemCount) {
     const CoachItemView item = coachItemAt(gCoachIndex);
     if (isOptionDrillScreen(gScreen, item)) return true;
   }
+  if (gScreen == Screen::JapaneseDaily && !gJapaneseShowFeedback) return true;
   return false;
 }
 
@@ -3415,6 +3442,16 @@ const char* screenName(Screen screen) {
       return "Exam";
     case Screen::Results:
       return "Results";
+    case Screen::JapaneseMenu:
+      return "Japanese";
+    case Screen::JapaneseDaily:
+      return "Japanese Daily";
+    case Screen::JapaneseReference:
+      return "Japanese Reference";
+    case Screen::JapaneseResults:
+      return "Japanese Results";
+    case Screen::JapaneseMockTest:
+      return "Japanese Mock Test";
     case Screen::InterviewPractice:
     case Screen::Drills:
     case Screen::BlitzQuiz:
@@ -4132,6 +4169,122 @@ TextLayoutResult wrapTextToLines(const String& text, int32_t width, int32_t line
   result.overflow = appendWrappedLine(lines, result.lineCount, maxLines, line) || result.overflow;
   result.height = static_cast<int32_t>(result.lineCount) * lineHeight;
   return result;
+}
+
+// Japanese-safe text path — fully separate from sanitizeCoachText()/wrapTextToLines(), which
+// replace any non-allowlisted multi-byte UTF-8 (including all kanji/kana) with "?". This path
+// preserves valid UTF-8 verbatim and never substitutes "?" for Japanese text.
+String sanitizeJapaneseText(const String& text) {
+  String sanitized;
+  sanitized.reserve(text.length());
+  for (size_t index = 0; index < text.length();) {
+    const uint8_t ch = static_cast<uint8_t>(text[index]);
+    if (ch == '\n' || ch == '\t') {
+      sanitized += static_cast<char>(ch);
+      ++index;
+      continue;
+    }
+    if (ch < 0x20) {
+      // Drop other control characters; never touch bytes >= 0x20 (ASCII or UTF-8 continuation).
+      ++index;
+      continue;
+    }
+    const uint8_t seqLen = utf8SequenceLength(ch);
+    for (uint8_t offset = 0; offset < seqLen && index + offset < text.length(); ++offset) {
+      sanitized += text[index + offset];
+    }
+    index += seqLen;
+  }
+  return sanitized;
+}
+
+// Wraps by UTF-8 code point / measured display width instead of English space-splitting, so
+// Japanese text (no spaces between words) wraps correctly. Respects explicit '\n' and never
+// splits a multi-byte UTF-8 sequence mid-character.
+TextLayoutResult wrapJapaneseTextToLines(const String& text, int32_t width, int32_t lineHeight, uint8_t maxLines,
+                                         String* lines) {
+  auto& display = M5.Display;
+  TextLayoutResult result;
+  const String safeText = sanitizeJapaneseText(text);
+  String line;
+
+  for (size_t index = 0; index < safeText.length();) {
+    const uint8_t ch = static_cast<uint8_t>(safeText[index]);
+    if (ch == '\n') {
+      result.overflow = appendWrappedLine(lines, result.lineCount, maxLines, line) || result.overflow;
+      line = "";
+      ++index;
+      continue;
+    }
+
+    const uint8_t seqLen = utf8SequenceLength(ch);
+    String character;
+    for (uint8_t offset = 0; offset < seqLen && index + offset < safeText.length(); ++offset) {
+      character += safeText[index + offset];
+    }
+
+    const String candidate = line + character;
+    if (line.length() > 0 && display.textWidth(candidate) > width) {
+      result.overflow = appendWrappedLine(lines, result.lineCount, maxLines, line) || result.overflow;
+      line = character;
+    } else {
+      line = candidate;
+    }
+    index += seqLen;
+  }
+
+  result.overflow = appendWrappedLine(lines, result.lineCount, maxLines, line) || result.overflow;
+  result.height = static_cast<int32_t>(result.lineCount) * lineHeight;
+  return result;
+}
+
+int32_t japaneseLineHeight(uint8_t px) {
+  return static_cast<int32_t>(px) + 16;
+}
+
+// Fixed Japanese-appropriate sizes via the existing lgfxJapanGothic_* path (applyGothicFont()).
+// Independent of FontStyleMode/Reader-size so Japanese rendering stays stable regardless of the
+// English typography settings — never routes through applyTypographyFont()/applyBodyFont().
+void applyJapaneseTitleFont() {
+  applyGothicFont(28);
+}
+
+void applyJapaneseBodyFont(uint8_t px = 24) {
+  applyGothicFont(px);
+}
+
+TextLayoutResult drawJapaneseWrappedText(const String& text, int32_t x, int32_t y, int32_t width, int32_t lineHeight,
+                                         uint8_t maxLines, const char* field = nullptr) {
+  auto& display = M5.Display;
+  String lines[kMaxWrappedLines];
+  const uint8_t lineLimit = maxLines > kMaxWrappedLines ? kMaxWrappedLines : maxLines;
+  TextLayoutResult result = wrapJapaneseTextToLines(text, width, lineHeight, lineLimit, lines);
+  for (uint8_t line = 0; line < result.lineCount; ++line) {
+    display.drawString(lines[line], x, y + line * lineHeight);
+  }
+  if (field != nullptr && field[0] != '\0') {
+    Serial.printf("Japanese layout: field=%s lines=%u overflow=%s\n", field,
+                  static_cast<unsigned>(result.lineCount), result.overflow ? "yes" : "no");
+  }
+  return result;
+}
+
+void drawJapaneseOptionButton(const Rect& rect, const String& label) {
+  auto& display = M5.Display;
+  display.drawRoundRect(rect.x, rect.y, rect.w, rect.h, 8, TFT_BLACK);
+  display.drawRoundRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 7, TFT_BLACK);
+  const uint8_t px = 24;
+  applyJapaneseBodyFont(px);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.setTextDatum(textdatum_t::top_left);
+
+  String lines[3];
+  TextLayoutResult layout = wrapJapaneseTextToLines(label, rect.w - 32, japaneseLineHeight(px), 3, lines);
+  const int32_t textBlockH = static_cast<int32_t>(layout.lineCount) * japaneseLineHeight(px);
+  const int32_t textY = rect.y + (rect.h - textBlockH) / 2;
+  for (uint8_t line = 0; line < layout.lineCount; ++line) {
+    display.drawString(lines[line], rect.x + 18, textY + static_cast<int32_t>(line) * japaneseLineHeight(px));
+  }
 }
 
 void logLayoutBox(const char* field, const Rect& box, int32_t usedHeight, uint8_t pageCount, bool overflow) {
@@ -6497,6 +6650,8 @@ void renderHome(const char* refreshReason = "mode switch") {
   gResultsButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
   gSettingsButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gJapaneseButton = {buttonX, y, buttonW, buttonH};
   gDebugButton = {};  // Debug moved to Advanced (Settings → Advanced)
 
   drawButton(gBadgeButton, "Badge", IconType::Badge);
@@ -6506,6 +6661,7 @@ void renderHome(const char* refreshReason = "mode switch") {
   drawButton(gGlossaryButton, "Glossary", IconType::Glossary);
   drawButton(gResultsButton, "Results", IconType::Results);
   drawButton(gSettingsButton, "Settings", IconType::Settings);
+  drawButton(gJapaneseButton, "Japanese");
 
   finishDisplayRefresh();
   Serial.println("Home/Menu mode: normal orientation.");
@@ -6654,6 +6810,45 @@ void renderDrillsMenu(const char* refreshReason = "mode switch") {
 
   finishDisplayRefresh();
   Serial.println("Drills menu shown.");
+}
+
+void renderJapaneseMenu(const char* refreshReason = "mode switch") {
+  gScreen = Screen::JapaneseMenu;
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachTitleFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Japanese", 32, 34);
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString("N3 sample · Week 1 Day 1", 34, 92);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+
+  const int32_t buttonX = 34;
+  const int32_t buttonW = display.width() - 68;
+  const int32_t buttonH = 82;
+  const int32_t gap = 14;
+  int32_t y = 148;
+  gJapaneseDailyButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gJapaneseMockTestButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gJapaneseReferenceButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gJapaneseResultsButton = {buttonX, y, buttonW, buttonH};
+  gHomeButton = {buttonX, display.height() - 110, buttonW, 76};
+
+  drawButton(gJapaneseDailyButton, "Daily Questions");
+  drawButton(gJapaneseMockTestButton, "Mock Test");
+  drawButton(gJapaneseReferenceButton, "Reference");
+  drawButton(gJapaneseResultsButton, "Results");
+  drawButton(gHomeButton, "", IconType::Home);
+
+  finishDisplayRefresh();
+  Serial.println("Japanese menu shown.");
 }
 
 void renderPlaceholderScreen(Screen screen, const char* title, const char* body, const char* refreshReason = "mode switch") {
@@ -8697,6 +8892,15 @@ void handleTouch() {
     return;
   }
 
+  if (gScreen == Screen::JapaneseMenu) {
+    if (hitTarget(gHomeButton, "home", tapX, tapY)) {
+      Serial.println("entering Home");
+      renderHome();
+    }
+    noteIgnoredIfNoHit(tapX, tapY);
+    return;
+  }
+
   if (gScreen == Screen::Exam) {
     if (hitTarget(gHomeButton, "home", tapX, tapY)) {
       Serial.println("entering Home");
@@ -9052,6 +9256,8 @@ void handleTouch() {
       renderResultsScreen();
     } else if (hitTarget(gSettingsButton, "settings", tapX, tapY)) {
       renderSettings();
+    } else if (hitTarget(gJapaneseButton, "japanese", tapX, tapY)) {
+      renderJapaneseMenu();
     }
     noteIgnoredIfNoHit(tapX, tapY);
   }
