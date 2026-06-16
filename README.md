@@ -12,7 +12,7 @@ The current embedded PaperCoach content pack is senior AI/Product Manager interv
 
 It boots into a static conference badge and exposes a normal-orientation Home menu with Badge, Practice, Drills, Exam, Glossary, Results, and Settings. Diagnostic tools are under Settings → Advanced.
 
-Current firmware version in source: `v5.8-dev17`.
+Current firmware version in source: `v5.8-dev18`.
 
 ## Quick Commands
 

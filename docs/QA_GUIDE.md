@@ -38,9 +38,9 @@ Port: `/dev/cu.usbmodem1101` (macOS). Use `cu.` prefix, not `tty.`.
 - Glossary term page.
 - Results empty state and populated state after at least one answer.
 - Settings power controls.
-- Settings → Advanced → Power Lab / Power Audit.
+- Settings → Advanced → Power Lab pages 1–4.
 
-## Photo Batches (v5.8-dev17)
+## Photo Batches (v5.8-dev18)
 
 10 photos per QA pass:
 
@@ -56,7 +56,7 @@ Port: `/dev/cu.usbmodem1101` (macOS). Use `cu.` prefix, not `tty.`.
    Confirm prose with spaced dashes ("risk - signal - stop") stays on one line (not split).
 8. Hostile Follow-up drill — confirm "Suggested response" label visible, body readable.
 9. Results page after 3+ answers — confirm Summary+Categories combined if ≤3 categories.
-10. Settings → Advanced → Power Lab / Power Audit.
+10. Settings → Advanced → Power Lab pages 1–4.
 
 ## Render Trace
 
@@ -70,7 +70,7 @@ Use Settings → Advanced → Dump render trace to write the latest trace explic
 
 ## Export Deck Dump
 
-Use Settings → Advanced → Export deck text. If SD is mounted, firmware writes:
+Use Settings → Advanced → Export deck. If SD is mounted, firmware writes:
 
 ```text
 /papercoach/debug/embedded_deck_dump.md

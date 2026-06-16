@@ -1,6 +1,6 @@
-# PaperBadge Project State — v5.8-dev17 Handoff
+# PaperBadge Project State — v5.8-dev18 Handoff
 
-_Last updated: 2026-06-13_
+_Last updated: 2026-06-16_
 
 ---
 
@@ -15,10 +15,38 @@ _Last updated: 2026-06-13_
 
 ## Firmware
 
-- **Version:** `v5.8-dev17` (`src/main.cpp:20`)
+- **Version:** `v5.8-dev18` (`src/main.cpp:20`)
 - **Build:** SUCCESS — RAM 49.5% · Flash 47.7%
 - **Upload:** SUCCESS — `/dev/cu.usbmodem1101`
 - **Smoke test:** PASS (7/7 boot log checks)
+
+---
+
+## What Changed in v5.8-dev18
+
+### Docs and serial config hygiene before Japanese support
+
+**Problem:** `platformio.ini` still pointed at the legacy `/dev/tty.usbmodem1101` port. Separately,
+`docs/PAPERCOACH_PRD.md` and `docs/QA_GUIDE.md` had drifted from actual firmware behavior: Debug
+was listed as a top-level Home button (it was moved to Settings → Advanced back in dev17, but the
+PRD's Mode Definitions/Navigation Model sections still showed it at the top level), Settings was
+described as having badge sleep controls (sleep lives under Settings → Advanced), the Practice
+stage list still said "Defense" instead of the actual "Suggested response" stage name, and the QA
+guide described "Power Lab / Power Audit" as if Power Audit were a reachable screen — it is dead
+code with no button ever wired to it; only Power Lab's 4 pages are reachable.
+
+**Fix:**
+- `platformio.ini`: `upload_port`/`monitor_port` changed to `/dev/cu.usbmodem1101`.
+- `docs/PAPERCOACH_PRD.md`: Home menu listed as 7 buttons with Debug explicitly called out as not
+  top-level; Settings bullet corrected to Reader size/Refresh/Power/Orientation/Advanced; "Defense"
+  replaced with "Suggested response".
+- `docs/QA_GUIDE.md`: "Power Lab / Power Audit" replaced with "Power Lab pages 1–4" (both
+  occurrences); "Export deck text" corrected to "Export deck" to match the actual Advanced-screen
+  button label; photo batch heading bumped to v5.8-dev18.
+- `README.md`: firmware version bumped to v5.8-dev18 (Home/Settings/diagnostics/port sections were
+  already accurate from the dev16/dev17 passes, so left unchanged).
+- No UI behavior, drill/exam logic, power logic, LightNap, deep sleep, badge rendering, or deck
+  content changed.
 
 ---
 
@@ -69,11 +97,12 @@ and `README.md` updated:
 
 ## Known Limitations
 
-- **Japanese support:** Not yet implemented. Font assets, deck format, and SRS logic are
-  planned for a future milestone after v5.8.
-- **Deep sleep:** Remains blocked — PaperS3 touch wake is not physically verified.
+- **Japanese support:** Not yet implemented. Next milestone is Japanese deck support.
+- **Deep sleep:** Remains blocked — PaperS3 touch wake is not physically verified. Not being
+  pursued further for now.
 - **Per-option explanations:** Not embedded; drill feedback shows shared explanation only.
-- **Interview mode freeze:** Pending final physical QA before freezing.
+- **Interview mode:** Frozen after physical QA.
+- No P0/P1 runtime blockers remain.
 
 ---
 

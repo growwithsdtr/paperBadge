@@ -45,17 +45,18 @@ Future user shape: a learner using offline deck content where items can be pract
 ## Mode Definitions
 
 - Badge: static conference badge with optional QR/photo zoom.
-- Practice: read answer cards by stage: Question, Answer, Anchor, Watch-out, Follow-up, Defense.
+- Practice: read answer cards by stage: Question, Answer, Anchor, Watch-out, Follow-up, Suggested response.
 - Drills: answer MCQ-style drill items and receive feedback after selection.
 - Exam: answer a mixed set without immediate feedback; review score at the end.
 - Glossary: browse terms by category grid.
 - Results: view RAM/SD-backed session analytics.
-- Settings: reader, refresh, power, and badge sleep controls.
-- Debug: render trace, deck export, visual QA, font lab, and power audit.
+- Settings: Reader size, Refresh, Power, Orientation, and Advanced.
+- Advanced (under Settings): render trace, deck export, visual QA, font lab, and Power Lab pages.
 
 ## Navigation Model
 
-- Home menu shows: Badge, Practice, Drills, Exam, Glossary, Results, Settings, Debug.
+- Home menu shows 7 buttons: Badge, Practice, Drills, Exam, Glossary, Results, Settings. Debug is
+  not a top-level Home button; diagnostics live under Settings → Advanced.
 - Practice entry shows: Must cards, All cards, Continue last card, Help/Legend.
 - Practice reading: upper content tap = previous page; lower content tap = next page; footer left/right = previous/next card with wraparound; footer center = Home.
 - Drills and Exam: question and choices render together when possible; split option pages repeat a compact question reminder.
