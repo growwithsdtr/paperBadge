@@ -10,9 +10,9 @@ PaperBadge is the hardware shell for the M5PaperS3 e-ink device. PaperCoach is t
 
 The current embedded PaperCoach content pack is senior AI/Product Manager interview practice. Future content packs should be able to support offline Japanese N3-style grammar, vocabulary, and kanji drills, including weak-area tracking and SRS-like review, without requiring Wi-Fi, cloud calls, or live AI services.
 
-It boots into a static conference badge and exposes a normal-orientation Home menu with Badge, Practice, Drills, Exam, Glossary, Results, and Settings. Diagnostic tools are under Settings → Advanced.
+It boots into a static conference badge and exposes a normal-orientation Home menu with Badge, Practice, Drills, Exam, Glossary, Results, Settings, and Japanese. Diagnostic tools are under Settings → Advanced.
 
-Current firmware version in source: `v5.8-dev19`.
+Current firmware version in source: `v5.9-dev1`.
 
 ## Quick Commands
 
@@ -126,6 +126,7 @@ Badge mode is static by default and uses e-ink as intended: render once, hold th
 - v3.8: add bolder hand-drawn primitive Back/Next icons, use icon + page-count Practice footer buttons, and add Debug -> Visual QA with the physical screenshot checklist and current typography/refresh/power settings.
 - v5.5: stabilize live headers with ASCII separators, simplify drill/exam/feedback chrome, remove dominant missing-explanation feedback text, loosen post-summary Results pagination, add static-screen light idle, expand Power Audit, and remove stale repo bloat.
 - v5.6: fix embedded drill answer-key remapping so trimmed options retain the correct answer, add runtime answer-key validation, improve feedback/results/help/settings readability, add prompt-specific drill/exam typography, preserve paragraph gaps in Practice answers, and add guarded idle CPU scaling.
+- v5.9-dev1: add a Japanese Home entry with its own self-contained mode — Daily Questions (embedded N3-sample Week 1 Day 1 set, immediate feedback), Reference, RAM-only Results, and a Mock Test placeholder. Adds an isolated Japanese-safe sanitize/wrap/font path (`lgfxJapanGothic_*`) that never touches the existing English sanitize/wrap/font functions, Interview Practice/Drills/Exam/Glossary/Results behavior, Badge behavior, or deep sleep.
 
 ## Hardware
 
@@ -272,8 +273,9 @@ Current Home/Menu entries:
 - Glossary
 - Results
 - Settings
+- Japanese
 
-Practice uses the embedded or SD deck and supports page-based study. Drills contains All Drills plus current deck-specific categories. Exam runs 5- or 10-question mixed sessions without immediate feedback. Results shows RAM/SD-backed session analytics. Diagnostic tools (render trace, deck export, visual QA, font lab, power audit) are under Settings → Advanced. There is no spaced repetition, RTC scheduling, Wi-Fi, Bluetooth, or AI/API call behavior.
+Practice uses the embedded or SD deck and supports page-based study. Drills contains All Drills plus current deck-specific categories. Exam runs 5- or 10-question mixed sessions without immediate feedback. Results shows RAM/SD-backed session analytics. Diagnostic tools (render trace, deck export, visual QA, font lab, power audit) are under Settings → Advanced. Japanese is a separate, self-contained N3-sample mode (Daily Questions, Mock Test placeholder, Reference, Results) — see "Japanese Text" below. There is no spaced repetition, RTC scheduling, Wi-Fi, Bluetooth, or AI/API call behavior.
 
 ## Visual QA
 
@@ -406,7 +408,16 @@ The script converts `profilePhoto.png`, `profilePhoto.jpg`, or `profilePhoto.jpe
 
 ## Japanese Text
 
-v0.9 uses a pre-rendered Japanese badge image generated on the Mac and embedded in firmware. The PaperS3 does not render Japanese text dynamically in Badge mode.
+v0.9 uses a pre-rendered Japanese badge image generated on the Mac and embedded in firmware. The PaperS3 does not render Japanese text dynamically in Badge mode. Badge behavior is unchanged in v5.9-dev1.
+
+v5.9-dev1 adds a separate, self-contained Japanese mode reachable from Home, with its own dynamic Japanese text rendering path (Daily Questions, Mock Test placeholder, Reference, Results):
+
+- **Daily Questions** uses one embedded N3-style sample set (Week 1, Day 1 — 11 originally written items covering もじ/kanji, ごい/vocabulary, ぶんぽう/grammar; not extracted from any copyrighted book). One question per screen with 4 outlined choices and immediate feedback (correct/wrong, correct choice, Japanese answer sentence, Japanese explanation, English meaning, grammar/vocab/kanji tags).
+- **Reference** lists the grammar/vocabulary/kanji tags from the same Week 1 Day 1 set.
+- **Results** is a simple RAM-only tally (answered count, correct count/percent, breakdown by kanji/vocabulary/grammar) — a separate struct (`JapaneseSessionResult`/`gJapaneseResults`) from the existing Interview Practice/Drills/Exam `SessionResult`. It never appears inside the existing Results screen and resets on reboot.
+- **Mock Test** is a placeholder only; no full test flow yet.
+- Dynamic Japanese text uses `lgfxJapanGothic_*` fonts via new, isolated `applyJapaneseTitleFont()`/`applyJapaneseBodyFont()` helpers, and a parallel `sanitizeJapaneseText()`/`wrapJapaneseTextToLines()` path that preserves UTF-8 verbatim and wraps by code point. Japanese text is never routed through the existing `sanitizeCoachText()` (it is ASCII-only and would replace Japanese glyphs with `?`); the existing English sanitize/wrap/font functions are unchanged.
+- Full import of the 新にほんご500問 book, SRS, volunteer notes, and a multi-source concept UI are not implemented.
 
 ## Download Mode
 

@@ -39,8 +39,13 @@ Future user shape: a learner using offline deck content where items can be pract
 - Sans Bold-like is the recommended English default style; High Contrast remains available for maximum density/contrast. Both use the same FreeSansBold bucket, with visual differences coming from density/layout rather than a separate font engine.
 - Balanced refresh is the recommended default: clean refresh for major transitions, feedback, badge, and image zoom; faster refresh for ordinary page turns.
 - Deep sleep is not automatic until PaperS3 wake behavior is physically verified.
-- Japanese live rendering is deferred to a future N3 architecture pass.
-- Results are paginated instead of compressed into a tiny dashboard.
+- Japanese live rendering shipped as a separate, self-contained mode in v5.9-dev1 (Daily Questions
+  prototype using one embedded Week 1 Day 1 N3-sample set). It uses its own sanitize/wrap/font path
+  (`lgfxJapanGothic_*`) and never routes through the English `sanitizeCoachText()`/`wrapTextToLines()`
+  functions. SD-loadable Japanese decks, the full 新にほんご500問 book, SRS, and volunteer notes
+  remain future work.
+- Results are paginated instead of compressed into a tiny dashboard. Japanese Results is a separate,
+  simpler RAM-only tally and is never combined with the Interview Practice/Drills/Exam Results screen.
 
 ## Mode Definitions
 
@@ -52,11 +57,19 @@ Future user shape: a learner using offline deck content where items can be pract
 - Results: view RAM/SD-backed session analytics.
 - Settings: Reader size, Refresh, Power, Orientation, and Advanced.
 - Advanced (under Settings): render trace, deck export, visual QA, font lab, and Power Lab pages.
+- Japanese (v5.9-dev1): a separate, self-contained N3-sample mode — Daily Questions (one embedded
+  Week 1 Day 1 question per screen with immediate feedback), Mock Test (placeholder only),
+  Reference (grammar/vocab/kanji tags from the same set), and Results (RAM-only, separate from the
+  Interview Practice/Drills/Exam Results screen).
 
 ## Navigation Model
 
-- Home menu shows 7 buttons: Badge, Practice, Drills, Exam, Glossary, Results, Settings. Debug is
-  not a top-level Home button; diagnostics live under Settings → Advanced.
+- Home menu shows 8 buttons: Badge, Practice, Drills, Exam, Glossary, Results, Settings, Japanese.
+  Debug is not a top-level Home button; diagnostics live under Settings → Advanced.
+- Japanese menu shows 4 buttons plus Home: Daily Questions, Mock Test, Reference, Results.
+- Japanese Daily Questions: tap a choice to see immediate feedback (correct/wrong, correct choice,
+  Japanese answer sentence, Japanese explanation, English meaning, grammar/vocab/kanji tags); Next
+  advances to the next question with wraparound; Home returns to Home.
 - Practice entry shows: Must cards, All cards, Continue last card, Help/Legend.
 - Practice reading: upper content tap = previous page; lower content tap = next page; footer left/right = previous/next card with wraparound; footer center = Home.
 - Drills and Exam: question and choices render together when possible; split option pages repeat a compact question reminder.

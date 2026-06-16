@@ -1,4 +1,4 @@
-# PaperBadge Project State — v5.8-dev19 Handoff
+# PaperBadge Project State — v5.9-dev1 Handoff
 
 _Last updated: 2026-06-16_
 
@@ -15,10 +15,58 @@ _Last updated: 2026-06-16_
 
 ## Firmware
 
-- **Version:** `v5.8-dev19` (`src/main.cpp:20`)
-- **Build:** SUCCESS — RAM 49.5% · Flash 47.7%
+- **Version:** `v5.9-dev1` (`src/main.cpp:20`)
+- **Build:** SUCCESS — RAM 51.3% · Flash 48.0%
 - **Upload:** SUCCESS — `/dev/cu.usbmodem1101`
 - **Smoke test:** PASS (7/7 boot log checks)
+
+---
+
+## What Changed in v5.9-dev1
+
+### Japanese support — Daily Questions prototype, added safely after the v5.8-dev19 power patch
+
+**Goal:** Start Japanese support without touching Interview Practice/Drills/Exam/Glossary/Results
+behavior, Home structure (beyond one new entry), English/interview typography, Badge behavior, or
+deep sleep. No SRS, no volunteer notes, no multi-source concept UI, no full 新にほんご500問 import
+in this pass.
+
+**Added:**
+- New Home entry **Japanese** → Japanese menu (Daily Questions, Mock Test, Reference, Results, Home).
+- **Daily Questions**: one embedded, originally written N3-style sample set (Week 1, Day 1 —
+  11 items covering もじ/kanji, ごい/vocabulary, ぶんぽう/grammar; `book_id = "n3_sample_w1d1"`, not
+  an extraction of any copyrighted book). One question per screen, Japanese prompt, 4 outlined
+  choices, immediate feedback (correct/wrong, correct choice, Japanese answer sentence, Japanese
+  explanation, English meaning, grammar/vocab/kanji tags), Next/Home navigation. E-ink safe: white
+  background, outlined buttons, no fills/gradients.
+- **Reference**: single-page list of the grammar/vocabulary/kanji tags from the same Week 1 Day 1 set.
+- **Results**: simple RAM-only tally — answered count, correct count/percent, breakdown by
+  kanji/vocabulary/grammar. Backed by a new `JapaneseSessionResult`/`gJapaneseResults[64]` struct
+  that is fully separate from `SessionResult`/`gSessionResults`; Japanese answers never appear in
+  the existing Results screen, and the data resets on reboot (no SD persistence yet).
+- **Mock Test**: placeholder only (`renderPlaceholderScreen`), no full test flow yet.
+- **Japanese-safe text path** (parallel to, not replacing, the existing English path):
+  `sanitizeJapaneseText()` preserves UTF-8 verbatim (does not route through the ASCII-only,
+  destructive `sanitizeCoachText()`); `wrapJapaneseTextToLines()` wraps by UTF-8 code point via
+  `utf8SequenceLength()` instead of splitting on spaces; `applyJapaneseTitleFont()`/
+  `applyJapaneseBodyFont()` select `lgfxJapanGothic_*` sizes via the existing `applyGothicFont()`.
+- **Power eligibility**: Japanese menu/Reference/Results/Mock Test are static-idle (WarmIdle)
+  eligible like other menu/read-only screens. Daily Questions is excluded from WarmIdle (same
+  precedent as Drills/Exam question screens) but is LightNap-eligible once in feedback state —
+  `isAnswerSelectionActive()` blocks LightNap during the pre-answer state, mirroring Drills/Exam
+  exactly. Deep sleep, Badge behavior, and all other power logic are unchanged.
+- Required Japanese render-test strings confirmed present verbatim in the embedded dataset:
+  郵便局, 引っ越した, 荷物, 違っていました, 子供のころ, ものだ, てばかりいる, とっちゃいけない,
+  ちゃう, とく.
+
+**Not changed:** Interview Practice/Drills/Exam/Glossary/Results behavior (aside from the new
+Home entry routing to Japanese), Home's 4-domain structure (not introduced), deep sleep, Badge
+behavior, existing English/interview typography (Sans Bold-like/High Contrast unchanged), the
+existing `sanitizeCoachText()`/`wrapTextToLines()`/English font functions.
+
+**Known limitations:** Only Week 1 Day 1 is embedded (no full book import); Mock Test is a
+placeholder; Reference is a flat list, not a curated study view; Japanese Results has no SD
+persistence; no SRS; no volunteer notes; no multi-source concept UI.
 
 ---
 

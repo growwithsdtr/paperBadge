@@ -39,6 +39,13 @@ Port: `/dev/cu.usbmodem1101` (macOS). Use `cu.` prefix, not `tty.`.
 - Results empty state and populated state after at least one answer.
 - Settings power controls.
 - Settings → Advanced → Power Lab pages 1–4.
+- Japanese menu (Home → Japanese).
+- Japanese Daily Questions — confirm Japanese prompt/choices render correctly (no "?" or boxes).
+- Japanese Daily Questions feedback page — correct/wrong, answer sentence, explanation, tags.
+- Japanese Reference.
+- Japanese Results empty state and populated state after at least one Japanese answer — confirm
+  it never shows inside the regular Results screen.
+- Japanese Mock Test placeholder.
 
 ## Power Verification (Home/Menu WarmIdle, v5.8-dev19)
 
@@ -53,6 +60,18 @@ Port: `/dev/cu.usbmodem1101` (macOS). Use `cu.` prefix, not `tty.`.
 - Confirm Drills/Exam pre-answer screens still block WarmIdle/LightNap while an option is awaiting a tap.
 - Confirm no deep sleep behavior is introduced (Sleep mode stays Off/Light only; Deep experiment
   stays blocked).
+
+## Japanese Verification (v5.9-dev1, new)
+
+- Confirm these strings render as Japanese kanji/kana, never as "?" or boxes, on the Daily
+  Questions prompt/choices/feedback screens: 郵便局, 引っ越した, 荷物, 違っていました, 子供のころ,
+  ものだ, てばかりいる, とっちゃいけない, ちゃう, とく.
+- Confirm Japanese text wraps without splitting a multi-byte character mid-glyph.
+- Confirm Japanese Daily Questions pre-answer screen blocks WarmIdle/LightNap while waiting for a
+  tap (same guard as Drills/Exam); feedback state is LightNap-eligible.
+- Confirm English/interview typography (Sans Bold-like, not High Contrast) is unchanged elsewhere.
+- Confirm Japanese Results is RAM-only and resets after a reboot, and never appears inside the
+  regular Results screen.
 
 ## Photo Batches (v5.8-dev19)
 

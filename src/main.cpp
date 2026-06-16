@@ -7088,6 +7088,130 @@ void renderJapaneseDaily(const char* refreshReason = "mode switch") {
                 gJapaneseShowFeedback ? "yes" : "no");
 }
 
+// Simple, single-page summary built from gJapaneseResults (RAM-only) — never reads or writes
+// gSessionResults/SessionResult (Interview Practice/Drills/Exam).
+void renderJapaneseResults(const char* refreshReason = "mode switch") {
+  gScreen = Screen::JapaneseResults;
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachTitleFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Japanese Results", 32, 34);
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString("RAM-only - resets on reboot", 34, 92);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+
+  const int32_t contentX = kCoachMargin;
+  const int32_t contentW = display.width() - kCoachMargin * 2;
+  int32_t y = 148;
+
+  if (gJapaneseResultCount == 0) {
+    applyCoachContentFont();
+    drawWrappedText("No answers yet. Try Daily Questions first.", contentX, y, contentW, coachLineHeight(), 3,
+                    "japanese-results-empty", 1);
+  } else {
+    uint16_t correctCount = 0;
+    CategoryStat macroStats[3];
+    copyToBuffer(macroStats[0].name, sizeof(macroStats[0].name), "kanji");
+    copyToBuffer(macroStats[1].name, sizeof(macroStats[1].name), "vocabulary");
+    copyToBuffer(macroStats[2].name, sizeof(macroStats[2].name), "grammar");
+    macroStats[0].total = macroStats[1].total = macroStats[2].total = 0;
+    macroStats[0].correct = macroStats[1].correct = macroStats[2].correct = 0;
+    for (size_t i = 0; i < gJapaneseResultCount; ++i) {
+      const JapaneseSessionResult& r = gJapaneseResults[i];
+      if (r.correct) ++correctCount;
+      for (uint8_t m = 0; m < 3; ++m) {
+        if (strcmp(r.macroArea, macroStats[m].name) == 0) {
+          ++macroStats[m].total;
+          if (r.correct) ++macroStats[m].correct;
+        }
+      }
+    }
+    const uint8_t accuracy = resultAccuracyPercent(correctCount, static_cast<uint16_t>(gJapaneseResultCount));
+
+    applyCoachContentFont();
+    display.drawString(String("Answered: ") + static_cast<unsigned>(gJapaneseResultCount), contentX, y);
+    y += 44;
+    display.drawString(String("Correct: ") + static_cast<unsigned>(correctCount) + "/" +
+                            static_cast<unsigned>(gJapaneseResultCount) + " (" + static_cast<unsigned>(accuracy) + "%)",
+                        contentX, y);
+    y += 56;
+
+    applyCoachMetadataFont();
+    display.setTextColor(metadataTextColor(), TFT_WHITE);
+    display.drawString("By area", contentX, y);
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    y += 38;
+
+    static const char* macroLabels[3] = {"Kanji", "Vocabulary", "Grammar"};
+    applyCoachContentFont();
+    for (uint8_t m = 0; m < 3; ++m) {
+      if (macroStats[m].total == 0) continue;
+      const uint8_t statAccuracy = resultAccuracyPercent(macroStats[m].correct, macroStats[m].total);
+      display.drawString(String(macroLabels[m]) + ": " + static_cast<unsigned>(macroStats[m].correct) + "/" +
+                              static_cast<unsigned>(macroStats[m].total) + " (" + static_cast<unsigned>(statAccuracy) +
+                              "%)",
+                          contentX, y);
+      y += 40;
+    }
+  }
+
+  gHomeButton = {34, display.height() - 110, display.width() - 68, 76};
+  drawButton(gHomeButton, "", IconType::Home);
+
+  finishDisplayRefresh();
+  Serial.printf("Japanese results shown: answered=%u\n", static_cast<unsigned>(gJapaneseResultCount));
+}
+
+// Simple, single-page reference built directly from the embedded Week1Day1 dataset's concept
+// tag fields (grammarPattern/vocabularyItems/kanjiItems) — no SRS, no multi-source UI.
+void renderJapaneseReference(const char* refreshReason = "mode switch") {
+  gScreen = Screen::JapaneseReference;
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachTitleFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Japanese Reference", 32, 34);
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString("N3 sample - Week 1 Day 1 concepts", 34, 92);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+
+  const int32_t contentX = kCoachMargin;
+  const int32_t contentW = display.width() - kCoachMargin * 2;
+  const int32_t bottomLimit = display.height() - 130;
+  int32_t y = 144;
+  applyJapaneseBodyFont(20);
+  const int32_t lineH = japaneseLineHeight(20);
+
+  for (size_t i = 0; i < kJapaneseDayItemCount && y < bottomLimit; ++i) {
+    const JapaneseItem& item = kJapaneseDayItems[i];
+    String line = String(item.categoryJapanese) + " ";
+    if (item.kanjiItems[0] != '\0') {
+      line += String("kanji: ") + item.kanjiItems;
+    } else if (item.vocabularyItems[0] != '\0') {
+      line += String("vocab: ") + item.vocabularyItems;
+    } else if (item.grammarPattern[0] != '\0') {
+      line += String("grammar: ") + item.grammarPattern;
+    }
+    TextLayoutResult lay = drawJapaneseWrappedText(line, contentX, y, contentW, lineH, 2, "japanese-reference");
+    y += lay.height > 0 ? lay.height + 6 : lineH + 6;
+  }
+
+  gHomeButton = {34, display.height() - 110, display.width() - 68, 76};
+  drawButton(gHomeButton, "", IconType::Home);
+
+  finishDisplayRefresh();
+  Serial.println("Japanese reference shown.");
+}
+
 void renderPlaceholderScreen(Screen screen, const char* title, const char* body, const char* refreshReason = "mode switch") {
   gScreen = screen;
   applyAppRotation();
@@ -9138,6 +9262,14 @@ void handleTouch() {
       gJapaneseSelectedOption = -1;
       gJapaneseShowFeedback = false;
       renderJapaneseDaily();
+    } else if (hitTarget(gJapaneseMockTestButton, "japanese mock test", tapX, tapY)) {
+      renderPlaceholderScreen(Screen::JapaneseMockTest, "Mock Test",
+                              "Mock Test is not available yet in this build. Use Daily Questions "
+                              "for now.");
+    } else if (hitTarget(gJapaneseReferenceButton, "japanese reference", tapX, tapY)) {
+      renderJapaneseReference();
+    } else if (hitTarget(gJapaneseResultsButton, "japanese results", tapX, tapY)) {
+      renderJapaneseResults();
     }
     noteIgnoredIfNoHit(tapX, tapY);
     return;
@@ -9172,6 +9304,33 @@ void handleTouch() {
         Serial.println("entering Home");
         renderHome();
       }
+    }
+    noteIgnoredIfNoHit(tapX, tapY);
+    return;
+  }
+
+  if (gScreen == Screen::JapaneseResults) {
+    if (hitTarget(gHomeButton, "home", tapX, tapY)) {
+      Serial.println("entering Home");
+      renderHome();
+    }
+    noteIgnoredIfNoHit(tapX, tapY);
+    return;
+  }
+
+  if (gScreen == Screen::JapaneseReference) {
+    if (hitTarget(gHomeButton, "home", tapX, tapY)) {
+      Serial.println("entering Home");
+      renderHome();
+    }
+    noteIgnoredIfNoHit(tapX, tapY);
+    return;
+  }
+
+  if (gScreen == Screen::JapaneseMockTest) {
+    if (hitTarget(gHomeButton, "home", tapX, tapY)) {
+      Serial.println("entering Home");
+      renderHome();
     }
     noteIgnoredIfNoHit(tapX, tapY);
     return;

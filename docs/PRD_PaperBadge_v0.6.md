@@ -19,7 +19,7 @@ first-class concern.
 
 ---
 
-## Current Behavior (v5.8-dev17)
+## Current Behavior (v5.9-dev1)
 
 ### Badge Mode
 
@@ -45,15 +45,20 @@ Content is organized into categories. Practice cards include a Must Master subse
 
 | Screen | Purpose |
 |--------|---------|
-| Home | Hub: 7 navigation buttons (Badge, Practice, Drills, Exam, Glossary, Results, Settings) |
+| Home | Hub: 8 navigation buttons (Badge, Practice, Drills, Exam, Glossary, Results, Settings, Japanese) |
 | Practice / InterviewPractice | Multi-page practice card reader |
 | Drills / DrillsMenu | MCQ drill selection and answer flow |
 | Exam | 5- or 10-question timed exam with scoring |
 | Glossary / GlossaryMenu | Paged term viewer by category |
-| Results | Accuracy stats, weak areas, recent history |
+| Results | Accuracy stats, weak areas, recent history (Interview Practice/Drills/Exam only) |
 | Settings | Reader size, refresh mode, power profile, orientation |
 | Advanced | Typography lab, power diagnostics, sleep controls |
 | Power Lab | 4-page CPU/battery/sleep diagnostics |
+| Japanese / JapaneseMenu | Self-contained N3-sample mode: Daily Questions, Mock Test, Reference, Results |
+| JapaneseDaily | One embedded Week 1 Day 1 question per screen, 4 choices, immediate feedback |
+| JapaneseReference | Grammar/vocab/kanji tags from the Week 1 Day 1 set |
+| JapaneseResults | RAM-only answered/correct tally, by kanji/vocabulary/grammar |
+| JapaneseMockTest | Placeholder only; no full test flow yet |
 
 ### Settings
 
@@ -198,39 +203,66 @@ Badge and image screens always use a full refresh on entry.
 
 ## Near-Term Roadmap
 
-### Japanese Deck Support (next milestone)
+### Japanese Support — Daily Questions prototype (v5.9-dev1, done)
 
-**Goal:** Allow PaperBadge to load and display Japanese-language content from an SD card deck,
-without breaking existing English content.
+**Goal:** Add a safe, isolated Japanese-language study mode without touching existing English
+PaperCoach behavior, Badge behavior, or deep sleep.
+
+**Delivered in v5.9-dev1:**
+
+1. **UTF-8 text sanitizer** — `sanitizeJapaneseText()` preserves UTF-8 verbatim (only strips ASCII
+   control characters other than `\n`/`\t`). It is intentionally separate from the existing
+   `sanitizeCoachText()`, which is ASCII-only and would replace Japanese glyphs with `?`.
+
+2. **CJK word wrap** — `wrapJapaneseTextToLines()` wraps by UTF-8 code point (via
+   `utf8SequenceLength()`) rather than splitting on spaces, and respects explicit `\n`. It does not
+   modify the existing space-based `wrapTextToLines()` used by English content.
+
+3. **Japanese font path** — `applyJapaneseTitleFont()`/`applyJapaneseBodyFont()` select
+   `lgfxJapanGothic_*` sizes via the existing `applyGothicFont()` helper. No SD font file is
+   required; this is firmware-embedded, in keeping with the existing embedded-first asset policy.
+
+4. **Embedded-only content** — one originally written N3-style sample set (Week 1, Day 1; 11
+   items covering もじ/ごい/ぶんぽう) is embedded directly in firmware (`kJapaneseDayItems`), not
+   loaded from SD. This is intentionally narrower than a generic SD deck schema.
+
+5. **Separate Results** — `JapaneseSessionResult`/`gJapaneseResults` is RAM-only and fully separate
+   from `SessionResult`/`gSessionResults`; Japanese answers never appear in the existing Results
+   screen.
+
+**Out of scope for this milestone (unchanged):**
+- Importing the full 新にほんご500問 book
+- SRS / spaced repetition
+- Volunteer notes
+- Multi-source concept UI
+- Furigana or ruby text support
+- A full Mock Test flow (placeholder only)
+- SD-loadable Japanese deck schema and the `badgeLanguage` deck-selection extension (still future
+  work — see below)
+
+### Japanese Deck Support — SD-loadable decks (future milestone, not started)
+
+**Goal:** Allow PaperBadge to load and display Japanese-language content from an SD card deck, on
+top of the v5.9-dev1 embedded-only foundation, without breaking existing English content.
 
 **Requirements:**
 
-1. **UTF-8 text sanitizer** — strip or replace characters not renderable by the current GFX bitmap
-   font stack. Prevents garbage rendering of multi-byte sequences.
-
-2. **CJK word wrap** — the existing `wrapReaderTextToLines` function splits on spaces, which does
-   not work for Japanese (no spaces between words). Need character-boundary wrapping as fallback
-   when no space-break candidates exist within the content width.
-
-3. **Japanese font path** — define an SD path convention (e.g., `/paperbadge/fonts/jp_body.vlw`)
-   for a VLW-format Japanese font. Fallback to embedded ASCII font when font is not present.
-
-4. **Generic deck schema** — the current embedded deck schema is English-centric (fields: `prompt`,
+1. **Generic deck schema** — the current embedded deck schema is English-centric (fields: `prompt`,
    `answer`, `rubric`, `options`). The SD deck loader should accept an equivalent schema that
    doesn't require English field naming. Document the schema in `CONTENT_SCHEMA.md`.
 
-5. **Language toggle** — the existing `badgeLanguage` setting (English/Japanese/Auto) already
+2. **Language toggle** — the existing `badgeLanguage` setting (English/Japanese/Auto) already
    controls badge image selection. Extend it to also select which deck is loaded on boot.
 
 **Out of scope for this milestone:**
-- In-firmware Japanese font embedding (binary size concern)
+- In-firmware Japanese font embedding (binary size concern) — already satisfied by the embedded
+  `lgfxJapanGothic_*` path from v5.9-dev1
 - Furigana or ruby text support
 - Auto-detection of content language
 
 **Blocked until:**
-- UTF-8 sanitizer is implemented
-- CJK word wrap is implemented
-- Japanese font file is available on SD
+- Generic deck schema is documented and implemented
+- SD deck loader for Japanese content is implemented
 
 ### Other Items (backlog)
 

@@ -103,14 +103,56 @@ Supported categories:
 
 Future SD glossary categories may be deck-specific. Firmware currently has a fixed category grid for the embedded PaperCoach set, so new category grids require a firmware-side mapping update.
 
+## Japanese Item Schema (embedded-only, v5.9-dev1)
+
+Japanese Daily Questions uses a separate `JapaneseItem` struct, embedded directly in firmware
+(`kJapaneseDayItems`) — not an SD-loadable schema yet. One originally written N3-style sample set
+(Week 1, Day 1; 11 items) is embedded. Fields per item:
+
+```json
+{
+  "source_id": "n3sample_w1d1_001",
+  "book_id": "n3_sample_w1d1",
+  "jlpt_level": "N3",
+  "week": 1,
+  "day": 1,
+  "lesson_id": "w1d1_kanji",
+  "item_id": "w1d1_q001",
+  "source_question_number": 1,
+  "category_japanese": "もじ",
+  "macro_area": "kanji",
+  "prompt_japanese": "「郵便局」の読み方として正しいものはどれですか。",
+  "choices": ["ゆうびんきょく", "ゆうべんきょく", "ゆびんきょく", "ゆうびんきょうく"],
+  "correct_choice": 0,
+  "answer_sentence_japanese": "彼は郵便局へ荷物を取りに行きました。",
+  "explanation_japanese": "「郵便局」は「ゆうびんきょく」と読みます。郵便局は荷物や手紙を送る場所です。",
+  "explanation_english": "Post office is read 'yuubinkyoku'. It is a place to send packages and letters.",
+  "grammar_pattern": "",
+  "vocabulary_items": "郵便局,荷物",
+  "kanji_items": "郵,便,局",
+  "concept_ids": "kanji_yuubinkyoku"
+}
+```
+
+`category_japanese` is one of もじ (kanji)/ごい (vocabulary)/ぶんぽう (grammar); `macro_area` is the
+matching English tag (`kanji`/`vocabulary`/`grammar`) used for the Results breakdown. `book_id` is
+`n3_sample_w1d1` (originally written content, not an extraction of any copyrighted book — the full
+新にほんご500問 book is intentionally not imported).
+
+Japanese answer records use a separate `JapaneseSessionResult` schema (RAM-only, not yet persisted
+to SD): `millis_at`, `item_id`, `source_id`, `macro_area`, `category_japanese`, `week`, `day`,
+`selected_choice`, `correct_choice`, `correct`. This is independent of the Results Schema below,
+which remains Interview Practice/Drills/Exam only.
+
 ## Later TODO
 
-- UTF-8/Japanese live text rendering.
+- SD-loadable Japanese deck schema (the v5.9-dev1 Japanese item schema above is embedded-only).
 - Dynamic deck-defined categories.
 - Generic stages array.
 - Category cap increase.
 - Glossary search.
 - SRS/long-term history.
+- Japanese volunteer notes and multi-source concept UI.
 
 ## Results Schema
 
