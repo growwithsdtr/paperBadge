@@ -4294,6 +4294,11 @@ bool containsJapaneseCodepoint(const String& text) {
 }
 
 String sanitizeCoachText(const String& text, const char* field = nullptr) {
+  if (containsJapaneseCodepoint(text)) {
+    Serial.printf("WARN Japanese text reached ASCII sanitizer: field=%s bytes=%u screen=%s\n",
+                  field && field[0] != '\0' ? field : "text", static_cast<unsigned>(text.length()),
+                  screenName(gScreen));
+  }
   static constexpr uint8_t kEmDash[] = {0xE2, 0x80, 0x94};
   static constexpr uint8_t kEnDash[] = {0xE2, 0x80, 0x93};
   static constexpr uint8_t kLeftDoubleQuote[] = {0xE2, 0x80, 0x9C};
