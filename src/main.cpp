@@ -55,6 +55,7 @@ constexpr uint8_t kMaxOptions = 4;
 constexpr uint8_t kMaxWrappedLines = 18;
 constexpr uint8_t kMaxReaderPageCount = 32;
 constexpr size_t kMaxJapaneseResults = 64;
+constexpr uint8_t kFontLabPageCount = 4;
 constexpr int32_t kCoachMargin = 20;
 constexpr int32_t kCoachHeaderBottom = 132;
 constexpr const char* kHeaderSep = " | ";
@@ -687,6 +688,7 @@ Rect gJapaneseDailyButton;
 Rect gJapaneseMockTestButton;
 Rect gJapaneseReferenceButton;
 Rect gJapaneseResultsButton;
+Rect gJapaneseFontLabButton;
 Rect gJapaneseOptionButtons[kMaxOptions];
 Rect gJapaneseNextButton;
 Rect gJapanesePrevButton;
@@ -736,6 +738,7 @@ Rect gFontLabStyleButton;
 Rect gFontLabSizeButton;
 Rect gFontLabContrastButton;
 Rect gFontLabLineSpacingButton;
+Rect gFontLabPageButton;
 Rect gOptionButtons[kMaxOptions];
 Rect gReaderContentRect;
 bool gSdMounted = false;
@@ -847,6 +850,7 @@ uint32_t gLast80MhzDurationMs = 0;
 uint32_t gCumulative80MhzMs = 0;
 uint32_t gLongest80MhzMs = 0;
 uint8_t gPowerLabPage = 0;
+uint8_t gFontLabPage = 0;
 uint32_t gRedrawWhileIdleCount = 0;
 uint32_t gLightSleepEnteredCount = 0;
 uint32_t gLightSleepWakeCount = 0;
@@ -7216,8 +7220,8 @@ void renderJapaneseMenu(const char* refreshReason = "mode switch") {
 
   const int32_t buttonX = 34;
   const int32_t buttonW = display.width() - 68;
-  const int32_t buttonH = 82;
-  const int32_t gap = 14;
+  const int32_t buttonH = 76;
+  const int32_t gap = 12;
   int32_t y = 148;
   gJapaneseDailyButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
@@ -7226,12 +7230,15 @@ void renderJapaneseMenu(const char* refreshReason = "mode switch") {
   gJapaneseReferenceButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
   gJapaneseResultsButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gJapaneseFontLabButton = {buttonX, y, buttonW, buttonH};
   gHomeButton = {buttonX, display.height() - 110, buttonW, 76};
 
   drawButton(gJapaneseDailyButton, "Daily Questions");
   drawButton(gJapaneseMockTestButton, "Mock Test");
   drawButton(gJapaneseReferenceButton, "Reference");
   drawButton(gJapaneseResultsButton, "Results");
+  drawButton(gJapaneseFontLabButton, "Font Lab (JP)");
   drawButton(gHomeButton, "", IconType::Home);
 
   finishDisplayRefresh();
@@ -9302,12 +9309,140 @@ void drawFontLabVlwProbe(const char* path, const char* label, int32_t y) {
   display.unloadFont();
 }
 
+const char* gothicFontNameForPx(uint8_t px) {
+  if (px >= 40) return "lgfxJapanGothic_40";
+  if (px >= 36) return "lgfxJapanGothic_36";
+  if (px >= 32) return "lgfxJapanGothic_32";
+  if (px >= 28) return "lgfxJapanGothic_28";
+  if (px >= 24) return "lgfxJapanGothic_24";
+  return "lgfxJapanGothic_20";
+}
+
+bool containsQuestionMark(const String& text) {
+  for (size_t i = 0; i < text.length(); ++i) {
+    if (text[i] == '?') return true;
+  }
+  return false;
+}
+
+void drawFontLabPageChrome() {
+  auto& display = M5.Display;
+  applyJapaneseEnglishLabelFont(20);
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString(String("Page ") + static_cast<unsigned>(gFontLabPage + 1) + "/" +
+                         static_cast<unsigned>(kFontLabPageCount),
+                     display.width() - 128, 34);
+  gFontLabPageButton = {display.width() - 184, 76, 154, 48};
+  drawButton(gFontLabPageButton, "Next Page ->");
+}
+
+void drawJapaneseFontLabRow(uint8_t px, const String& sample, int32_t y) {
+  auto& display = M5.Display;
+  applyJapaneseEnglishLabelFont(18);
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString(String(gothicFontNameForPx(px)) + " px " + static_cast<unsigned>(px) +
+                         "  source?: " + (containsQuestionMark(sample) ? "yes" : "no"),
+                     kCoachMargin, y);
+  applyGothicFont(px);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString(sample, kCoachMargin, y + 24);
+}
+
+void renderFontLabJapaneseLadder() {
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyJapaneseEnglishLabelFont(32);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Font Lab JP", 28, 24);
+  drawFontLabPageChrome();
+  applyJapaneseEnglishLabelFont(20);
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString("Built-in Gothic ladder; min readable target: 24px", 30, 128);
+
+  const String sample = "あいうえお  アイウエオ  郵便局  ぶんぽう";
+  int32_t y = 176;
+  const uint8_t sizes[] = {20, 24, 28, 32, 36, 40};
+  for (uint8_t i = 0; i < countOf(sizes); ++i) {
+    drawJapaneseFontLabRow(sizes[i], sample, y);
+    y += sizes[i] + 48;
+    if (y > display.height() - 120) break;
+  }
+}
+
+void renderFontLabJapaneseMixed() {
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyJapaneseEnglishLabelFont(32);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Font Lab JP", 28, 24);
+  drawFontLabPageChrome();
+
+  const int32_t contentX = kCoachMargin;
+  const int32_t contentW = display.width() - kCoachMargin * 2;
+  int32_t y = 140;
+  drawMixedJapaneseLabel("N3 \xc2\xb7 W1D1 \xc2\xb7 500\xe5\x95\x8f \xc2\xb7 \xe3\x81\xb6\xe3\x82\x93\xe3\x81\xbd\xe3\x81\x86",
+                         contentX, y, contentW, 36, 1, 24, "fontlab-jp-header");
+  y += 54;
+  drawMixedJapaneseLabel("\xe3\x80\x8c\xe9\x83\xb5\xe4\xbe\xbf\xe5\xb1\x80\xe3\x80\x8d\xe3\x81\xae\xe8\xaa\xad\xe3\x81\xbf\xe6\x96\xb9\xe3\x81\xa8\xe3\x81\x97\xe3\x81\xa6\xe6\xad\xa3\xe3\x81\x97\xe3\x81\x84\xe3\x82\x82\xe3\x81\xae\xe3\x81\xaf\xe3\x81\xa9\xe3\x82\x8c\xe3\x81\xa7\xe3\x81\x99\xe3\x81\x8b\xe3\x80\x82",
+                         contentX, y, contentW, 44, 3, 32, "fontlab-jp-prompt");
+  y += 150;
+  Rect option = {contentX, y, contentW, 92};
+  drawJapaneseOptionButton(option, "A. \xe3\x82\x86\xe3\x81\x86\xe3\x81\xb3\xe3\x82\x93\xe3\x81\x8d\xe3\x82\x87\xe3\x81\x8f");
+  y += 116;
+  applyJapaneseEnglishLabelFont(20);
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString("source?: no  fonts: mixed safe path + built-in Gothic", contentX, y);
+}
+
+void renderFontLabJapaneseMeta() {
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyJapaneseEnglishLabelFont(32);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Font Lab JP", 28, 24);
+  drawFontLabPageChrome();
+  applyJapaneseEnglishLabelFont(20);
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString("Meta sizes; minimum readable output: 24px", 30, 128);
+
+  const String sample = "N3 \xc2\xb7 W1D1 \xc2\xb7 500\xe5\x95\x8f \xc2\xb7 \xe3\x81\xb6\xe3\x82\x93\xe3\x81\xbd\xe3\x81\x86";
+  drawJapaneseFontLabRow(20, sample, 188);
+  applyJapaneseEnglishLabelFont(18);
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString("20px: comparison only; below runtime minimum for readable Japanese", kCoachMargin, 250);
+  drawJapaneseFontLabRow(24, sample, 310);
+  drawJapaneseFontLabRow(28, sample, 430);
+}
+
 void renderFontLab(const char* refreshReason = "mode switch") {
   gScreen = Screen::FontLab;
   applyAppRotation();
   prepareFullRefresh(refreshReason, true);
+  if (gFontLabPage >= kFontLabPageCount) {
+    gFontLabPage = 0;
+  }
 
   auto& display = M5.Display;
+  if (gFontLabPage > 0) {
+    gFontLabStyleButton = {};
+    gFontLabSizeButton = {};
+    gFontLabContrastButton = {};
+    gFontLabLineSpacingButton = {};
+    if (gFontLabPage == 1) {
+      renderFontLabJapaneseLadder();
+    } else if (gFontLabPage == 2) {
+      renderFontLabJapaneseMixed();
+    } else {
+      renderFontLabJapaneseMeta();
+    }
+    gHomeButton = {26, display.height() - 82, display.width() - 52, 58};
+    drawButton(gHomeButton, "Home");
+    finishDisplayRefresh();
+    Serial.printf("Font Lab JP shown: page=%u/%u\n", static_cast<unsigned>(gFontLabPage + 1),
+                  static_cast<unsigned>(kFontLabPageCount));
+    return;
+  }
+
   const CoachTypography type = coachTypography();
   const uint16_t darkGray = metadataTextColor();
   const char* english = "How would you explain the product impact without overclaiming causality?";
@@ -9321,6 +9456,7 @@ void renderFontLab(const char* refreshReason = "mode switch") {
   applyCoachTitleFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.drawString("Font Lab", 28, 24);
+  drawFontLabPageChrome();
 
   applyCoachMetadataFont();
   display.setTextColor(darkGray, TFT_WHITE);
@@ -9591,6 +9727,7 @@ void handleTouch() {
     } else if (hitTarget(gVisualQaButton, "visual qa", tapX, tapY)) {
       renderVisualQa();
     } else if (hitTarget(gFontLabButton, "font lab", tapX, tapY)) {
+      gFontLabPage = 0;
       renderFontLab();
     } else if (hitTarget(gTypographyResetButton, "reset typography", tapX, tapY)) {
       resetTypographyDefaults();
@@ -9632,6 +9769,7 @@ void handleTouch() {
     } else if (hitTarget(gVisualQaButton, "visual qa", tapX, tapY)) {
       renderVisualQa();
     } else if (hitTarget(gFontLabButton, "font lab", tapX, tapY)) {
+      gFontLabPage = 0;
       renderFontLab();
     } else if (hitTarget(gTypographyResetButton, "reset typography", tapX, tapY)) {
       resetTypographyDefaults();
@@ -9733,7 +9871,10 @@ void handleTouch() {
   }
 
   if (gScreen == Screen::FontLab) {
-    if (hitTarget(gFontLabStyleButton, "font lab style", tapX, tapY)) {
+    if (hitTarget(gFontLabPageButton, "font lab next page", tapX, tapY)) {
+      gFontLabPage = static_cast<uint8_t>((gFontLabPage + 1) % kFontLabPageCount);
+      renderFontLab("font lab page");
+    } else if (hitTarget(gFontLabStyleButton, "font lab style", tapX, tapY)) {
       cycleFontStyleMode();
       saveSettings();
       renderFontLab("font style switch");
@@ -9856,6 +9997,9 @@ void handleTouch() {
     } else if (hitTarget(gJapaneseResultsButton, "japanese results", tapX, tapY)) {
       gCoachNeedsCleanEntryRefresh = true;
       renderJapaneseResults("japanese entry");
+    } else if (hitTarget(gJapaneseFontLabButton, "japanese font lab", tapX, tapY)) {
+      gFontLabPage = 1;
+      renderFontLab("japanese entry");
     }
     noteIgnoredIfNoHit(tapX, tapY);
     return;
