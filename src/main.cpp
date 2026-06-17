@@ -41,6 +41,7 @@ constexpr bool kEnableIdleCpuScaling = true;
 constexpr uint32_t kActiveCpuMhz = 240;
 constexpr uint32_t kIdleCpuMhz = 80;
 constexpr uint32_t kPowerPollIntervalMs = 45000;
+constexpr uint32_t kPowerTracePollMs = 5000;
 constexpr uint32_t kPostTouchIdleGuardMs = 2000;
 constexpr uint32_t kHardCleanTransitionLimit = 16;      // Fast: clean every ~16 non-clean transitions
 constexpr uint32_t kBalancedCleanTransitionLimit = 10;  // Balanced: clean every ~10 transitions
@@ -57,6 +58,16 @@ constexpr size_t kMaxJapaneseResults = 64;
 constexpr int32_t kCoachMargin = 20;
 constexpr int32_t kCoachHeaderBottom = 132;
 constexpr const char* kHeaderSep = " | ";
+
+#ifndef PWR_TRACE
+#define PWR_TRACE 1
+#endif
+
+#if PWR_TRACE
+#define PWR_LOGF(fmt, ...) Serial.printf("PWR " fmt, ##__VA_ARGS__)
+#else
+#define PWR_LOGF(fmt, ...) do {} while (0)
+#endif
 
 constexpr const char* kBadgeEnCandidates[] = {
     "/paperbadge/badge_en.png",
@@ -867,6 +878,8 @@ String gLastAnswerKeyWarning = "none";
 Screen gLastRenderedScreen = Screen::Badge;
 String gLastRenderedReason = "";
 uint8_t gRepeatedRenderCount = 0;
+uint32_t gLastPowerTracePollMs = 0;
+String gLastPowerTraceIdleState = "boot";
 
 const char* screenName(Screen screen);
 const char* fontSizeModeName();
@@ -894,6 +907,7 @@ int32_t coachFooterTop();
 void logCurrentLayoutDiagnostics(const char* reason);
 void dumpCurrentRenderTraceToSd();
 void restoreActiveCpu(const char* reason);
+void tracePowerBattery();
 
 struct EmbeddedCoachItem {
   CoachItemType type;
@@ -1582,6 +1596,25 @@ int32_t batteryLevelPercent() {
   return static_cast<int32_t>(constrain(estimated, 0L, 100L));
 }
 
+void tracePowerBattery() {
+#if PWR_TRACE
+  const uint32_t now = millis();
+  if (gLastPowerTracePollMs != 0 && now - gLastPowerTracePollMs < kPowerTracePollMs) {
+    return;
+  }
+  gLastPowerTracePollMs = now;
+  const int16_t batteryMv = M5.Power.getBatteryVoltage();
+  const int32_t level = M5.Power.getBatteryLevel();
+  const int32_t currentMa = M5.Power.getBatteryCurrent();
+  const int16_t vbusMv = M5.Power.getVBUSVoltage();
+  const auto charging = M5.Power.isCharging();
+  PWR_LOGF("battery mv=%d level=%ld currentMa=%ld vbusMv=%d charge=%s screen=%s idle=%s cpu=%u\n",
+           static_cast<int>(batteryMv), static_cast<long>(level), static_cast<long>(currentMa),
+           static_cast<int>(vbusMv), chargingStateName(charging), screenName(gScreen),
+           gIdleModeActive ? "yes" : "no", static_cast<unsigned>(ESP.getCpuFreqMHz()));
+#endif
+}
+
 const char* usbPowerName(int16_t vbusMv) {
   if (vbusMv < 0) {
     return "unknown";
@@ -1649,6 +1682,7 @@ void restoreActiveCpu(const char* reason) {
     return;
   }
   const uint32_t now = millis();
+  const uint32_t oldMhz = ESP.getCpuFreqMHz();
   gLastRestoreAtMs = now;
   gLastRestoreReason = reason && reason[0] != '\0' ? reason : "active";
   if (gLastIdleScaledAtMs > 0) {
@@ -1659,6 +1693,8 @@ void restoreActiveCpu(const char* reason) {
   }
   ++gCpuRestoreCount;
   setCpuFrequencyMhz(kActiveCpuMhz);
+  PWR_LOGF("cpu restore old=%u new=%u reason=%s screen=%s\n", static_cast<unsigned>(oldMhz),
+           static_cast<unsigned>(ESP.getCpuFreqMHz()), gLastRestoreReason.c_str(), screenName(gScreen));
   gIdleCpuScaled = false;
   enterPowerStage(PowerStage::Active);
   Serial.printf("Power CPU scale: active %uMHz reason=%s last80dur=%ums cumulative=%ums\n",
@@ -1668,10 +1704,19 @@ void restoreActiveCpu(const char* reason) {
 
 void maybeScaleIdleCpu(const char* reason) {
   if (!kEnableIdleCpuScaling || gIdleCpuScaled || !isStaticIdleScreen(gScreen)) {
+    PWR_LOGF("cpu scale skipped enabled=%s already=%s static=%s screen=%s reason=%s\n",
+             kEnableIdleCpuScaling ? "yes" : "no", gIdleCpuScaled ? "yes" : "no",
+             isStaticIdleScreen(gScreen) ? "yes" : "no", screenName(gScreen),
+             reason && reason[0] != '\0' ? reason : "idle");
     return;
   }
+  const uint32_t oldMhz = ESP.getCpuFreqMHz();
   setCpuFrequencyMhz(kIdleCpuMhz);
   gIdleCpuScaled = ESP.getCpuFreqMHz() <= kIdleCpuMhz;
+  PWR_LOGF("cpu scale old=%u requested=%u new=%u active=%s profile=%s screen=%s reason=%s\n",
+           static_cast<unsigned>(oldMhz), static_cast<unsigned>(kIdleCpuMhz),
+           static_cast<unsigned>(ESP.getCpuFreqMHz()), gIdleCpuScaled ? "yes" : "no", powerProfileName(),
+           screenName(gScreen), reason && reason[0] != '\0' ? reason : "idle");
   if (gIdleCpuScaled) {
     gLastIdleScaledAtMs = millis();
     ++gCpuScaleCount;
@@ -1822,8 +1867,13 @@ void applyPowerPolicy(const char* reason) {
 }
 
 void recordUserActivity(const char* reason) {
+  const uint32_t previousActivityMs = gLastUserActivityMs;
   restoreActiveCpu(reason);
   gLastUserActivityMs = millis();
+  PWR_LOGF("activity source=%s screen=%s idleAgeMs=%u touchActive=%s inputLocked=%s wakeListen=%s\n",
+           reason && reason[0] != '\0' ? reason : "touch", screenName(gScreen),
+           previousActivityMs > 0 ? static_cast<unsigned>(gLastUserActivityMs - previousActivityMs) : 0,
+           gTouchActive ? "yes" : "no", gInputLocked ? "yes" : "no", gInWakeListenWindow ? "yes" : "no");
   gInputDetectedAfterWake = false;
   if (gInWakeListenWindow) {
     gInWakeListenWindow = false;
@@ -1844,6 +1894,9 @@ void enterIdleMode(const char* reason) {
   }
   gIdleModeActive = true;
   ++gIdleEntryCount;
+  PWR_LOGF("idle enter screen=%s profile=%s thresholdMs=%u reason=%s count=%u\n", screenName(gScreen),
+           powerProfileName(), static_cast<unsigned>(profileIdleScaleThresholdMs()),
+           reason && reason[0] != '\0' ? reason : "inactivity", static_cast<unsigned>(gIdleEntryCount));
   disableUnusedRadiosAndPeripherals(reason);
   Serial.printf("Power idle entry: mode=%s reason=%s count=%u sleep=deferred\n", powerModeName(),
                 reason && reason[0] != '\0' ? reason : "inactivity", static_cast<unsigned>(gIdleEntryCount));
@@ -1852,16 +1905,37 @@ void enterIdleMode(const char* reason) {
 }
 
 void maybeEnterPowerIdle() {
+  String traceState;
   if (gInputLocked || gTouchActive || gLastUserActivityMs == 0) {
+    traceState = String("blocked inputLocked=") + (gInputLocked ? "yes" : "no") +
+                 " touchActive=" + (gTouchActive ? "yes" : "no") +
+                 " lastActivity=" + static_cast<unsigned>(gLastUserActivityMs);
+    if (traceState != gLastPowerTraceIdleState) {
+      PWR_LOGF("idle timer %s screen=%s\n", traceState.c_str(), screenName(gScreen));
+      gLastPowerTraceIdleState = traceState;
+    }
     return;
   }
 
   const uint32_t elapsedMs = millis() - gLastUserActivityMs;
   if (elapsedMs < kPostTouchIdleGuardMs) {
+    traceState = String("guard elapsedMs=") + static_cast<unsigned>(elapsedMs);
+    if (traceState != gLastPowerTraceIdleState) {
+      PWR_LOGF("idle timer %s screen=%s\n", traceState.c_str(), screenName(gScreen));
+      gLastPowerTraceIdleState = traceState;
+    }
     return;
   }
 
   const uint32_t profileThresholdMs = profileIdleScaleThresholdMs();
+  traceState = String("eligible=") + (isStaticIdleScreen(gScreen) ? "yes" : "no") +
+               " elapsedMs=" + static_cast<unsigned>(elapsedMs) +
+               " thresholdMs=" + static_cast<unsigned>(profileThresholdMs) +
+               " idleActive=" + (gIdleModeActive ? "yes" : "no");
+  if (traceState != gLastPowerTraceIdleState) {
+    PWR_LOGF("idle timer %s screen=%s profile=%s\n", traceState.c_str(), screenName(gScreen), powerProfileName());
+    gLastPowerTraceIdleState = traceState;
+  }
   if (isStaticIdleScreen(gScreen) && elapsedMs >= profileThresholdMs) {
     enterIdleMode("static screen light idle");
   } else if (gSettings.powerMode == PowerMode::BatterySaver && elapsedMs >= kBatterySaverIdleMs) {
@@ -10298,6 +10372,7 @@ void setup() {
 
 void loop() {
   M5.update();
+  tracePowerBattery();
   handleTouch();
   maybeSwitchBadgeLanguage();
   maybeEnterPowerIdle();
