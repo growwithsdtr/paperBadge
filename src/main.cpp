@@ -3786,7 +3786,9 @@ CoachTypography coachTypography() {
 
 void applyGothicFont(uint8_t px) {
   auto& display = M5.Display;
-  if (px >= 36) {
+  if (px >= 40) {
+    display.setFont(&fonts::lgfxJapanGothic_40);
+  } else if (px >= 36) {
     display.setFont(&fonts::lgfxJapanGothic_36);
   } else if (px >= 32) {
     display.setFont(&fonts::lgfxJapanGothic_32);
