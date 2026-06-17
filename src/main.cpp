@@ -4483,6 +4483,14 @@ TextLayoutResult wrapJapaneseTextToLines(const String& text, int32_t width, int3
   return result;
 }
 
+TextLayoutResult wrapMixedJapaneseText(const String& text, int32_t width, int32_t lineHeight, uint8_t maxLines,
+                                       String* lines) {
+  if (containsJapaneseCodepoint(text)) {
+    return wrapJapaneseTextToLines(text, width, lineHeight, maxLines, lines);
+  }
+  return wrapTextToLines(text, width, lineHeight, maxLines, lines);
+}
+
 int32_t japaneseLineHeight(uint8_t px) {
   return static_cast<int32_t>(px) + 16;
 }
@@ -4513,6 +4521,29 @@ void applyJapaneseBodyFont(uint8_t px = 0) {
 // English labels inside Japanese screens — always Sans Bold, independent of FontStyleMode.
 void applyJapaneseEnglishLabelFont(uint8_t px) {
   applySansBoldFont(px);
+}
+
+TextLayoutResult drawMixedJapaneseLabel(const String& text, int32_t x, int32_t y, int32_t width, int32_t lineHeight,
+                                        uint8_t maxLines, uint8_t japanesePx, const char* field = nullptr) {
+  auto& display = M5.Display;
+  const bool hasJapanese = containsJapaneseCodepoint(text);
+  if (hasJapanese) {
+    applyGothicFont(japanesePx < 24 ? 24 : japanesePx);
+  } else {
+    applyJapaneseEnglishLabelFont(japanesePx);
+  }
+  String lines[kMaxWrappedLines];
+  const uint8_t lineLimit = maxLines > kMaxWrappedLines ? kMaxWrappedLines : maxLines;
+  TextLayoutResult result = wrapMixedJapaneseText(text, width, lineHeight, lineLimit, lines);
+  for (uint8_t line = 0; line < result.lineCount; ++line) {
+    display.drawString(lines[line], x, y + line * lineHeight);
+  }
+  if (field != nullptr && field[0] != '\0') {
+    Serial.printf("Mixed Japanese layout: field=%s japanese=%s lines=%u overflow=%s\n", field,
+                  hasJapanese ? "yes" : "no", static_cast<unsigned>(result.lineCount),
+                  result.overflow ? "yes" : "no");
+  }
+  return result;
 }
 
 // Role-specific Japanese font sizes for headers, prompts, choices, and explanations.
