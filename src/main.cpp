@@ -892,6 +892,7 @@ void applyPowerPolicy(const char* reason);
 void recordUserActivity(const char* reason);
 void maybeEnterPowerIdle();
 uint32_t loopDelayMs();
+void applyGothicFont(uint8_t px);
 void validateCoachAnswerKeys(const char* source);
 void applyCoachButtonFont();
 void applyCoachQuestionFont();
@@ -902,6 +903,9 @@ bool hasValidAnswerKey(const CoachItemView& item);
 void logInvalidAnswerKey(const CoachItemView& item, const char* context);
 TextLayoutResult wrapTextToLines(const String& text, int32_t width, int32_t lineHeight, uint8_t maxLines,
                                  String* lines);
+bool containsJapaneseCodepoint(const String& text);
+TextLayoutResult wrapMixedJapaneseText(const String& text, int32_t width, int32_t lineHeight, uint8_t maxLines,
+                                       String* lines);
 void logLayoutBox(const char* field, const Rect& box, int32_t usedHeight, uint8_t pageCount, bool overflow);
 int32_t coachFooterTop();
 void logCurrentLayoutDiagnostics(const char* reason);
@@ -3518,11 +3522,17 @@ void drawButton(const Rect& rect, const char* label, IconType icon = IconType::N
   auto& display = M5.Display;
   display.drawRoundRect(rect.x, rect.y, rect.w, rect.h, 8, TFT_BLACK);
   display.drawRoundRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 7, TFT_BLACK);
-  applyCoachButtonFont();
+  const String labelText = label ? String(label) : String("");
+  const bool labelHasJapanese = containsJapaneseCodepoint(labelText);
+  const uint8_t buttonPx = coachTypography().buttonPx;
+  const uint8_t buttonDrawPx = labelHasJapanese && buttonPx < 24 ? 24 : buttonPx;
+  if (labelHasJapanese) {
+    applyGothicFont(buttonDrawPx);
+  } else {
+    applyCoachButtonFont();
+  }
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.setTextDatum(textdatum_t::top_left);
-
-  const String labelText = label ? String(label) : String("");
   if (icon == IconType::None && labelText == "Home") {
     icon = IconType::Home;
   }
@@ -3538,9 +3548,9 @@ void drawButton(const Rect& rect, const char* label, IconType icon = IconType::N
   const int32_t iconGap = hasIcon ? (rect.w < 180 ? 12 : 16) : 0;
   const int32_t maxTextW = rect.w - 28 - (hasIcon ? iconSize + iconGap : 0);
   const int32_t innerW = maxTextW > 24 ? maxTextW : rect.w - 24;
-  const int32_t lineHeight = static_cast<int32_t>(coachTypography().buttonPx) + 8;
+  const int32_t lineHeight = static_cast<int32_t>(buttonDrawPx) + (labelHasJapanese ? 12 : 8);
   String lines[2];
-  TextLayoutResult result = wrapTextToLines(labelText, innerW, lineHeight, 2, lines);
+  TextLayoutResult result = wrapMixedJapaneseText(labelText, innerW, lineHeight, 2, lines);
   const int32_t centeredOffset = (rect.h - result.height) / 2;
   const int32_t textY = rect.y + (centeredOffset > 6 ? centeredOffset : 6);
   int32_t maxLineW = 0;
@@ -7193,7 +7203,8 @@ void renderJapaneseMenu(const char* refreshReason = "mode switch") {
   display.drawString("Japanese", 32, 34);
   applyCoachMetadataFont();
   display.setTextColor(metadataTextColor(), TFT_WHITE);
-  display.drawString("N3 sample - Week 1 Day 1", 34, 92);
+  drawMixedJapaneseLabel("N3 sample - Week 1 Day 1", 34, 92, display.width() - 68, 32, 1, 24,
+                         "japanese-menu-subtitle");
   display.setTextColor(TFT_BLACK, TFT_WHITE);
 
   const int32_t buttonX = 34;
@@ -7234,7 +7245,8 @@ void renderJapaneseSourceSelect(const char* refreshReason = "japanese entry") {
   display.drawString("Daily Questions", 32, 34);
   applyCoachMetadataFont();
   display.setTextColor(metadataTextColor(), TFT_WHITE);
-  display.drawString("Select source", 34, 92);
+  drawMixedJapaneseLabel("Select source", 34, 92, display.width() - 68, 32, 1, 24,
+                         "japanese-source-subtitle");
   display.setTextColor(TFT_BLACK, TFT_WHITE);
 
   const int32_t buttonX = 34;
@@ -7280,7 +7292,8 @@ void renderJapaneseWeekSelect(const char* refreshReason = "japanese entry") {
   display.drawString("Daily Questions", 32, 34);
   applyCoachMetadataFont();
   display.setTextColor(metadataTextColor(), TFT_WHITE);
-  display.drawString("500\xe5\x95\x8f N3  \xe2\x80\x94  Select week", 34, 92);
+  drawMixedJapaneseLabel("500\xe5\x95\x8f N3  \xe2\x80\x94  Select week", 34, 92, display.width() - 68, 36, 1, 24,
+                         "japanese-week-subtitle");
   display.setTextColor(TFT_BLACK, TFT_WHITE);
 
   const int32_t buttonX = 34;
@@ -7322,7 +7335,8 @@ void renderJapaneseDaySelect(const char* refreshReason = "japanese entry") {
   display.drawString("Daily Questions", 32, 34);
   applyCoachMetadataFont();
   display.setTextColor(metadataTextColor(), TFT_WHITE);
-  display.drawString("500\xe5\x95\x8f N3  \xc2\xb7  Week 1  \xe2\x80\x94  Select day", 34, 92);
+  drawMixedJapaneseLabel("500\xe5\x95\x8f N3  \xc2\xb7  Week 1  \xe2\x80\x94  Select day", 34, 92,
+                         display.width() - 68, 36, 1, 24, "japanese-day-subtitle");
   display.setTextColor(TFT_BLACK, TFT_WHITE);
 
   const int32_t buttonX = 34;
@@ -7529,14 +7543,10 @@ void renderJapaneseDaily(const char* refreshReason = "japanese entry") {
 
     // Grammar tag — grammarPattern can contain Japanese (e.g. "～ものだ"), use Gothic path
     if (item.grammarPattern[0] != '\0') {
-      applyGothicFont(20);
+      applyGothicFont(24);
       display.setTextColor(metadataTextColor(), TFT_WHITE);
       String tagLine = String("Grammar: ") + item.grammarPattern;
-      String tagLines[2];
-      TextLayoutResult lt = wrapJapaneseTextToLines(tagLine, contentW, 28, 2, tagLines);
-      for (uint8_t line = 0; line < lt.lineCount; ++line) {
-        display.drawString(tagLines[line], contentX, y + line * 28);
-      }
+      drawMixedJapaneseLabel(tagLine, contentX, y, contentW, 36, 2, 24, "japanese-grammar-tag");
       display.setTextColor(TFT_BLACK, TFT_WHITE);
     }
 
@@ -7776,17 +7786,30 @@ void renderPlaceholderScreen(Screen screen, const char* title, const char* body,
   auto& display = M5.Display;
   const uint16_t darkGray = metadataTextColor();
   display.setTextDatum(textdatum_t::top_left);
+  const String placeholderTitle = title ? String(title) : String("");
+  const String placeholderBody = body ? String(body) : String("");
+  const bool placeholderHasJapanese = containsJapaneseCodepoint(placeholderTitle) || containsJapaneseCodepoint(placeholderBody);
   applyCoachTitleFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.drawString(title, 32, 34);
+  if (placeholderHasJapanese) {
+    drawMixedJapaneseLabel(placeholderTitle, 32, 34, display.width() - 64, 44, 1, 32, "placeholder-title");
+  } else {
+    display.drawString(placeholderTitle, 32, 34);
+  }
 
   applyCoachContentFont();
   const int32_t contentX = kCoachMargin;
   const int32_t contentY = kCoachHeaderBottom + 18;
   const int32_t contentW = display.width() - kCoachMargin * 2;
   const int32_t contentH = coachFooterTop() - contentY - 42;
-  drawWrappedText(body, contentX, contentY, contentW, coachLineHeight(), linesThatFit(contentH, coachLineHeight(), 2),
-                  "placeholder", 1);
+  if (screen == Screen::JapaneseMockTest || placeholderHasJapanese) {
+    const uint8_t px = 24;
+    drawMixedJapaneseLabel(placeholderBody, contentX, contentY, contentW, static_cast<int32_t>(px) + 12,
+                           linesThatFit(contentH, static_cast<int32_t>(px) + 12, 2), px, "placeholder");
+  } else {
+    drawWrappedText(placeholderBody, contentX, contentY, contentW, coachLineHeight(),
+                    linesThatFit(contentH, coachLineHeight(), 2), "placeholder", 1);
+  }
 
   gHomeButton = {34, display.height() - coachTypography().buttonHeight - 28, display.width() - 68,
                  coachTypography().buttonHeight};
