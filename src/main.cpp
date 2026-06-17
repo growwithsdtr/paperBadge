@@ -768,6 +768,7 @@ uint8_t gJapaneseNavWeek = 1;
 uint8_t gJapaneseNavDay = 1;
 int8_t gJapaneseSelectedOption = -1;
 bool gJapaneseShowFeedback = false;
+bool gJapaneseMockTestAwaitingAnswer = false;
 uint8_t gMockStep = 0;
 uint8_t gBottomLeftTapCount = 0;
 uint32_t gLastBottomLeftTapMs = 0;
@@ -1536,6 +1537,7 @@ bool isAnswerSelectionActive() {
     if (isOptionDrillScreen(gScreen, item)) return true;
   }
   if (gScreen == Screen::JapaneseDaily && !gJapaneseShowFeedback) return true;
+  if (gScreen == Screen::JapaneseMockTest && gJapaneseMockTestAwaitingAnswer) return true;
   return false;
 }
 
