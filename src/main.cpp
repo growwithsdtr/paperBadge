@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.9-dev2";
+constexpr const char* kFirmwareVersion = "v5.9-dev3";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -133,7 +133,11 @@ enum class Screen {
   GlossaryMenu,
   Glossary,
   MockInterview,
+  InterviewMenu,
   JapaneseMenu,
+  JapaneseSourceSelect,
+  JapaneseWeekSelect,
+  JapaneseDaySelect,
   JapaneseDaily,
   JapaneseReference,
   JapaneseResults,
@@ -674,6 +678,11 @@ Rect gJapaneseReferenceButton;
 Rect gJapaneseResultsButton;
 Rect gJapaneseOptionButtons[kMaxOptions];
 Rect gJapaneseNextButton;
+Rect gJapanesePrevButton;
+Rect gJapaneseBackButton;
+Rect gJapaneseSourceN3Button;
+Rect gJapaneseWeek1Button;
+Rect gJapaneseDay1Button;
 Rect gSettingsButton;
 Rect gDebugButton;
 Rect gAdvancedButton;
@@ -743,6 +752,9 @@ int8_t gSelectedOption = -1;
 bool gDrillShowFeedback = false;    // true = show feedback page; false = show result/options state
 uint8_t gDrillLastResultPage = 0;  // result page to restore when returning from feedback
 size_t gJapaneseQuestionIndex = 0;
+uint8_t gJapaneseNavSource = 0;
+uint8_t gJapaneseNavWeek = 1;
+uint8_t gJapaneseNavDay = 1;
 int8_t gJapaneseSelectedOption = -1;
 bool gJapaneseShowFeedback = false;
 uint8_t gMockStep = 0;
@@ -1454,7 +1466,11 @@ bool isStaticIdleScreen(Screen screen) {
     case Screen::VisualQa:
     case Screen::HelpLegend:
     case Screen::FontLab:
+    case Screen::InterviewMenu:
     case Screen::JapaneseMenu:
+    case Screen::JapaneseSourceSelect:
+    case Screen::JapaneseWeekSelect:
+    case Screen::JapaneseDaySelect:
     case Screen::JapaneseReference:
     case Screen::JapaneseResults:
     case Screen::JapaneseMockTest:
@@ -1479,7 +1495,11 @@ bool isLightNapEligibleScreen(Screen screen) {
     case Screen::Results:
     case Screen::Drills:
     case Screen::Exam:
+    case Screen::InterviewMenu:
     case Screen::JapaneseMenu:
+    case Screen::JapaneseSourceSelect:
+    case Screen::JapaneseWeekSelect:
+    case Screen::JapaneseDaySelect:
     case Screen::JapaneseDaily:
     case Screen::JapaneseReference:
     case Screen::JapaneseResults:
@@ -3571,8 +3591,16 @@ const char* screenName(Screen screen) {
       return "Exam";
     case Screen::Results:
       return "Results";
+    case Screen::InterviewMenu:
+      return "Interview";
     case Screen::JapaneseMenu:
       return "Japanese";
+    case Screen::JapaneseSourceSelect:
+      return "Japanese Source";
+    case Screen::JapaneseWeekSelect:
+      return "Japanese Week";
+    case Screen::JapaneseDaySelect:
+      return "Japanese Day";
     case Screen::JapaneseDaily:
       return "Japanese Daily";
     case Screen::JapaneseReference:
@@ -6781,11 +6809,53 @@ void renderHome(const char* refreshReason = "mode switch") {
   const int32_t width = display.width();
   const int32_t buttonX = 34;
   const int32_t buttonW = width - 68;
-  const int32_t buttonH = 86;
-  const int32_t gap = 14;
-  int32_t y = 104;
+  const int32_t buttonH = 112;
+  const int32_t gap = 20;
+  int32_t y = 120;
   gBadgeButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
+  gInterviewButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gJapaneseButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gSettingsButton = {buttonX, y, buttonW, buttonH};
+  // Clear rects that are no longer on Home (now in InterviewMenu)
+  gPracticeButton = {};
+  gDrillsButton = {};
+  gExamButton = {};
+  gGlossaryButton = {};
+  gResultsButton = {};
+  gDebugButton = {};
+
+  drawButton(gBadgeButton, "Badge", IconType::Badge);
+  drawButton(gInterviewButton, "Interview", IconType::Practice);
+  drawButton(gJapaneseButton, "Japanese");
+  drawButton(gSettingsButton, "Settings", IconType::Settings);
+
+  finishDisplayRefresh();
+  Serial.println("Home: Badge / Interview / Japanese / Settings");
+}
+
+void renderInterviewMenu(const char* refreshReason = "mode switch") {
+  gScreen = Screen::InterviewMenu;
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, true);
+
+  auto& display = M5.Display;
+  display.setTextDatum(textdatum_t::top_left);
+  applyCoachTitleFont();
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Interview", 32, 34);
+  applyCoachMetadataFont();
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString("Choose mode", 34, 92);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+
+  const int32_t buttonX = 34;
+  const int32_t buttonW = display.width() - 68;
+  const int32_t buttonH = 82;
+  const int32_t gap = 14;
+  int32_t y = 148;
   gPracticeButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
   gDrillsButton = {buttonX, y, buttonW, buttonH};
@@ -6795,23 +6865,17 @@ void renderHome(const char* refreshReason = "mode switch") {
   gGlossaryButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
   gResultsButton = {buttonX, y, buttonW, buttonH};
-  y += buttonH + gap;
-  gSettingsButton = {buttonX, y, buttonW, buttonH};
-  y += buttonH + gap;
-  gJapaneseButton = {buttonX, y, buttonW, buttonH};
-  gDebugButton = {};  // Debug moved to Advanced (Settings → Advanced)
+  gHomeButton = {buttonX, display.height() - 110, buttonW, 76};
 
-  drawButton(gBadgeButton, "Badge", IconType::Badge);
   drawButton(gPracticeButton, "Practice", IconType::Practice);
   drawButton(gDrillsButton, "Drills", IconType::Drills);
   drawButton(gExamButton, "Exam", IconType::Exam);
   drawButton(gGlossaryButton, "Glossary", IconType::Glossary);
   drawButton(gResultsButton, "Results", IconType::Results);
-  drawButton(gSettingsButton, "Settings", IconType::Settings);
-  drawButton(gJapaneseButton, "Japanese");
+  drawButton(gHomeButton, "", IconType::Home);
 
   finishDisplayRefresh();
-  Serial.println("Home/Menu mode: normal orientation.");
+  Serial.println("Interview menu: Practice / Drills / Exam / Glossary / Results");
 }
 
 void renderPracticeMenu(const char* refreshReason = "mode switch") {
@@ -9807,6 +9871,21 @@ void handleTouch() {
     if (hitTarget(gBadgeButton, "badge", tapX, tapY)) {
       Serial.println("returning to Badge");
       renderBadge(true, "mode switch");
+    } else if (hitTarget(gInterviewButton, "interview", tapX, tapY)) {
+      renderInterviewMenu();
+    } else if (hitTarget(gJapaneseButton, "japanese", tapX, tapY)) {
+      renderJapaneseMenu();
+    } else if (hitTarget(gSettingsButton, "settings", tapX, tapY)) {
+      renderSettings();
+    }
+    noteIgnoredIfNoHit(tapX, tapY);
+    return;
+  }
+
+  if (gScreen == Screen::InterviewMenu) {
+    if (hitTarget(gHomeButton, "home", tapX, tapY)) {
+      Serial.println("entering Home");
+      renderHome();
     } else if (hitTarget(gPracticeButton, "practice", tapX, tapY)) {
       renderPracticeMenu();
     } else if (hitTarget(gDrillsButton, "drills", tapX, tapY)) {
@@ -9817,12 +9896,9 @@ void handleTouch() {
       renderGlossaryMenu();
     } else if (hitTarget(gResultsButton, "results", tapX, tapY)) {
       renderResultsScreen();
-    } else if (hitTarget(gSettingsButton, "settings", tapX, tapY)) {
-      renderSettings();
-    } else if (hitTarget(gJapaneseButton, "japanese", tapX, tapY)) {
-      renderJapaneseMenu();
     }
     noteIgnoredIfNoHit(tapX, tapY);
+    return;
   }
 }
 
