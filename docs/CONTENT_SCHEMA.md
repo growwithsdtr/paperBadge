@@ -103,6 +103,39 @@ Supported categories:
 
 Future SD glossary categories may be deck-specific. Firmware currently has a fixed category grid for the embedded PaperCoach set, so new category grids require a firmware-side mapping update.
 
+## Japanese Navigation Model (v5.9-dev3)
+
+Daily Questions navigation: Japanese → Daily Questions → Source Select → Week Select → Day Select → Q.
+
+State globals in firmware:
+- `gJapaneseNavSource` (uint8_t): 0 = 500問 N3 sample
+- `gJapaneseNavWeek` (uint8_t): 1-based
+- `gJapaneseNavDay` (uint8_t): 1-based
+
+Screens: `JapaneseSourceSelect`, `JapaneseWeekSelect`, `JapaneseDaySelect`, `JapaneseDaily`.
+
+In v5.9-dev3 only Source 0 / Week 1 / Day 1 are enabled; other slots show placeholder UI.
+
+### Future SD/source/concept model (planned, not implemented)
+
+**Do not implement SQL/SQLite/database server.** The ESP32 should eventually read compact JSON
+or generated binary/C++ arrays. Cross-source linking should be based on `concept_id`.
+
+Proposed future SD paths:
+- `/papercoach/japanese/sources.json` — source registry
+- `/papercoach/japanese/items.json` — question/note items
+- `/papercoach/japanese/concepts.json` — concept index
+- `/papercoach/japanese/results.json` — persistent results
+
+Future model identifiers:
+- `source_id`: identifies book / test / teacher notes
+- `item_id`: identifies a question / note / example within a source
+- `concept_id`: links grammar / vocab / kanji / readings across books
+- `result_id`: tracks per-item and per-concept answer history
+
+Results will track both `item_id` and the concepts exercised by that item, enabling cross-source
+concept accuracy aggregation without a relational database.
+
 ## Japanese Item Schema (embedded-only, v5.9-dev1)
 
 Japanese Daily Questions uses a separate `JapaneseItem` struct, embedded directly in firmware

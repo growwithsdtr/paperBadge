@@ -39,13 +39,29 @@ Port: `/dev/cu.usbmodem1101` (macOS). Use `cu.` prefix, not `tty.`.
 - Results empty state and populated state after at least one answer.
 - Settings power controls.
 - Settings → Advanced → Power Lab pages 1–4.
-- Japanese menu (Home → Japanese).
-- Japanese Daily Questions — confirm Japanese prompt/choices render correctly (no "?" or boxes).
-- Japanese Daily Questions feedback page — correct/wrong, answer sentence, explanation, tags.
-- Japanese Reference.
+- Home shows exactly 4 entries: Badge / Interview / Japanese / Settings (v5.9-dev3).
+- Interview button opens Interview submenu: Practice / Drills / Exam / Glossary / Results / Home.
+  All entries must navigate correctly to existing screens.
+- Japanese → Daily Questions → Source Select — 500問 N3 entry enabled, placeholder row visible.
+- Source Select → Week Select — Week 1 enabled, placeholder visible.
+- Week Select → Day Select — Day 1 enabled, Days 2–6 placeholder visible.
+- Day Select → Q1 — opens first question (W1D1 Q001 もじ).
+- Daily Questions header: compact, heavier, in Japanese Gothic (not thin/tiny).
+- Daily Questions prompt: larger than previous version, Japanese Gothic.
+- Daily Questions choice buttons: larger text, outlined.
+- Daily Questions 3-part footer (pre-answer): [Prev—dimmed/absent at Q1] [Home] [Next—absent pre-answer].
+- Daily Questions — answer a question, confirm feedback shows Correct/Wrong in English.
+- Feedback grammar tag (e.g. ～ものだ) renders as Japanese characters, NOT as ???.
+- Feedback 3-part footer: [Prev] [Home] [Next—dimmed/absent at last Q].
+- Prev on Q2+ goes to previous question without recording an answer.
+- Japanese Reference — title "Reference", subtitle shows "Kanji / Grammar / Vocabulary".
+- Japanese Reference — Kanji / Grammar / Vocabulary sections visible with deduped terms.
 - Japanese Results empty state and populated state after at least one Japanese answer — confirm
-  it never shows inside the regular Results screen.
+  it never shows inside the regular Interview Results screen.
 - Japanese Mock Test placeholder.
+- Ghosting: entering Reference/Results/first question should use clean EPD refresh (no ghost).
+
+## Power Verification (Home/Menu WarmIdle, v5.8-dev19)
 
 ## Power Verification (Home/Menu WarmIdle, v5.8-dev19)
 

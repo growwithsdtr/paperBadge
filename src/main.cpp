@@ -9702,8 +9702,10 @@ void handleTouch() {
                               "Mock Test is not available yet in this build. Use Daily Questions "
                               "for now.", "japanese entry");
     } else if (hitTarget(gJapaneseReferenceButton, "japanese reference", tapX, tapY)) {
+      gCoachNeedsCleanEntryRefresh = true;
       renderJapaneseReference("japanese entry");
     } else if (hitTarget(gJapaneseResultsButton, "japanese results", tapX, tapY)) {
+      gCoachNeedsCleanEntryRefresh = true;
       renderJapaneseResults("japanese entry");
     }
     noteIgnoredIfNoHit(tapX, tapY);
@@ -9743,6 +9745,7 @@ void handleTouch() {
       gJapaneseQuestionIndex = 0;
       gJapaneseSelectedOption = -1;
       gJapaneseShowFeedback = false;
+      gCoachNeedsCleanEntryRefresh = true;
       renderJapaneseDaily("japanese daily entry");
     }
     noteIgnoredIfNoHit(tapX, tapY);

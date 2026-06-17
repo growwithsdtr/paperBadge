@@ -1,4 +1,4 @@
-# PaperBadge Project State — v5.9-dev2 Handoff
+# PaperBadge Project State — v5.9-dev3 Handoff
 
 _Last updated: 2026-06-17_
 
@@ -15,10 +15,82 @@ _Last updated: 2026-06-17_
 
 ## Firmware
 
-- **Version:** `v5.9-dev2` (`src/main.cpp:20`)
-- **Build:** SUCCESS — RAM 51.3% · Flash 48.0%
-- **Upload:** SUCCESS — `/dev/cu.usbmodem1101`
-- **Smoke test:** PASS (7/7 boot log checks)
+- **Version:** `v5.9-dev3` (`src/main.cpp:20`)
+- **Build:** SUCCESS — RAM 51.4% · Flash 48.0%
+- **Upload:** pending final push
+- **Smoke test:** pending upload
+
+---
+
+## What Changed in v5.9-dev3
+
+### Home restructure, Japanese source/week/day navigation, font roles, ??? fix
+
+**Goal:** Clarify top-level navigation (Badge/Interview/Japanese/Settings), add structured navigation
+into Daily Questions (source → week → day → question), improve Japanese font sizes/roles for better
+e-ink readability, and fix the ?????? rendering bug for Japanese grammar pattern tags.
+
+**Home restructure:**
+- Home now shows **4 entries**: Badge / Interview / Japanese / Settings (was 8 flat entries).
+- **Interview** button opens a new Interview submenu: Practice / Drills / Exam / Glossary / Results /
+  Home. All existing functions are routed through this submenu with no behavior changes.
+- **Japanese** button opens the Japanese submenu as before.
+- Added `Screen::InterviewMenu` to Screen enum; power classification (isStaticIdleScreen,
+  isLightNapEligibleScreen) updated accordingly.
+
+**Japanese source/week/day navigation scaffold:**
+- Daily Questions now enters **Source Select → Week Select → Day Select → Q1** instead of directly
+  to Q1.
+- Added `Screen::JapaneseSourceSelect`, `JapaneseWeekSelect`, `JapaneseDaySelect`.
+- Source Select shows 500問 N3 (enabled) + placeholder row for future sources.
+- Week Select shows Week 1 (enabled) + placeholder.
+- Day Select shows Day 1 (enabled) + Days 2–6 placeholder.
+- State globals: `gJapaneseNavSource`, `gJapaneseNavWeek`, `gJapaneseNavDay` (all default to 0/1/1).
+- Question screen now has a **3-part footer**: [Prev] [Home] [Next].
+  - Pre-answer: Prev navigates without recording answer; Next omitted (select an option to advance).
+  - Post-feedback: Prev + Home + Next all active (at boundaries, the button is cleared/omitted).
+
+**Japanese font roles:**
+- Added role-specific size helpers: `japaneseMetaPxForReader()`, `japanesePromptPxForReader()`,
+  `japaneseChoicePxForReader()`, `japaneseExplanationPxForReader()`.
+- Corresponding `applyJapanese*Font()` one-liners.
+- `drawJapaneseTextBoldish()`: renders text at x and x+1 for a heavier e-ink look on headers.
+- Header now uses `japaneseMetaPxForReader()` (24–28px) with boldish rendering.
+- Prompt uses `japanesePromptPxForReader()` (28–36px).
+- Choices use `japaneseChoicePxForReader()` (28–32px) via updated `drawJapaneseOptionButton()`.
+- Explanation uses `japaneseExplanationPxForReader()` (24–32px).
+
+| Role | Reader S | Reader M | Reader L |
+|------|----------|----------|----------|
+| Header/meta | 24 | 24 | 28 |
+| Prompt | 28 | 32 | 36 |
+| Choices | 28 | 32 | 32 |
+| Explanation | 24 | 28 | 32 |
+
+**Fix ?????? rendering bug:**
+- Grammar pattern fields (e.g. `"～ものだ"`, `"～てばかりいる"`) contain Japanese characters.
+- Previously these went through `wrapTextToLines()` → `sanitizeCoachText()` which replaces any
+  multi-byte UTF-8 character with `?`, producing `???`.
+- Fixed: grammar tag line now goes through `wrapJapaneseTextToLines()` with Gothic 20px font,
+  rendered in `metadataTextColor()`. Japanese characters render correctly.
+- English `explanationEnglish` field still uses `wrapTextToLines()` (ASCII-only, correct).
+
+**Reference polish:**
+- Title changed from "Japanese Reference" to "Reference".
+- Subtitle: `"N3 sample · W1D1 · Kanji / Grammar / Vocabulary"`.
+- Content (Kanji/Grammar/Vocabulary sections with deduped terms) unchanged.
+
+**Ghosting / clean refresh:**
+- `gCoachNeedsCleanEntryRefresh = true` set before entering JapaneseReference, JapaneseResults,
+  and first question from JapaneseDaySelect. Forces quality EPD refresh at major transitions.
+
+**Not changed:** Interview Practice/Drills/Exam/Glossary/Results behavior, deep sleep, Badge
+behavior, English/interview typography (Sans Bold-like/Arial-like), `sanitizeCoachText()`,
+`wrapTextToLines()`, English font functions globally, Settings/Advanced control screens.
+
+**Known limitations (unchanged):** Only Week 1 Day 1 embedded (no full book import); Mock Test
+placeholder; Japanese Results RAM-only (no SD persistence); no SRS; no volunteer notes; no
+multi-source concept UI; no SQLite/database; no full SD loading.
 
 ---
 
