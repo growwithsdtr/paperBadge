@@ -29,6 +29,8 @@ constexpr const char* kRenderTracePath = "/papercoach/debug/render_trace.txt";
 constexpr const char* kEmbeddedDeckDumpPath = "/papercoach/debug/embedded_deck_dump.md";
 constexpr const char* kResultsPath = "/papercoach/progress/session_results.json";
 constexpr const char* kResultsTempPath = "/papercoach/progress/session_results.tmp";
+constexpr const char* kJapaneseResultsPath = "/papercoach/japanese/progress/results.log";
+constexpr const char* kJapaneseSessionCounterPath = "/papercoach/japanese/progress/session_counter.txt";
 constexpr uint32_t kDefaultLanguageIntervalSeconds = 15;
 constexpr uint32_t kInputDebounceMs = 250;
 constexpr uint32_t kInputCleanRefreshDebounceMs = 600;
@@ -55,6 +57,9 @@ constexpr uint8_t kMaxOptions = 4;
 constexpr uint8_t kMaxWrappedLines = 18;
 constexpr uint8_t kMaxReaderPageCount = 32;
 constexpr size_t kMaxJapaneseResults = 64;
+constexpr size_t kMaxJapaneseRecentMisses = 200;
+constexpr size_t kMaxJapaneseConceptStats = 96;
+constexpr size_t kMaxJapaneseBucketStats = 96;
 constexpr uint8_t kFontLabPageCount = 4;
 constexpr int32_t kCoachMargin = 20;
 constexpr int32_t kCoachHeaderBottom = 132;
@@ -511,15 +516,38 @@ struct JapaneseItem {
 // Japanese results never appear inside Interview Results.
 struct JapaneseSessionResult {
   uint32_t millisAt = 0;
+  uint32_t sessionId = 0;
+  char mode[10] = {};
   char itemId[24] = {};
   char sourceId[24] = {};
+  char lessonId[24] = {};
   char macroArea[16] = {};
+  char category[16] = {};
   char categoryJapanese[16] = {};
+  char conceptIds[72] = {};
   uint8_t week = 0;
   uint8_t day = 0;
   uint8_t selectedChoice = 0;
   uint8_t correctChoice = 0;
   bool correct = false;
+  bool firstAttempt = true;
+  uint32_t elapsedMs = 0;
+};
+
+struct JapaneseConceptStat {
+  char conceptId[40] = {};
+  uint16_t total = 0;
+  uint16_t correct = 0;
+};
+
+struct JapaneseBucketStat {
+  char sourceId[24] = {};
+  uint8_t week = 0;
+  uint8_t day = 0;
+  char macroArea[16] = {};
+  char category[16] = {};
+  uint16_t total = 0;
+  uint16_t correct = 0;
 };
 
 // Embedded Japanese Daily Questions dataset — Week 1 Day 1 sample only (originally written,
@@ -772,6 +800,7 @@ uint8_t gJapaneseNavDay = 1;
 int8_t gJapaneseSelectedOption = -1;
 bool gJapaneseShowFeedback = false;
 bool gJapaneseMockTestAwaitingAnswer = false;
+uint32_t gJapaneseQuestionShownAtMs = 0;
 uint8_t gMockStep = 0;
 uint8_t gBottomLeftTapCount = 0;
 uint32_t gLastBottomLeftTapMs = 0;
@@ -811,6 +840,14 @@ uint32_t gSessionId = 0;
 String gResultsStorageStatus = "RAM session only";
 JapaneseSessionResult gJapaneseResults[kMaxJapaneseResults];
 size_t gJapaneseResultCount = 0;
+JapaneseSessionResult gJapaneseRecentMisses[kMaxJapaneseRecentMisses];
+size_t gJapaneseRecentMissCount = 0;
+JapaneseConceptStat gJapaneseConceptStats[kMaxJapaneseConceptStats];
+size_t gJapaneseConceptStatCount = 0;
+JapaneseBucketStat gJapaneseBucketStats[kMaxJapaneseBucketStats];
+size_t gJapaneseBucketStatCount = 0;
+uint32_t gJapaneseSessionId = 0;
+String gJapaneseResultsStorageStatus = "Japanese results: RAM only";
 uint8_t gResultsPage = 0;
 size_t gExamItemIndices[kMaxExamQuestions];
 uint8_t gExamCount = 0;
@@ -7381,25 +7418,257 @@ void renderJapaneseDaySelect(const char* refreshReason = "japanese entry") {
   Serial.println("Japanese day select shown.");
 }
 
-// RAM-only — intentionally not gSessionResults/SessionResult (Interview Practice/Drills/Exam).
-void recordJapaneseAnswer(const JapaneseItem& item, uint8_t selectedChoice) {
+bool ensureJapaneseProgressDir() {
+  if (!gSdMounted) {
+    gJapaneseResultsStorageStatus = "Japanese results: SD not mounted";
+    return false;
+  }
+  SD.mkdir("/papercoach");
+  SD.mkdir("/papercoach/japanese");
+  SD.mkdir("/papercoach/japanese/progress");
+  return true;
+}
+
+bool japaneseItemAnsweredInSession(const char* itemId) {
+  if (itemId == nullptr || itemId[0] == '\0') return false;
+  for (size_t i = 0; i < gJapaneseResultCount; ++i) {
+    if (strcmp(gJapaneseResults[i].itemId, itemId) == 0) return true;
+  }
+  return false;
+}
+
+void appendJapaneseSessionResult(const JapaneseSessionResult& result) {
   if (gJapaneseResultCount >= kMaxJapaneseResults) {
     for (size_t i = 1; i < kMaxJapaneseResults; ++i) {
       gJapaneseResults[i - 1] = gJapaneseResults[i];
     }
     gJapaneseResultCount = kMaxJapaneseResults - 1;
   }
-  JapaneseSessionResult& result = gJapaneseResults[gJapaneseResultCount++];
+  gJapaneseResults[gJapaneseResultCount++] = result;
+}
+
+void appendJapaneseRecentMiss(const JapaneseSessionResult& result) {
+  if (result.correct) return;
+  if (gJapaneseRecentMissCount >= kMaxJapaneseRecentMisses) {
+    for (size_t i = 1; i < kMaxJapaneseRecentMisses; ++i) {
+      gJapaneseRecentMisses[i - 1] = gJapaneseRecentMisses[i];
+    }
+    gJapaneseRecentMissCount = kMaxJapaneseRecentMisses - 1;
+  }
+  gJapaneseRecentMisses[gJapaneseRecentMissCount++] = result;
+}
+
+void addJapaneseConceptStat(const char* conceptId, bool correct) {
+  if (conceptId == nullptr || conceptId[0] == '\0') return;
+  for (size_t i = 0; i < gJapaneseConceptStatCount; ++i) {
+    if (strcmp(gJapaneseConceptStats[i].conceptId, conceptId) == 0) {
+      ++gJapaneseConceptStats[i].total;
+      if (correct) ++gJapaneseConceptStats[i].correct;
+      return;
+    }
+  }
+  if (gJapaneseConceptStatCount >= kMaxJapaneseConceptStats) return;
+  JapaneseConceptStat& stat = gJapaneseConceptStats[gJapaneseConceptStatCount++];
+  copyToBuffer(stat.conceptId, sizeof(stat.conceptId), conceptId);
+  stat.total = 1;
+  stat.correct = correct ? 1 : 0;
+}
+
+void addJapaneseConceptStatsFromCsv(const char* conceptIds, bool correct) {
+  if (conceptIds == nullptr || conceptIds[0] == '\0') return;
+  String token;
+  for (size_t i = 0;; ++i) {
+    const char ch = conceptIds[i];
+    if (ch == ',' || ch == '\0') {
+      token.trim();
+      if (token.length() > 0) addJapaneseConceptStat(token.c_str(), correct);
+      token = "";
+      if (ch == '\0') break;
+    } else {
+      token += ch;
+    }
+  }
+}
+
+void addJapaneseBucketStat(const JapaneseSessionResult& result) {
+  for (size_t i = 0; i < gJapaneseBucketStatCount; ++i) {
+    JapaneseBucketStat& stat = gJapaneseBucketStats[i];
+    if (strcmp(stat.sourceId, result.sourceId) == 0 && stat.week == result.week && stat.day == result.day &&
+        strcmp(stat.macroArea, result.macroArea) == 0 && strcmp(stat.category, result.category) == 0) {
+      ++stat.total;
+      if (result.correct) ++stat.correct;
+      return;
+    }
+  }
+  if (gJapaneseBucketStatCount >= kMaxJapaneseBucketStats) return;
+  JapaneseBucketStat& stat = gJapaneseBucketStats[gJapaneseBucketStatCount++];
+  copyToBuffer(stat.sourceId, sizeof(stat.sourceId), result.sourceId);
+  stat.week = result.week;
+  stat.day = result.day;
+  copyToBuffer(stat.macroArea, sizeof(stat.macroArea), result.macroArea);
+  copyToBuffer(stat.category, sizeof(stat.category), result.category);
+  stat.total = 1;
+  stat.correct = result.correct ? 1 : 0;
+}
+
+void updateJapaneseAggregates(const JapaneseSessionResult& result) {
+  addJapaneseConceptStatsFromCsv(result.conceptIds, result.correct);
+  addJapaneseBucketStat(result);
+}
+
+void copyJsonStringToBuffer(char* dest, size_t destSize, JsonVariantConst value) {
+  copyToBuffer(dest, destSize, value.is<const char*>() ? value.as<const char*>() : "");
+}
+
+bool parseJapaneseResultLine(const String& line, JapaneseSessionResult& result) {
+  JsonDocument doc;
+  const DeserializationError error = deserializeJson(doc, line);
+  if (error) {
+    Serial.printf("Japanese results load skipped corrupt line: %s\n", error.c_str());
+    return false;
+  }
+  result.millisAt = doc["millis"].as<uint32_t>();
+  result.sessionId = doc["session_id"].as<uint32_t>();
+  copyJsonStringToBuffer(result.mode, sizeof(result.mode), doc["mode"]);
+  copyJsonStringToBuffer(result.itemId, sizeof(result.itemId), doc["item_id"]);
+  copyJsonStringToBuffer(result.sourceId, sizeof(result.sourceId), doc["source_id"]);
+  copyJsonStringToBuffer(result.lessonId, sizeof(result.lessonId), doc["lesson_id"]);
+  copyJsonStringToBuffer(result.macroArea, sizeof(result.macroArea), doc["macro_area"]);
+  copyJsonStringToBuffer(result.category, sizeof(result.category), doc["category"]);
+  copyJsonStringToBuffer(result.categoryJapanese, sizeof(result.categoryJapanese), doc["category_japanese"]);
+  copyJsonStringToBuffer(result.conceptIds, sizeof(result.conceptIds), doc["concept_ids"]);
+  result.week = doc["week"].as<uint8_t>();
+  result.day = doc["day"].as<uint8_t>();
+  result.selectedChoice = doc["selected_choice"].as<uint8_t>();
+  result.correctChoice = doc["correct_choice"].as<uint8_t>();
+  result.correct = doc["correct"].as<bool>();
+  result.firstAttempt = doc["first_attempt"].as<bool>();
+  result.elapsedMs = doc["elapsed_ms"].as<uint32_t>();
+  return true;
+}
+
+void loadJapaneseResultsLog() {
+  gJapaneseConceptStatCount = 0;
+  gJapaneseBucketStatCount = 0;
+  gJapaneseRecentMissCount = 0;
+  if (!gSdMounted || !SD.exists(kJapaneseResultsPath)) {
+    return;
+  }
+  File file = SD.open(kJapaneseResultsPath, FILE_READ);
+  if (!file) {
+    gJapaneseResultsStorageStatus = "Japanese results: load failed";
+    Serial.printf("Japanese results load failed: path=%s\n", kJapaneseResultsPath);
+    return;
+  }
+  uint32_t loaded = 0;
+  uint32_t skipped = 0;
+  while (file.available()) {
+    String line = file.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0) continue;
+    JapaneseSessionResult result;
+    if (!parseJapaneseResultLine(line, result)) {
+      ++skipped;
+      continue;
+    }
+    updateJapaneseAggregates(result);
+    appendJapaneseRecentMiss(result);
+    ++loaded;
+  }
+  file.close();
+  gJapaneseResultsStorageStatus = String("Japanese results: loaded ") + static_cast<unsigned>(loaded) +
+                                  " skipped " + static_cast<unsigned>(skipped);
+  Serial.printf("Japanese results loaded: path=%s loaded=%u skipped=%u concepts=%u buckets=%u recentMisses=%u\n",
+                kJapaneseResultsPath, static_cast<unsigned>(loaded), static_cast<unsigned>(skipped),
+                static_cast<unsigned>(gJapaneseConceptStatCount), static_cast<unsigned>(gJapaneseBucketStatCount),
+                static_cast<unsigned>(gJapaneseRecentMissCount));
+}
+
+void initializeJapaneseResultsBackend() {
+  if (!ensureJapaneseProgressDir()) {
+    gJapaneseSessionId = 1;
+    return;
+  }
+  uint32_t previousSessionId = 0;
+  if (SD.exists(kJapaneseSessionCounterPath)) {
+    File readFile = SD.open(kJapaneseSessionCounterPath, FILE_READ);
+    if (readFile) {
+      previousSessionId = static_cast<uint32_t>(readFile.parseInt());
+      readFile.close();
+    }
+  }
+  gJapaneseSessionId = previousSessionId + 1;
+  if (SD.exists(kJapaneseSessionCounterPath)) {
+    SD.remove(kJapaneseSessionCounterPath);
+  }
+  File writeFile = SD.open(kJapaneseSessionCounterPath, FILE_WRITE);
+  if (writeFile) {
+    writeFile.print(gJapaneseSessionId);
+    writeFile.close();
+  } else {
+    Serial.printf("Japanese session counter write failed: path=%s\n", kJapaneseSessionCounterPath);
+  }
+  loadJapaneseResultsLog();
+}
+
+bool appendJapaneseResultLog(const JapaneseSessionResult& result) {
+  if (!ensureJapaneseProgressDir()) return false;
+  restoreActiveCpu("japanese results append");
+  File file = SD.open(kJapaneseResultsPath, FILE_APPEND);
+  if (!file) {
+    gJapaneseResultsStorageStatus = "Japanese results: append failed";
+    Serial.printf("Japanese result append failed: path=%s\n", kJapaneseResultsPath);
+    return false;
+  }
+  JsonDocument doc;
+  doc["millis"] = result.millisAt;
+  doc["session_id"] = result.sessionId;
+  doc["mode"] = result.mode;
+  doc["item_id"] = result.itemId;
+  doc["source_id"] = result.sourceId;
+  doc["week"] = result.week;
+  doc["day"] = result.day;
+  doc["lesson_id"] = result.lessonId;
+  doc["macro_area"] = result.macroArea;
+  doc["category"] = result.category;
+  doc["category_japanese"] = result.categoryJapanese;
+  doc["concept_ids"] = result.conceptIds;
+  doc["selected_choice"] = result.selectedChoice;
+  doc["correct_choice"] = result.correctChoice;
+  doc["correct"] = result.correct;
+  doc["first_attempt"] = result.firstAttempt;
+  doc["elapsed_ms"] = result.elapsedMs;
+  serializeJson(doc, file);
+  file.println();
+  file.close();
+  gJapaneseResultsStorageStatus = "Japanese results: appended";
+  return true;
+}
+
+// RAM-only — intentionally not gSessionResults/SessionResult (Interview Practice/Drills/Exam).
+void recordJapaneseAnswer(const JapaneseItem& item, uint8_t selectedChoice) {
+  JapaneseSessionResult result;
   result.millisAt = millis();
+  result.sessionId = gJapaneseSessionId;
+  copyToBuffer(result.mode, sizeof(result.mode), "practice");
   copyToBuffer(result.itemId, sizeof(result.itemId), item.itemId);
   copyToBuffer(result.sourceId, sizeof(result.sourceId), item.sourceId);
+  copyToBuffer(result.lessonId, sizeof(result.lessonId), item.lessonId);
   copyToBuffer(result.macroArea, sizeof(result.macroArea), item.macroArea);
+  copyToBuffer(result.category, sizeof(result.category), item.categoryJapanese);
   copyToBuffer(result.categoryJapanese, sizeof(result.categoryJapanese), item.categoryJapanese);
+  copyToBuffer(result.conceptIds, sizeof(result.conceptIds), item.conceptIds);
   result.week = item.week;
   result.day = item.day;
   result.selectedChoice = selectedChoice;
   result.correctChoice = item.correctChoice;
   result.correct = selectedChoice == item.correctChoice;
+  result.firstAttempt = !japaneseItemAnsweredInSession(item.itemId);
+  result.elapsedMs = gJapaneseQuestionShownAtMs > 0 ? millis() - gJapaneseQuestionShownAtMs : 0;
+  appendJapaneseSessionResult(result);
+  updateJapaneseAggregates(result);
+  appendJapaneseRecentMiss(result);
+  appendJapaneseResultLog(result);
   Serial.printf("Japanese answer recorded: item=%s selected=%u correct=%u total=%u\n", item.itemId,
                 static_cast<unsigned>(selectedChoice), result.correct ? 1 : 0,
                 static_cast<unsigned>(gJapaneseResultCount));
@@ -7485,6 +7754,7 @@ void renderJapaneseDaily(const char* refreshReason = "japanese entry") {
   const int32_t navW = (contentW - 28) / 3;
 
   if (!gJapaneseShowFeedback) {
+    gJapaneseQuestionShownAtMs = millis();
     applyJapanesePromptFont();
     TextLayoutResult promptLayout =
         drawJapaneseWrappedText(item.promptJapanese, contentX, promptY, contentW, promptLineH, maxPromptLines,
@@ -10574,6 +10844,7 @@ void setup() {
 
   gSdMounted = mountSdCard();
   Serial.printf("SD mounted %s.\n", gSdMounted ? "yes" : "no");
+  initializeJapaneseResultsBackend();
   gBadgeJsonLoaded = loadBadgeJson();
   findSdImage("badge EN", kBadgeEnCandidates, countOf(kBadgeEnCandidates), gBadgeEnSd);
   findSdImage("badge JA", kBadgeJaCandidates, countOf(kBadgeJaCandidates), gBadgeJaSd);
