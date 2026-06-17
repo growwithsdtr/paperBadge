@@ -4271,6 +4271,18 @@ uint8_t utf8SequenceLength(uint8_t firstByte) {
   return 1;
 }
 
+bool containsJapaneseCodepoint(const String& text) {
+  for (size_t index = 0; index < text.length();) {
+    const uint8_t ch = static_cast<uint8_t>(text[index]);
+    const uint8_t seqLen = utf8SequenceLength(ch);
+    if (ch >= 0xE3) {
+      return true;
+    }
+    index += seqLen;
+  }
+  return false;
+}
+
 String sanitizeCoachText(const String& text, const char* field = nullptr) {
   static constexpr uint8_t kEmDash[] = {0xE2, 0x80, 0x94};
   static constexpr uint8_t kEnDash[] = {0xE2, 0x80, 0x93};
