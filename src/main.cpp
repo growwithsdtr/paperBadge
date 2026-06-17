@@ -17,7 +17,7 @@
 namespace {
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
-constexpr const char* kFirmwareVersion = "v5.9-dev1";
+constexpr const char* kFirmwareVersion = "v5.9-dev2";
 constexpr const char* kBadgeJsonPath = "/paperbadge/badge.json";
 constexpr const char* kCoachDeckPath = "/papercoach/decks/interview_cards.json";
 constexpr const char* kLegacyCoachDeckPath = "/papercoach/decks/sample_interview.json";
@@ -1331,7 +1331,8 @@ bool refreshReasonContains(const char* reason, const char* token) {
 bool isImageOrZoomRefresh(const char* reason) {
   return gScreen == Screen::Badge || gScreen == Screen::QrZoom || gScreen == Screen::PhotoZoom ||
          refreshReasonContains(reason, "zoom") || refreshReasonContains(reason, "badge") ||
-         refreshReasonContains(reason, "language") || refreshReasonContains(reason, "orientation");
+         refreshReasonContains(reason, "language") || refreshReasonContains(reason, "orientation") ||
+         refreshReasonContains(reason, "japanese entry");
 }
 
 bool shouldUseCleanRefresh(const char* reason, bool /*highQuality*/, bool hardCleanTriggered) {
@@ -4370,15 +4371,32 @@ int32_t japaneseLineHeight(uint8_t px) {
   return static_cast<int32_t>(px) + 16;
 }
 
-// Fixed Japanese-appropriate sizes via the existing lgfxJapanGothic_* path (applyGothicFont()).
-// Independent of FontStyleMode/Reader-size so Japanese rendering stays stable regardless of the
-// English typography settings — never routes through applyTypographyFont()/applyBodyFont().
-void applyJapaneseTitleFont() {
-  applyGothicFont(28);
+// Maps the current Reader S/M/L setting to a Japanese Gothic body size.
+// Never routes through FontStyleMode — always uses lgfxJapanGothic_* regardless of the English
+// typography setting.
+uint8_t japaneseBodyPxForReader() {
+  switch (canonicalFontSizeMode(gSettings.fontSizeMode)) {
+    case FontSizeMode::Medium: return 24;  // Reader S
+    case FontSizeMode::XL:     return 32;  // Reader L
+    case FontSizeMode::Large:
+    default:                   return 28;  // Reader M
+  }
 }
 
-void applyJapaneseBodyFont(uint8_t px = 24) {
-  applyGothicFont(px);
+// Japanese title: one step above the body size for the current reader setting.
+void applyJapaneseTitleFont() {
+  const uint8_t bodyPx = japaneseBodyPxForReader();
+  applyGothicFont(bodyPx <= 24 ? 28 : (bodyPx <= 28 ? 32 : 36));
+}
+
+// Japanese body: defaults to the reader-mapped size; pass an explicit px to override.
+void applyJapaneseBodyFont(uint8_t px = 0) {
+  applyGothicFont(px > 0 ? px : japaneseBodyPxForReader());
+}
+
+// English labels inside Japanese screens — always Sans Bold, independent of FontStyleMode.
+void applyJapaneseEnglishLabelFont(uint8_t px) {
+  applySansBoldFont(px);
 }
 
 TextLayoutResult drawJapaneseWrappedText(const String& text, int32_t x, int32_t y, int32_t width, int32_t lineHeight,
@@ -4401,17 +4419,18 @@ void drawJapaneseOptionButton(const Rect& rect, const String& label) {
   auto& display = M5.Display;
   display.drawRoundRect(rect.x, rect.y, rect.w, rect.h, 8, TFT_BLACK);
   display.drawRoundRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 7, TFT_BLACK);
-  const uint8_t px = 24;
+  const uint8_t px = japaneseBodyPxForReader();
   applyJapaneseBodyFont(px);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.setTextDatum(textdatum_t::top_left);
 
   String lines[3];
-  TextLayoutResult layout = wrapJapaneseTextToLines(label, rect.w - 32, japaneseLineHeight(px), 3, lines);
-  const int32_t textBlockH = static_cast<int32_t>(layout.lineCount) * japaneseLineHeight(px);
+  const int32_t lineH = japaneseLineHeight(px);
+  TextLayoutResult layout = wrapJapaneseTextToLines(label, rect.w - 32, lineH, 3, lines);
+  const int32_t textBlockH = static_cast<int32_t>(layout.lineCount) * lineH;
   const int32_t textY = rect.y + (rect.h - textBlockH) / 2;
   for (uint8_t line = 0; line < layout.lineCount; ++line) {
-    display.drawString(lines[line], rect.x + 18, textY + static_cast<int32_t>(line) * japaneseLineHeight(px));
+    display.drawString(lines[line], rect.x + 18, textY + static_cast<int32_t>(line) * lineH);
   }
 }
 
@@ -7003,7 +7022,7 @@ void recordJapaneseAnswer(const JapaneseItem& item, uint8_t selectedChoice) {
                 static_cast<unsigned>(gJapaneseResultCount));
 }
 
-void renderJapaneseDaily(const char* refreshReason = "mode switch") {
+void renderJapaneseDaily(const char* refreshReason = "japanese entry") {
   gScreen = Screen::JapaneseDaily;
   applyAppRotation();
   prepareFullRefresh(refreshReason, true);
@@ -7013,8 +7032,10 @@ void renderJapaneseDaily(const char* refreshReason = "mode switch") {
     gJapaneseQuestionIndex = 0;
   }
   const JapaneseItem& item = kJapaneseDayItems[gJapaneseQuestionIndex];
+  const int32_t contentX = 32;
   const int32_t contentW = display.width() - 64;
 
+  // Header — compact, fixed 20px Gothic regardless of reader size
   display.setTextDatum(textdatum_t::top_left);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   applyJapaneseBodyFont(20);
@@ -7022,97 +7043,133 @@ void renderJapaneseDaily(const char* refreshReason = "mode switch") {
   snprintf(qNumber, sizeof(qNumber), "Q%03u", static_cast<unsigned>(item.sourceQuestionNumber));
   String header = String(item.jlptLevel) + " · W" + String(item.week) + "D" + String(item.day) + " · " +
                   qNumber + " · " + item.categoryJapanese;
-  drawJapaneseWrappedText(header, 32, 30, contentW, japaneseLineHeight(20), 1, "japanese-header");
+  drawJapaneseWrappedText(header, contentX, 30, contentW, japaneseLineHeight(20), 1, "japanese-header");
+
+  const uint8_t bodyPx = japaneseBodyPxForReader();
+  const int32_t bodyLineH = japaneseLineHeight(bodyPx);
+
+  // Reader-size-scaled button geometry
+  const int32_t buttonH = (bodyPx <= 24) ? 76 : (bodyPx <= 28 ? 86 : 96);
+  const int32_t gap = (bodyPx <= 28) ? 14 : 12;
+  const uint8_t maxPromptLines = (bodyPx <= 24) ? 6 : (bodyPx <= 28 ? 5 : 4);
 
   if (!gJapaneseShowFeedback) {
-    applyJapaneseBodyFont(26);
+    applyJapaneseBodyFont(bodyPx);
     TextLayoutResult promptLayout =
-        drawJapaneseWrappedText(item.promptJapanese, 32, 86, contentW, japaneseLineHeight(26), 5, "japanese-prompt");
+        drawJapaneseWrappedText(item.promptJapanese, contentX, 86, contentW, bodyLineH, maxPromptLines,
+                                "japanese-prompt");
     int32_t y = 86 + promptLayout.height + 24;
-    const int32_t buttonX = 32;
-    const int32_t buttonH = 86;
-    const int32_t gap = 14;
     for (uint8_t i = 0; i < 4; ++i) {
-      gJapaneseOptionButtons[i] = {buttonX, y, contentW, buttonH};
+      gJapaneseOptionButtons[i] = {contentX, y, contentW, buttonH};
       String label = String(static_cast<char>('A' + i)) + ". " + item.choiceJapanese[i];
       drawJapaneseOptionButton(gJapaneseOptionButtons[i], label);
       y += buttonH + gap;
     }
-    gHomeButton = {buttonX, display.height() - 110, contentW, 76};
+    // Pre-answer footer: Home only — no faded Next label
+    gHomeButton = {contentX, display.height() - 110, contentW, 76};
     drawButton(gHomeButton, "", IconType::Home);
   } else {
+    // Feedback title — English word, Sans Bold for clarity
     const bool correct = gJapaneseSelectedOption == static_cast<int8_t>(item.correctChoice);
-    applyJapaneseTitleFont();
-    display.drawString(correct ? "Correct" : "Wrong", 32, 86);
+    const uint8_t titlePx = (bodyPx <= 24) ? 28 : (bodyPx <= 28 ? 32 : 36);
+    applyJapaneseEnglishLabelFont(titlePx);
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    display.drawString(correct ? "Correct" : "Wrong", contentX, 86);
 
-    int32_t y = 138;
-    applyJapaneseBodyFont(22);
-    String correctLine = String("Correct: ") + static_cast<char>('A' + item.correctChoice) + ". " +
+    int32_t y = 86 + static_cast<int32_t>(titlePx) + 14 + 8;
+
+    // Correct answer line — contains Japanese choice, use Gothic
+    applyJapaneseBodyFont(bodyPx);
+    String correctLine = String(static_cast<char>('A' + item.correctChoice)) + ". " +
                          item.choiceJapanese[item.correctChoice];
     TextLayoutResult l1 =
-        drawJapaneseWrappedText(correctLine, 32, y, contentW, japaneseLineHeight(22), 2, "japanese-correct");
+        drawJapaneseWrappedText(correctLine, contentX, y, contentW, bodyLineH, 2, "japanese-correct");
     y += l1.height + 14;
 
-    TextLayoutResult l2 = drawJapaneseWrappedText(item.answerSentenceJapanese, 32, y, contentW,
-                                                   japaneseLineHeight(22), 3, "japanese-answer-sentence");
+    // Answer sentence — full Japanese, use Gothic
+    TextLayoutResult l2 = drawJapaneseWrappedText(item.answerSentenceJapanese, contentX, y, contentW,
+                                                   bodyLineH, 3, "japanese-answer-sentence");
     y += l2.height + 14;
 
-    TextLayoutResult l3 = drawJapaneseWrappedText(item.explanationJapanese, 32, y, contentW,
-                                                   japaneseLineHeight(22), 3, "japanese-explanation");
+    // Japanese explanation — Gothic at reader size
+    TextLayoutResult l3 = drawJapaneseWrappedText(item.explanationJapanese, contentX, y, contentW,
+                                                   bodyLineH, 3, "japanese-explanation");
     y += l3.height + 14;
 
-    applyJapaneseBodyFont(18);
+    // English meaning — English only, Sans Bold at a smaller fixed size
+    const uint8_t enPx = 22;
+    applyJapaneseEnglishLabelFont(enPx);
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
     String englishLine = String("EN: ") + item.explanationEnglish;
-    TextLayoutResult l4 =
-        drawJapaneseWrappedText(englishLine, 32, y, contentW, japaneseLineHeight(18), 3, "japanese-english");
-    y += l4.height + 14;
+    // English text goes through the standard wrapTextToLines (ASCII-safe)
+    const int32_t enLineH = static_cast<int32_t>(enPx) + 10;
+    String enLines[kMaxWrappedLines];
+    TextLayoutResult l4 = wrapTextToLines(englishLine, contentW, enLineH, 3, enLines);
+    for (uint8_t line = 0; line < l4.lineCount; ++line) {
+      display.drawString(enLines[line], contentX, y + line * enLineH);
+    }
+    y += l4.height + 10;
 
+    // Tags — compact, Sans Bold at small fixed size
     String tags;
-    if (item.grammarPattern[0] != '\0') tags += String("Grammar: ") + item.grammarPattern + "  ";
-    if (item.vocabularyItems[0] != '\0') tags += String("Vocab: ") + item.vocabularyItems + "  ";
-    if (item.kanjiItems[0] != '\0') tags += String("Kanji: ") + item.kanjiItems;
+    if (item.grammarPattern[0] != '\0') tags += item.grammarPattern;
     if (tags.length() > 0) {
-      drawJapaneseWrappedText(tags, 32, y, contentW, japaneseLineHeight(18), 2, "japanese-tags");
+      applyJapaneseEnglishLabelFont(20);
+      display.setTextColor(TFT_BLACK, TFT_WHITE);
+      String tagLine = String("Grammar: ") + tags;
+      String tagLines[2];
+      TextLayoutResult lt = wrapTextToLines(tagLine, contentW, 28, 2, tagLines);
+      for (uint8_t line = 0; line < lt.lineCount; ++line) {
+        display.drawString(tagLines[line], contentX, y + line * 28);
+      }
     }
 
-    const int32_t buttonX = 32;
+    // Footer — Next + Home after feedback
     const int32_t navW = (contentW - 14) / 2;
-    gJapaneseNextButton = {buttonX, display.height() - 110, navW, 76};
-    gHomeButton = {buttonX + navW + 14, display.height() - 110, navW, 76};
+    gJapaneseNextButton = {contentX, display.height() - 110, navW, 76};
+    gHomeButton = {contentX + navW + 14, display.height() - 110, navW, 76};
     drawButton(gJapaneseNextButton, "Next", IconType::Next);
     drawButton(gHomeButton, "", IconType::Home);
   }
 
   finishDisplayRefresh();
-  Serial.printf("Japanese daily question shown: item=%s feedback=%s\n", item.itemId,
-                gJapaneseShowFeedback ? "yes" : "no");
+  Serial.printf("Japanese daily question shown: item=%s feedback=%s reader=%u px\n", item.itemId,
+                gJapaneseShowFeedback ? "yes" : "no", static_cast<unsigned>(bodyPx));
 }
 
 // Simple, single-page summary built from gJapaneseResults (RAM-only) — never reads or writes
 // gSessionResults/SessionResult (Interview Practice/Drills/Exam).
-void renderJapaneseResults(const char* refreshReason = "mode switch") {
+// Uses Sans Bold directly (not via applyCoachTitleFont) to avoid huge HighContrast sizes.
+void renderJapaneseResults(const char* refreshReason = "japanese entry") {
   gScreen = Screen::JapaneseResults;
   applyAppRotation();
   prepareFullRefresh(refreshReason, true);
 
   auto& display = M5.Display;
-  display.setTextDatum(textdatum_t::top_left);
-  applyCoachTitleFont();
-  display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.drawString("Japanese Results", 32, 34);
-  applyCoachMetadataFont();
-  display.setTextColor(metadataTextColor(), TFT_WHITE);
-  display.drawString("RAM-only - resets on reboot", 34, 92);
-  display.setTextColor(TFT_BLACK, TFT_WHITE);
-
   const int32_t contentX = kCoachMargin;
   const int32_t contentW = display.width() - kCoachMargin * 2;
-  int32_t y = 148;
+  display.setTextDatum(textdatum_t::top_left);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+
+  // Title — compact Sans Bold, fixed size independent of Reader setting
+  applyJapaneseEnglishLabelFont(32);
+  display.drawString("Japanese Results", contentX, 34);
+
+  applyJapaneseEnglishLabelFont(20);
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString("RAM-only  \xc2\xb7  resets on reboot", contentX, 80);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+
+  int32_t y = 136;
 
   if (gJapaneseResultCount == 0) {
-    applyCoachContentFont();
-    drawWrappedText("No answers yet. Try Daily Questions first.", contentX, y, contentW, coachLineHeight(), 3,
-                    "japanese-results-empty", 1);
+    applyJapaneseEnglishLabelFont(24);
+    String emptyLines[3];
+    TextLayoutResult el = wrapTextToLines("No answers yet. Try Daily Questions first.",
+                                          contentW, 34, 3, emptyLines);
+    for (uint8_t line = 0; line < el.lineCount; ++line) {
+      display.drawString(emptyLines[line], contentX, y + line * 34);
+    }
   } else {
     uint16_t correctCount = 0;
     CategoryStat macroStats[3];
@@ -7133,30 +7190,37 @@ void renderJapaneseResults(const char* refreshReason = "mode switch") {
     }
     const uint8_t accuracy = resultAccuracyPercent(correctCount, static_cast<uint16_t>(gJapaneseResultCount));
 
-    applyCoachContentFont();
+    applyJapaneseEnglishLabelFont(26);
     display.drawString(String("Answered: ") + static_cast<unsigned>(gJapaneseResultCount), contentX, y);
-    y += 44;
-    display.drawString(String("Correct: ") + static_cast<unsigned>(correctCount) + "/" +
-                            static_cast<unsigned>(gJapaneseResultCount) + " (" + static_cast<unsigned>(accuracy) + "%)",
-                        contentX, y);
-    y += 56;
+    y += 40;
+    display.drawString(String("Correct:  ") + static_cast<unsigned>(correctCount) + " / " +
+                           static_cast<unsigned>(gJapaneseResultCount) + "   " +
+                           static_cast<unsigned>(accuracy) + "%",
+                       contentX, y);
+    y += 52;
 
-    applyCoachMetadataFont();
+    applyJapaneseEnglishLabelFont(22);
     display.setTextColor(metadataTextColor(), TFT_WHITE);
     display.drawString("By area", contentX, y);
     display.setTextColor(TFT_BLACK, TFT_WHITE);
-    y += 38;
+    y += 36;
 
     static const char* macroLabels[3] = {"Kanji", "Vocabulary", "Grammar"};
-    applyCoachContentFont();
+    applyJapaneseEnglishLabelFont(24);
     for (uint8_t m = 0; m < 3; ++m) {
-      if (macroStats[m].total == 0) continue;
       const uint8_t statAccuracy = resultAccuracyPercent(macroStats[m].correct, macroStats[m].total);
-      display.drawString(String(macroLabels[m]) + ": " + static_cast<unsigned>(macroStats[m].correct) + "/" +
-                              static_cast<unsigned>(macroStats[m].total) + " (" + static_cast<unsigned>(statAccuracy) +
-                              "%)",
-                          contentX, y);
-      y += 40;
+      String row = String(macroLabels[m]);
+      // Pad label to 12 chars for column alignment
+      while (static_cast<int>(row.length()) < 12) row += ' ';
+      if (macroStats[m].total == 0) {
+        row += "\xe2\x80\x94";  // em-dash
+      } else {
+        row += String(static_cast<unsigned>(macroStats[m].correct)) + " / " +
+               String(static_cast<unsigned>(macroStats[m].total)) + "   " +
+               String(static_cast<unsigned>(statAccuracy)) + "%";
+      }
+      display.drawString(row, contentX, y);
+      y += 38;
     }
   }
 
@@ -7167,49 +7231,113 @@ void renderJapaneseResults(const char* refreshReason = "mode switch") {
   Serial.printf("Japanese results shown: answered=%u\n", static_cast<unsigned>(gJapaneseResultCount));
 }
 
-// Simple, single-page reference built directly from the embedded Week1Day1 dataset's concept
-// tag fields (grammarPattern/vocabularyItems/kanjiItems) — no SRS, no multi-source UI.
-void renderJapaneseReference(const char* refreshReason = "mode switch") {
+// Collects comma-separated tokens from `src` into `out` vector, deduped.
+static void collectDeduped(const char* src, std::vector<String>& out) {
+  if (!src || src[0] == '\0') return;
+  String token;
+  for (size_t i = 0; ; ++i) {
+    const char ch = src[i];
+    if (ch == ',' || ch == '\0') {
+      token.trim();
+      if (token.length() > 0) {
+        bool dup = false;
+        for (const auto& existing : out) {
+          if (existing == token) { dup = true; break; }
+        }
+        if (!dup) out.push_back(token);
+      }
+      token = "";
+      if (ch == '\0') break;
+    } else {
+      token += ch;
+    }
+  }
+}
+
+// Structured, deduped reference built from Week1Day1 embedded dataset concept fields.
+// Grouped into Kanji / Grammar / Vocabulary sections — no raw per-item rows.
+void renderJapaneseReference(const char* refreshReason = "japanese entry") {
   gScreen = Screen::JapaneseReference;
   applyAppRotation();
   prepareFullRefresh(refreshReason, true);
 
   auto& display = M5.Display;
-  display.setTextDatum(textdatum_t::top_left);
-  applyCoachTitleFont();
-  display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.drawString("Japanese Reference", 32, 34);
-  applyCoachMetadataFont();
-  display.setTextColor(metadataTextColor(), TFT_WHITE);
-  display.drawString("N3 sample - Week 1 Day 1 concepts", 34, 92);
-  display.setTextColor(TFT_BLACK, TFT_WHITE);
-
   const int32_t contentX = kCoachMargin;
   const int32_t contentW = display.width() - kCoachMargin * 2;
   const int32_t bottomLimit = display.height() - 130;
-  int32_t y = 144;
-  applyJapaneseBodyFont(20);
-  const int32_t lineH = japaneseLineHeight(20);
+  display.setTextDatum(textdatum_t::top_left);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
 
-  for (size_t i = 0; i < kJapaneseDayItemCount && y < bottomLimit; ++i) {
+  // Title — compact Sans Bold
+  applyJapaneseEnglishLabelFont(32);
+  display.drawString("Japanese Reference", contentX, 34);
+  applyJapaneseEnglishLabelFont(20);
+  display.setTextColor(metadataTextColor(), TFT_WHITE);
+  display.drawString("N3 sample  \xc2\xb7  Week 1 Day 1", contentX, 80);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+
+  // Collect deduped lists from the embedded dataset
+  std::vector<String> kanjiList;
+  std::vector<String> grammarList;
+  std::vector<String> vocabList;
+  for (size_t i = 0; i < kJapaneseDayItemCount; ++i) {
     const JapaneseItem& item = kJapaneseDayItems[i];
-    String line = String(item.categoryJapanese) + " ";
-    if (item.kanjiItems[0] != '\0') {
-      line += String("kanji: ") + item.kanjiItems;
-    } else if (item.vocabularyItems[0] != '\0') {
-      line += String("vocab: ") + item.vocabularyItems;
-    } else if (item.grammarPattern[0] != '\0') {
-      line += String("grammar: ") + item.grammarPattern;
-    }
-    TextLayoutResult lay = drawJapaneseWrappedText(line, contentX, y, contentW, lineH, 2, "japanese-reference");
-    y += lay.height > 0 ? lay.height + 6 : lineH + 6;
+    collectDeduped(item.kanjiItems, kanjiList);
+    collectDeduped(item.grammarPattern, grammarList);
+    collectDeduped(item.vocabularyItems, vocabList);
   }
+
+  const uint8_t refPx = 24;  // reference content always at 24px for readability on small sections
+  const int32_t refLineH = japaneseLineHeight(refPx);
+  const int32_t sectionGap = 20;
+  const int32_t headerH = 32;
+  int32_t y = 128;
+
+  auto drawSection = [&](const char* title, const std::vector<String>& items, bool japaneseFont) {
+    if (items.empty() || y >= bottomLimit) return;
+    // Section header — English Sans Bold
+    applyJapaneseEnglishLabelFont(22);
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    display.drawString(title, contentX, y);
+    y += headerH;
+
+    if (japaneseFont) {
+      // All items on one wrapped line, space-separated
+      String joined;
+      for (size_t k = 0; k < items.size(); ++k) {
+        if (k > 0) joined += "  ";
+        joined += items[k];
+      }
+      applyJapaneseBodyFont(refPx);
+      display.setTextColor(TFT_BLACK, TFT_WHITE);
+      TextLayoutResult lay = drawJapaneseWrappedText(joined, contentX + 8, y, contentW - 8,
+                                                      refLineH, 4, "ref-section");
+      y += (lay.height > 0 ? lay.height : refLineH) + sectionGap;
+    } else {
+      // Each item on its own line (grammar patterns can be long)
+      applyJapaneseBodyFont(refPx);
+      display.setTextColor(TFT_BLACK, TFT_WHITE);
+      for (const auto& term : items) {
+        if (y >= bottomLimit) break;
+        TextLayoutResult lay = drawJapaneseWrappedText(term, contentX + 8, y, contentW - 8,
+                                                        refLineH, 2, "ref-item");
+        y += (lay.height > 0 ? lay.height : refLineH) + 6;
+      }
+      y += sectionGap - 6;
+    }
+  };
+
+  drawSection("Kanji", kanjiList, true);
+  drawSection("Grammar", grammarList, false);
+  drawSection("Vocabulary", vocabList, true);
 
   gHomeButton = {34, display.height() - 110, display.width() - 68, 76};
   drawButton(gHomeButton, "", IconType::Home);
 
   finishDisplayRefresh();
-  Serial.println("Japanese reference shown.");
+  Serial.printf("Japanese reference shown: kanji=%u grammar=%u vocab=%u\n",
+                static_cast<unsigned>(kanjiList.size()), static_cast<unsigned>(grammarList.size()),
+                static_cast<unsigned>(vocabList.size()));
 }
 
 void renderPlaceholderScreen(Screen screen, const char* title, const char* body, const char* refreshReason = "mode switch") {
@@ -9261,15 +9389,15 @@ void handleTouch() {
       gJapaneseQuestionIndex = 0;
       gJapaneseSelectedOption = -1;
       gJapaneseShowFeedback = false;
-      renderJapaneseDaily();
+      renderJapaneseDaily("japanese entry");
     } else if (hitTarget(gJapaneseMockTestButton, "japanese mock test", tapX, tapY)) {
       renderPlaceholderScreen(Screen::JapaneseMockTest, "Mock Test",
                               "Mock Test is not available yet in this build. Use Daily Questions "
-                              "for now.");
+                              "for now.", "japanese entry");
     } else if (hitTarget(gJapaneseReferenceButton, "japanese reference", tapX, tapY)) {
-      renderJapaneseReference();
+      renderJapaneseReference("japanese entry");
     } else if (hitTarget(gJapaneseResultsButton, "japanese results", tapX, tapY)) {
-      renderJapaneseResults();
+      renderJapaneseResults("japanese entry");
     }
     noteIgnoredIfNoHit(tapX, tapY);
     return;
@@ -9286,7 +9414,7 @@ void handleTouch() {
           gJapaneseSelectedOption = static_cast<int8_t>(i);
           gJapaneseShowFeedback = true;
           recordJapaneseAnswer(item, i);
-          renderJapaneseDaily("answer selected");
+          renderJapaneseDaily("japanese entry");
           optionHit = true;
         }
       }

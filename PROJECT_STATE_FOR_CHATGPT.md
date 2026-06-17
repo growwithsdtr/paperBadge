@@ -1,6 +1,6 @@
-# PaperBadge Project State — v5.9-dev1 Handoff
+# PaperBadge Project State — v5.9-dev2 Handoff
 
-_Last updated: 2026-06-16_
+_Last updated: 2026-06-17_
 
 ---
 
@@ -15,10 +15,113 @@ _Last updated: 2026-06-16_
 
 ## Firmware
 
-- **Version:** `v5.9-dev1` (`src/main.cpp:20`)
+- **Version:** `v5.9-dev2` (`src/main.cpp:20`)
 - **Build:** SUCCESS — RAM 51.3% · Flash 48.0%
 - **Upload:** SUCCESS — `/dev/cu.usbmodem1101`
 - **Smoke test:** PASS (7/7 boot log checks)
+
+---
+
+## What Changed in v5.9-dev2
+
+### Japanese typography, layout, and ghosting polish
+
+**Goal:** Make the v5.9-dev1 Japanese prototype visually readable on the physical device. Fix
+text being too small, Results using huge English text, Reference being raw/repetitive, and
+ghosting when entering Japanese sub-screens. No new features.
+
+**Typography — Reader S/M/L now affects Japanese screens:**
+
+Added `japaneseBodyPxForReader()` — maps the current Reader setting to a Japanese Gothic size:
+
+| Reader setting | Japanese body px | Japanese title px | Button height |
+|---------------|-----------------|-------------------|--------------|
+| Reader S (Medium) | 24 | 28 | 76 |
+| Reader M (Large, default) | 28 | 32 | 86 |
+| Reader L (XL) | 32 | 36 | 96 |
+
+`applyJapaneseTitleFont()` now scales one step above body rather than being fixed at 28px.
+`applyJapaneseBodyFont()` now defaults to `japaneseBodyPxForReader()` instead of hardcoded 24.
+`drawJapaneseOptionButton()` now scales button text and line height with reader size.
+Explicit px overrides (e.g. fixed 20px for the compact header line) still work as before.
+
+**Mixed English/Japanese font routing:**
+
+Added `applyJapaneseEnglishLabelFont(px)` — calls `applySansBoldFont(px)` directly,
+independent of `gSettings.fontStyleMode`. Used for English content inside Japanese screens
+(feedback title "Correct"/"Wrong", English meaning line "EN: ...", tag labels, Results title/
+stats, Reference section headers). This avoids HighContrast huge text while keeping the Sans
+Bold-like visual that matches the English interview typography.
+
+English-only text inside Japanese screens now goes through `wrapTextToLines()` (ASCII-safe),
+not `wrapJapaneseTextToLines()`. Japanese text (prompt, choices, answer sentence, explanation)
+still uses `wrapJapaneseTextToLines()` + Gothic fonts.
+
+**Daily Questions layout (Patch 3):**
+
+- Prompt uses `japaneseBodyPxForReader()` (was hardcoded 26).
+- Prompt max lines: 6/5/4 for S/M/L to accommodate larger fonts without overflow.
+- Four answer buttons scale height: 76/86/96 for S/M/L.
+- Button gap: 14/14/12 for S/M/L.
+- Pre-answer footer: Home only (no faded Next label).
+- Post-answer footer: Next + Home (unchanged).
+
+**Daily Questions feedback layout (Patch 4):**
+
+- Title "Correct"/"Wrong": English Sans Bold at 28/32/36 for S/M/L (was Gothic 28px fixed).
+- Correct answer line: Gothic at reader size.
+- Answer sentence: Gothic at reader size.
+- Japanese explanation: Gothic at reader size.
+- English meaning ("EN: …"): Sans Bold 22px (smaller than Japanese body, ASCII-safe wrap).
+- Grammar tag: Sans Bold 20px compact label; vocabulary/kanji tags removed from feedback
+  (they are visible in Reference instead).
+
+**Japanese Results (Patch 5):**
+
+Rewrote to use `applyJapaneseEnglishLabelFont()` at fixed compact sizes (32/26/22/24px)
+instead of `applyCoachTitleFont()`/`applyCoachContentFont()` which routed through HighContrast
+and produced huge text. Layout: title (32), subtitle (20), Answered/Correct rows (26), By area
+label (22), category rows (24). Empty state also uses fixed 24px.
+
+**Japanese Reference (Patch 6):**
+
+Rewrote from raw per-item rows to structured, deduped sections:
+
+```
+Japanese Reference
+N3 sample · Week 1 Day 1
+
+Kanji        [deduped single characters, space-separated]
+Grammar      [deduped patterns, one per line]
+Vocabulary   [deduped words, space-separated]
+```
+
+Section headers use `applyJapaneseEnglishLabelFont(22)`. Japanese content uses Gothic 24px.
+Deduplication is O(n²) with the 11-item dataset — safe. `collectDeduped()` splits on commas
+and trims whitespace.
+
+**Clean refresh / ghosting (Patch 7):**
+
+Added `"japanese entry"` as a recognized reason string in `isImageOrZoomRefresh()`. This
+causes the e-ink refresh policy to use a full clean refresh (same path as image/zoom/badge
+transitions) when entering Japanese sub-screens.
+
+Default refresh reason for `renderJapaneseDaily`, `renderJapaneseResults`,
+`renderJapaneseReference` is now `"japanese entry"`. The touch handler for JapaneseMenu uses
+`"japanese entry"` explicitly when navigating to sub-screens. The answer-selected transition
+(question → feedback) also uses `"japanese entry"`, replacing the former `"answer selected"`.
+
+Result: entering any Japanese sub-screen triggers a clean EPD refresh in Fast/Balanced modes,
+eliminating ghosting from previous menu screens behind Daily Questions / feedback / Reference /
+Results / Mock Test placeholder.
+
+**Not changed:** Interview Practice/Drills/Exam/Glossary/Results behavior, Home structure,
+deep sleep, Badge behavior, existing English/interview typography, sanitizeCoachText(),
+wrapTextToLines(), English font functions globally, Settings/Advanced control screens.
+
+**Known limitations (unchanged from dev1):** Only Week 1 Day 1 is embedded (no full book
+import); Mock Test is a placeholder; Japanese Results has no SD persistence; no SRS; no
+volunteer notes; no multi-source concept UI.
 
 ---
 

@@ -19,7 +19,7 @@ first-class concern.
 
 ---
 
-## Current Behavior (v5.9-dev1)
+## Current Behavior (v5.9-dev2)
 
 ### Badge Mode
 
@@ -64,11 +64,13 @@ Content is organized into categories. Practice cards include a Must Master subse
 
 Three user-facing controls on the Settings screen:
 
-**Reader size** (S / M / L) — controls body font size in **study content screens only**: Practice,
-Drills, Exam, and Glossary. Also scales option button text in MCQ drills and exams.
+**Reader size** (S / M / L) — controls body font size in **study content screens**: Practice,
+Drills, Exam, Glossary, and (from v5.9-dev2) Japanese Daily Questions and feedback.
 
-App chrome (Settings, Advanced, Power Lab, and all other control screens) uses a fixed medium font
-independent of Reader size. Section labels and button text in Settings do not change with Reader size.
+App chrome (Settings, Advanced, Power Lab, Japanese menu/Reference/Results, and all other control
+screens) uses fixed medium fonts independent of Reader size.
+
+**English interview content (Practice/Drills/Exam/Glossary):**
 
 | Size | Body px | Option text | 1-line box | 2-line box |
 |------|---------|-------------|-----------|-----------|
@@ -76,9 +78,22 @@ independent of Reader size. Section labels and button text in Settings do not ch
 | M | 31 | 31px | 70px | 106px |
 | L | 40 | 36–40px | 74px | 124px |
 
-Option boxes snap to discrete tier heights (1-line / 2-line / 3-line). All options on a single
-screen share the max tier so that the layout is visually uniform. Text is centered vertically inside
-each box. Reader S/M/L affects study screens only — Settings uses fixed medium font.
+**Japanese Daily Questions content (v5.9-dev2):**
+
+| Reader | Japanese body | Japanese title | Button height |
+|--------|--------------|---------------|--------------|
+| S | 24px Gothic | 28px Gothic | 76px |
+| M | 28px Gothic | 32px Gothic | 86px |
+| L | 32px Gothic | 36px Gothic | 96px |
+
+English labels inside Japanese screens (feedback title, English meaning, Results stats, Reference
+headers) use Sans Bold directly at fixed compact sizes, independent of FontStyleMode. Japanese
+text (prompt, choices, answer sentence, explanation) uses `lgfxJapanGothic_*` fonts and the
+Japanese-safe wrap path.
+
+Option boxes (English drills) snap to discrete tier heights (1-line / 2-line / 3-line). All options
+on a single screen share the max tier. Text is centered vertically inside each box. Reader S/M/L
+affects study screens only — Settings uses fixed medium font.
 
 **Refresh mode** (Fast / Bal / Clean) — controls e-ink refresh cadence.
 

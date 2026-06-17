@@ -39,11 +39,16 @@ Future user shape: a learner using offline deck content where items can be pract
 - Sans Bold-like is the recommended English default style; High Contrast remains available for maximum density/contrast. Both use the same FreeSansBold bucket, with visual differences coming from density/layout rather than a separate font engine.
 - Balanced refresh is the recommended default: clean refresh for major transitions, feedback, badge, and image zoom; faster refresh for ordinary page turns.
 - Deep sleep is not automatic until PaperS3 wake behavior is physically verified.
-- Japanese live rendering shipped as a separate, self-contained mode in v5.9-dev1 (Daily Questions
-  prototype using one embedded Week 1 Day 1 N3-sample set). It uses its own sanitize/wrap/font path
-  (`lgfxJapanGothic_*`) and never routes through the English `sanitizeCoachText()`/`wrapTextToLines()`
-  functions. SD-loadable Japanese decks, the full 新にほんご500問 book, SRS, and volunteer notes
-  remain future work.
+- Japanese live rendering shipped in v5.9-dev1 (prototype) and polished in v5.9-dev2. Uses its own
+  sanitize/wrap/font path (`lgfxJapanGothic_*`) and never routes through the English
+  `sanitizeCoachText()`/`wrapTextToLines()` functions. Japanese text (prompt, choices, answer
+  sentence, explanation) uses Gothic fonts; English labels inside Japanese screens (feedback title,
+  English meaning, Results stats, Reference section headers) use Sans Bold directly at fixed compact
+  sizes, independent of FontStyleMode. Reader S/M/L maps to 24/28/32px Gothic for Japanese study
+  content; control screens (menu, Reference, Results) use fixed fonts. Reference shows deduped,
+  structured Kanji/Grammar/Vocabulary sections rather than raw per-item rows. Results uses compact
+  Sans Bold layout. Entering Japanese sub-screens forces a clean EPD refresh to eliminate ghosting.
+  SD-loadable decks, the full 新にほんご500問 book, SRS, and volunteer notes remain future work.
 - Results are paginated instead of compressed into a tiny dashboard. Japanese Results is a separate,
   simpler RAM-only tally and is never combined with the Interview Practice/Drills/Exam Results screen.
 

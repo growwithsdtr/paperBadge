@@ -61,7 +61,54 @@ Port: `/dev/cu.usbmodem1101` (macOS). Use `cu.` prefix, not `tty.`.
 - Confirm no deep sleep behavior is introduced (Sleep mode stays Off/Light only; Deep experiment
   stays blocked).
 
-## Japanese Verification (v5.9-dev1, new)
+## Japanese Verification (v5.9-dev2, polish pass)
+
+**Typography (Reader S/M/L):**
+- Change Settings → Reader to S, then enter Japanese Daily Questions. Prompt and choices should
+  render at 24px Gothic. Change to M → 28px. Change to L → 32px. Each step must be visibly
+  larger than the previous.
+- At Reader M, confirm the prompt area is comfortable and choices are readable without zooming.
+- Settings, Home, and all other control screens must remain the same size regardless of Reader.
+
+**Question layout:**
+- Pre-answer footer: only a Home button (no "Next" label).
+- Post-answer footer: Next button + Home button, split 50/50.
+- Buttons should be outlined (no large black fill). Text should be vertically centered.
+
+**Feedback layout:**
+- "Correct" or "Wrong" title: should be English Sans Bold-like, not Gothic, and not huge.
+- Correct answer line, answer sentence, Japanese explanation: Gothic at reader size.
+- English meaning ("EN: …"): smaller than the Japanese body text; ASCII font path.
+- Grammar tag (if present): compact label below the English meaning.
+
+**Reference (structured):**
+- Home → Japanese → Reference must show three sections: Kanji, Grammar, Vocabulary.
+- Each section has an English section header and Japanese terms underneath.
+- No raw rows like "もじ kanji: 郵,便,局". Kanji and Vocabulary items should be deduped.
+
+**Results (compact):**
+- Home → Japanese → Results must show a compact summary using normal-sized English text —
+  not the large font used in Interview Results. Title ~32px, stat rows ~26px, category rows ~24px.
+- Empty state: compact message in normal-sized text.
+- At least one answered question required to see the populated state.
+
+**Ghosting:**
+- When entering Daily Questions from the Japanese menu, confirm the previous menu is not
+  visible behind the new question screen. The transition must use a clean EPD refresh.
+- Same check for Reference, Results, Mock Test placeholder.
+- Feedback transition (tapping a choice) must also get a clean refresh.
+
+**Japanese text integrity (unchanged from dev1):**
+- Confirm: 郵便局, 引っ越した, 荷物, 違っていました, 子供のころ, ものだ, てばかりいる,
+  とっちゃいけない, ちゃう, とく — all render as Japanese kanji/kana, never "?" or boxes.
+- Confirm Japanese text wraps without splitting a multi-byte character mid-glyph.
+
+**Power and isolation (unchanged from dev1):**
+- Japanese Daily Questions pre-answer blocks WarmIdle/LightNap; feedback is LightNap-eligible.
+- Japanese Results is RAM-only and resets on reboot; never appears in the regular Results screen.
+- English/interview typography is unchanged outside Japanese screens.
+
+## Japanese Verification (v5.9-dev1, baseline)
 
 - Confirm these strings render as Japanese kanji/kana, never as "?" or boxes, on the Daily
   Questions prompt/choices/feedback screens: 郵便局, 引っ越した, 荷物, 違っていました, 子供のころ,
