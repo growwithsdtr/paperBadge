@@ -60,3 +60,35 @@ Each commit was followed by `pio run`; all builds passed before moving on.
 - Reboot with SD inserted; confirm `/papercoach/japanese/progress/session_counter.txt` increments and `/papercoach/japanese/progress/results.log` is append-only NDJSON.
 - Corrupt-tail test if desired: append a partial line to Japanese results log and confirm boot skips it without failing.
 - Confirm Interview Practice, Drills, Exam, Glossary, and Results still render and behave as before.
+
+## 2026-06-18 Japanese sanitizer shipping pass
+
+### Commit
+
+- `62e106a` - Add standing workflow rules and fix the remaining Japanese sanitizer routes.
+
+### Call-site audit
+
+- Fixed Japanese Daily feedback English explanations: mixed English/Japanese examples previously entered `wrapTextToLines()` and now use `drawMixedJapaneseLabel()`; Japanese-bearing lines render through Gothic at 24px while English-only lines retain the 20px English font.
+- Fixed the `500問 N3` source button: it now uses the explicit `drawJapaneseButton()` path instead of generic `drawButton()`.
+- Already safe: Japanese week/day subtitles use `drawMixedJapaneseLabel()`.
+- Already safe: Japanese Daily header, prompt, choices, answer sentence, Japanese explanation, and grammar tag use Japanese-safe draw/wrap helpers.
+- Already safe: Reference Kanji, Grammar, and Vocabulary content uses `drawJapaneseWrappedText()`.
+- Results rows are currently English-only; no Japanese-bearing Results row enters `sanitizeCoachText()` or `wrapTextToLines()`.
+- Japanese menu labels are English-only; Japanese source metadata uses the mixed-safe path.
+- `Font Lab (JP)` is rendered in the Japanese submenu and its touch handler opens Font Lab page 1.
+
+### Verification
+
+- `pio run` passed after the commit: RAM `70.4%`, flash `57.3%`.
+- `firmware.bin`: `3757504` bytes, below the 12MB limit.
+- Static diff review confirmed no Interview render/touch path changes and no changes to `applyTypographyFont()` or `applySansBoldFont()`.
+- Japanese result storage and Interview result storage were untouched.
+
+### Morning QA
+
+- Japanese -> Daily Questions -> `500問 N3`: confirm `問` renders without `?`.
+- Answer the items whose English explanations contain `違っていました` and `引っ越した`; confirm the embedded Japanese renders without `?` and wraps within the content area.
+- Check Japanese week/day headings, feedback header/body/grammar tag, Reference rows, and Results for layout regressions.
+- Open Japanese -> Font Lab (JP), confirm it reaches page 1, and cycle all pages.
+- Smoke-test Interview Practice, Drills, and Exam rendering and touch behavior.
