@@ -4604,6 +4604,27 @@ TextLayoutResult drawMixedJapaneseLabel(const String& text, int32_t x, int32_t y
   return result;
 }
 
+void drawJapaneseButton(const Rect& rect, const String& label, uint8_t japanesePx = 24) {
+  auto& display = M5.Display;
+  display.drawRoundRect(rect.x, rect.y, rect.w, rect.h, 8, TFT_BLACK);
+  display.drawRoundRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 7, TFT_BLACK);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.setTextDatum(textdatum_t::top_left);
+
+  const uint8_t drawPx = japanesePx < 24 ? 24 : japanesePx;
+  applyGothicFont(drawPx);
+  const int32_t lineHeight = static_cast<int32_t>(drawPx) + 12;
+  String lines[2];
+  TextLayoutResult result = wrapMixedJapaneseText(label, rect.w - 32, lineHeight, 2, lines);
+  const int32_t textY = rect.y + ((rect.h - result.height) / 2);
+  for (uint8_t line = 0; line < result.lineCount; ++line) {
+    const int32_t textW = display.textWidth(lines[line]);
+    display.drawString(lines[line], rect.x + (rect.w - textW) / 2, textY + line * lineHeight);
+  }
+  logLayoutBox("japanese-button", Rect(rect.x + 16, textY, rect.w - 32, result.height),
+               result.height, 1, result.overflow);
+}
+
 // Role-specific Japanese font sizes for headers, prompts, choices, and explanations.
 // Separated from japaneseBodyPxForReader() so each role can scale independently.
 uint8_t japaneseMetaPxForReader() {
@@ -7314,7 +7335,7 @@ void renderJapaneseSourceSelect(const char* refreshReason = "japanese entry") {
   Rect placeholderBtn = {buttonX, y, buttonW, 76};
   gHomeButton = {buttonX, display.height() - 110, buttonW, 76};
 
-  drawButton(gJapaneseSourceN3Button, "500\xe5\x95\x8f N3  \xe2\x80\x94  Week/day practice");
+  drawJapaneseButton(gJapaneseSourceN3Button, "500\xe5\x95\x8f N3  \xe2\x80\x94  Week/day practice");
   // Dim placeholder
   display.drawRoundRect(placeholderBtn.x, placeholderBtn.y, placeholderBtn.w, placeholderBtn.h, 8, metadataTextColor());
   applyCoachMetadataFont();
@@ -7812,17 +7833,14 @@ void renderJapaneseDaily(const char* refreshReason = "japanese entry") {
                                                    explLineH, 3, "japanese-explanation");
     y += l3.height + 10;
 
-    // English meaning — English only, Sans Bold smaller
+    // English meaning can contain Japanese examples; mixed lines use the Japanese-safe path.
     const uint8_t enPx = 20;
-    applyJapaneseEnglishLabelFont(enPx);
     display.setTextColor(TFT_BLACK, TFT_WHITE);
-    const int32_t enLineH = static_cast<int32_t>(enPx) + 10;
-    String enLines[kMaxWrappedLines];
     String englishLine = String("EN: ") + item.explanationEnglish;
-    TextLayoutResult l4 = wrapTextToLines(englishLine, contentW, enLineH, 3, enLines);
-    for (uint8_t line = 0; line < l4.lineCount; ++line) {
-      display.drawString(enLines[line], contentX, y + line * enLineH);
-    }
+    const uint8_t mixedPx = containsJapaneseCodepoint(englishLine) ? 24 : enPx;
+    const int32_t enLineH = static_cast<int32_t>(mixedPx) + 10;
+    TextLayoutResult l4 = drawMixedJapaneseLabel(englishLine, contentX, y, contentW, enLineH, 3,
+                                                  mixedPx, "japanese-english-explanation");
     y += l4.height + 8;
 
     // Grammar tag — grammarPattern can contain Japanese (e.g. "～ものだ"), use Gothic path
