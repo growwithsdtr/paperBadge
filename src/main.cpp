@@ -1879,6 +1879,24 @@ void logPowerAudit(const char* reason) {
       static_cast<unsigned>(gDisplayRefreshCount),
       static_cast<unsigned>(gDisplayRefreshCount), static_cast<unsigned>(gBadgeRedrawCount),
       gLastRefreshReason.c_str(), static_cast<unsigned>(gLastUserActivityMs), static_cast<unsigned>(activeLoopDelayMs));
+
+  const hw::DiagnosticsSnapshot diag = hw::Diagnostics::capture();
+  const hw::DisplaySnapshot& displayState = gDisplayManager.snapshot();
+  const hw::RTCStateSnapshot rtcState = gRtcManager.snapshot();
+  const hw::SleepResult& sleepState = gSleepManager.lastResult();
+  const hw::WakeSnapshot& wakeState = gWakeManager.latest();
+  Serial.printf(
+      "Power managers: wake=%s cause=%s reset=%s runtime=%s display=%s partialSinceClean=%u sd=%s books=%u "
+      "heap=%u minHeap=%u psram=%u/%u rtcBoot=%u rtcApp=%s lastSleep=%s/%ums sleepErr=%d\n",
+      hw::WakeManager::wakeKindName(wakeState.kind), hw::WakeManager::wakeCauseName(wakeState.wakeCause),
+      hw::WakeManager::resetReasonName(wakeState.resetReason), hw::PowerManager::modeName(gPowerManager.mode()),
+      hw::DisplayManager::refreshModeName(displayState.lastMode),
+      static_cast<unsigned>(displayState.partialSinceClean), gSdManager.lastStatus(),
+      static_cast<unsigned>(gSdManager.bookCount()), static_cast<unsigned>(diag.freeHeap),
+      static_cast<unsigned>(diag.minFreeHeap), static_cast<unsigned>(diag.freePsram),
+      static_cast<unsigned>(diag.psramSize), static_cast<unsigned>(rtcState.bootCount),
+      hw::RTCManager::appName(rtcState.lastSelectedApp), hw::SleepManager::sleepModeName(sleepState.mode),
+      static_cast<unsigned>(sleepState.sleptMs), static_cast<int>(sleepState.error));
 }
 
 void cyclePowerMode() {
@@ -9177,6 +9195,14 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
     y += result.height + 5;
   };
 
+  batteryLevelPercent();
+  const hw::BatterySample& battery = gBatteryManager.latest();
+  const hw::DiagnosticsSnapshot diag = hw::Diagnostics::capture();
+  const hw::DisplaySnapshot& displayState = gDisplayManager.snapshot();
+  const hw::RTCStateSnapshot rtcState = gRtcManager.snapshot();
+  const hw::SleepResult& sleepState = gSleepManager.lastResult();
+  const hw::WakeSnapshot& wakeState = gWakeManager.latest();
+
   if (gPowerLabPage == 0) {
     // Page 1: CPU / stage / idle counters
     row(String("Stage: ") + powerStageName(gPowerStage) +
@@ -9225,6 +9251,9 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
     row(String("Screen: ") + screenName(gScreen) +
         "  refreshes: " + static_cast<unsigned>(gDisplayRefreshCount) +
         "  last: " + fmtMsSince(gLastRefreshEndMs));
+    row(String("Runtime manager: ") + hw::PowerManager::modeName(gPowerManager.mode()) +
+        "  DFS: " + (gPowerManager.dfsConfigured() ? "on" : "off"));
+    row(hw::Diagnostics::heapLine(diag));
     {
       const String napBlocked = lightNapBlockedReason();
       String napEta;
@@ -9240,21 +9269,27 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
     }
   } else if (gPowerLabPage == 1) {
     // Page 2: battery / peripherals
-    const bool wifiOff = WiFi.getMode() == WIFI_OFF;
+    const bool wifiOff = !gWifiManager.isEnabled();
     const bool btOn = btStarted();
     const int32_t level = batteryLevelPercent();
     row(String("Battery: ") + gCachedBatteryMv + "mV  " + level + "%");
+    row(String("Battery source: ") + battery.source +
+        (battery.percentApproximate ? "  percent=approx" : "  percent=reported"));
     row(String("Charge: ") + chargingStateName(gCachedChargingState) +
         "  " + gCachedBatteryCurrentMa + "mA" +
-        "  USB: " + usbPowerName(gCachedVbusMv) + " " + gCachedVbusMv + "mV");
+        "  USB: " + hw::BatteryManager::usbStateName(battery) + " " + gCachedVbusMv + "mV");
     row(String("Batt poll: ") + fmtMsSince(gLastPowerPollMs) +
         "  interval: " + static_cast<unsigned>(profileBatteryPollMs() / 1000) + "s" +
         (gIdleModeActive ? " (idle)" : " (active)"));
-    row(String("Wi-Fi: ") + (wifiOff ? "off" : "ON") +
+    row(String("Wi-Fi: ") + (wifiOff ? "off" : gWifiManager.modeName()) +
         "  BT: " + (btOn ? "ON" : "off") +
         "  Speaker: stopped");
     row("Mic: not used  IMU: not started");
-    row(String("SD: ") + (gSdMounted ? "mounted/idle" : "not mounted"));
+    row(String("SD: ") + (gSdMounted ? "mounted/idle" : "not mounted") +
+        "  index: " + gSdManager.lastStatus() +
+        "  books: " + static_cast<unsigned>(gSdManager.bookCount()));
+    row(String("Display: ") + hw::DisplayManager::refreshModeName(displayState.lastMode) +
+        " partials: " + static_cast<unsigned>(displayState.partialSinceClean));
     row(String("Redraws while idle: ") + static_cast<unsigned>(gRedrawWhileIdleCount));
   } else if (gPowerLabPage == 2) {
     // Page 3: Sleep Lab — nap/wake/listen diagnostics and sleep mode button
@@ -9271,6 +9306,13 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
     row(String("Wake reason: ") + gLastWakeReason +
         "  last wake: " + (gLastWakeTimestampMs > 0 ? fmtMsSince(gLastWakeTimestampMs) : String("none")));
     row(String("Last sleep attempt: ") + gLastSleepAttempt);
+    row(String("SleepManager: ") + hw::SleepManager::sleepModeName(sleepState.mode) +
+        " slept " + static_cast<unsigned>(sleepState.sleptMs) + "ms" +
+        " wake=" + hw::SleepManager::wakeCauseName(sleepState.wakeCause) +
+        " err=" + static_cast<int>(sleepState.error));
+    row(String("RTC sleep: mode=") + static_cast<unsigned>(rtcState.lastSleepMode) +
+        " dur=" + fmtDurationMs(rtcState.lastSleepDurationMs) +
+        " bootCount=" + static_cast<unsigned>(rtcState.bootCount));
     {
       const uint32_t now = millis();
       const bool inWindow = gInWakeListenWindow && now < gWakeListenWindowEndMs;
@@ -9296,12 +9338,17 @@ void renderPowerLab(const char* refreshReason = "mode switch") {
   } else {
     // Page 4: Wake source / deep sleep audit
     row(String("--- Wake source audit (") + kFirmwareVersion + ") ---");
+    row(String("Wake: ") + hw::WakeManager::wakeKindName(wakeState.kind) +
+        " cause=" + hw::WakeManager::wakeCauseName(wakeState.wakeCause) +
+        " reset=" + hw::WakeManager::resetReasonName(wakeState.resetReason));
+    row(String("RTC app: ") + hw::RTCManager::appName(rtcState.lastSelectedApp) +
+        " readerOffset=" + static_cast<unsigned>(rtcState.lastReaderOffset));
     row("GT911 touch INT = GPIO48.");
     row("ESP32-S3 RTC GPIO range = 0-21 only.");
     row("GPIO48 is NOT RTC-wake capable — cannot wake from deep sleep.");
     row("Power button = GPIO44, also NOT RTC-wake capable.");
     row("Deep sleep: BLOCKED — no verified RTC wake source.");
-    row("Light sleep: timer wake ONLY. Short taps during nap are missed.");
+    row("Light sleep: timer + GT911 GPIO wake attempted; verify on device.");
     row("Sleep Off resets on reboot (experimental flag).");
     row("LightNap eligible screens: Badge, Home, Practice, Glossary,");
     row("  Drills, Exam, Results, DrillsMenu, GlossaryMenu, PracticeMenu.");
@@ -9355,8 +9402,14 @@ void renderPowerAudit(const char* refreshReason = "mode switch") {
   }
 
   const int32_t level = batteryLevelPercent();
-  const bool wifiOff = WiFi.getMode() == WIFI_OFF;
+  const bool wifiOff = !gWifiManager.isEnabled();
   const bool bluetoothStarted = btStarted();
+  const hw::BatterySample& battery = gBatteryManager.latest();
+  const hw::DiagnosticsSnapshot diag = hw::Diagnostics::capture();
+  const hw::DisplaySnapshot& displayState = gDisplayManager.snapshot();
+  const hw::RTCStateSnapshot rtcState = gRtcManager.snapshot();
+  const hw::SleepResult& sleepState = gSleepManager.lastResult();
+  const hw::WakeSnapshot& wakeState = gWakeManager.latest();
 
   display.setTextDatum(textdatum_t::top_left);
   applyCoachTitleFont();
@@ -9376,11 +9429,16 @@ void renderPowerAudit(const char* refreshReason = "mode switch") {
 
   if (gPowerAuditPage == 0) {
     row(String("Battery: ") + gCachedBatteryMv + "mV  " + level + "%");
-    row(String("USB/VBUS: ") + usbPowerName(gCachedVbusMv) + "  " + gCachedVbusMv + "mV");
+    row(String("Battery source: ") + battery.source +
+        (battery.percentApproximate ? "  percent=approx" : "  percent=reported"));
+    row(String("USB/VBUS: ") + hw::BatteryManager::usbStateName(battery) + "  " + gCachedVbusMv + "mV");
     row(String("Charge: ") + chargingStateName(gCachedChargingState) + "  " + gCachedBatteryCurrentMa + "mA");
-    row(String("Wi-Fi: ") + (wifiOff ? "off" : "on") + "  BT: " + (bluetoothStarted ? "on" : "off"));
+    row(String("Wi-Fi: ") + (wifiOff ? "off" : gWifiManager.modeName()) + "  BT: " +
+        (bluetoothStarted ? "on" : "off"));
     row("IMU: disabled  Speaker: stopped");
-    row(String("SD: ") + (gSdMounted ? "mounted" : "missing"));
+    row(String("SD: ") + (gSdMounted ? "mounted" : "missing") +
+        " index=" + gSdManager.lastStatus() +
+        " books=" + static_cast<unsigned>(gSdManager.bookCount()));
     row(String("Power mode: ") + powerModeName());
     row(String("Profile: ") + powerProfileName());
   } else if (gPowerAuditPage == 1) {
@@ -9411,19 +9469,34 @@ void renderPowerAudit(const char* refreshReason = "mode switch") {
     }
     row(String("Loop delay: ") + static_cast<unsigned>(loopDelayMs()) + "ms  refreshes: " +
         static_cast<unsigned>(gDisplayRefreshCount));
+    row(String("Runtime manager: ") + hw::PowerManager::modeName(gPowerManager.mode()) +
+        "  boot CPU: " + static_cast<unsigned>(gPowerManager.bootCpuMhz()) + "MHz");
+    row(hw::Diagnostics::heapLine(diag));
   } else if (gPowerAuditPage == 2) {
     row(String("Sleep mode: ") + badgeSleepModeName());
     row(String("Sleep status: ") + sleepAuditStatusLine());
     row(String("Last sleep: ") + gLastSleepAttempt);
     row(String("Wake reason: ") + gLastWakeReason);
+    row(String("Wake manager: ") + hw::WakeManager::wakeKindName(wakeState.kind) +
+        " cause=" + hw::WakeManager::wakeCauseName(wakeState.wakeCause) +
+        " reset=" + hw::WakeManager::resetReasonName(wakeState.resetReason));
+    row(String("SleepManager: ") + hw::SleepManager::sleepModeName(sleepState.mode) +
+        " slept=" + static_cast<unsigned>(sleepState.sleptMs) +
+        "ms err=" + static_cast<int>(sleepState.error));
     row(String("Millis since boot: ") + static_cast<unsigned>(millis()));
     {
       const uint32_t sinceInput = gLastUserActivityMs > 0 ? millis() - gLastUserActivityMs : 0;
       row(String("Since input: ") + sinceInput + "ms");
     }
     row("Deep sleep: BLOCKED — GT911 INT=GPIO48, not RTC-wake capable on ESP32-S3.");
-    row("Light sleep: allowed in Balanced/Max Battery. Disabled in Responsive profile.");
+    row("Light sleep: timer + GT911 GPIO wake in Balanced/Max Battery; verify physically.");
   } else {
+    row(String("Current app: ") + screenName(gScreen) +
+        "  RTC last: " + hw::RTCManager::appName(rtcState.lastSelectedApp));
+    row(String("Display: ") + hw::DisplayManager::refreshModeName(displayState.lastMode) +
+        " partials=" + static_cast<unsigned>(displayState.partialSinceClean) +
+        " clean=" + static_cast<unsigned>(displayState.cleanCount));
+    row(hw::Diagnostics::sketchLine(diag));
     row(String("Answer keys invalid: ") + static_cast<unsigned>(gInvalidAnswerKeyCount));
     row(String("Last key warning: ") + gLastAnswerKeyWarning);
     row(String("Sanitize total: ") + static_cast<unsigned>(gSanitizerReplacementTotal));
@@ -10908,6 +10981,8 @@ void setup() {
 
   gSdMounted = mountSdCard();
   Serial.printf("SD mounted %s.\n", gSdMounted ? "yes" : "no");
+  Serial.printf("SD index status: %s books=%u\n", gSdManager.lastStatus(),
+                static_cast<unsigned>(gSdManager.bookCount()));
   initializeJapaneseResultsBackend();
   gBadgeJsonLoaded = loadBadgeJson();
   findSdImage("badge EN", kBadgeEnCandidates, countOf(kBadgeEnCandidates), gBadgeEnSd);
