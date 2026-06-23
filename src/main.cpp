@@ -13,8 +13,20 @@
 
 #include "embedded_assets.h"
 #include "embedded_papercoach_deck.h"
+#include "hw/BatteryManager.h"
+#include "hw/Diagnostics.h"
+#include "hw/DisplayManager.h"
+#include "hw/PowerManager.h"
+#include "hw/RTCManager.h"
+#include "hw/SDManager.h"
+#include "hw/SleepManager.h"
+#include "hw/TouchManager.h"
+#include "hw/WakeManager.h"
+#include "hw/WifiManager.h"
 
 namespace {
+namespace hw = paperbadge::hw;
+
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
 constexpr const char* kFirmwareVersion = "v5.9-dev3";
@@ -673,6 +685,15 @@ bool isOptionDrillScreen(Screen screen, const CoachItemView& item);
 BadgeConfig gBadgeConfig;
 Settings gSettings;
 Preferences gPrefs;
+hw::BatteryManager gBatteryManager;
+hw::DisplayManager gDisplayManager;
+hw::PowerManager gPowerManager;
+hw::RTCManager gRtcManager;
+hw::SDManager gSdManager;
+hw::SleepManager gSleepManager;
+hw::TouchManager gTouchManager;
+hw::WakeManager gWakeManager;
+hw::WifiManager gWifiManager;
 ImageAsset gBadgeEnSd;
 ImageAsset gBadgeJaSd;
 ImageAsset gProfileSd;
@@ -1145,19 +1166,7 @@ void applyAppRotation() {
 }
 
 bool mountSdCard() {
-  const int8_t sclk = M5.getPin(m5::sd_spi_sclk);
-  const int8_t mosi = M5.getPin(m5::sd_spi_mosi);
-  const int8_t miso = M5.getPin(m5::sd_spi_miso);
-  const int8_t cs = M5.getPin(m5::sd_spi_cs);
-
-  Serial.printf("SD SPI pins: SCLK=%d MOSI=%d MISO=%d CS=%d\n", sclk, mosi, miso, cs);
-  if (sclk < 0 || mosi < 0 || miso < 0 || cs < 0) {
-    Serial.println("SD mounted no: PaperS3 SD pins unavailable.");
-    return false;
-  }
-
-  SPI.begin(sclk, miso, mosi, cs);
-  return SD.begin(cs, SPI, kSdSpiHz);
+  return gSdManager.mount(kSdSpiHz);
 }
 
 uint16_t readBe16(const uint8_t* data) {
@@ -1488,25 +1497,7 @@ void cycleBadgeSleepMode() {
 }
 
 const char* wakeReasonName(esp_sleep_wakeup_cause_t reason) {
-  switch (reason) {
-    case ESP_SLEEP_WAKEUP_EXT0:
-      return "ext0";
-    case ESP_SLEEP_WAKEUP_EXT1:
-      return "ext1";
-    case ESP_SLEEP_WAKEUP_TIMER:
-      return "timer";
-    case ESP_SLEEP_WAKEUP_TOUCHPAD:
-      return "touchpad";
-    case ESP_SLEEP_WAKEUP_ULP:
-      return "ulp";
-    case ESP_SLEEP_WAKEUP_GPIO:
-      return "gpio";
-    case ESP_SLEEP_WAKEUP_UART:
-      return "uart";
-    case ESP_SLEEP_WAKEUP_UNDEFINED:
-    default:
-      return "not sleep";
-  }
+  return hw::SleepManager::wakeCauseName(reason);
 }
 
 bool isStaticIdleScreen(Screen screen) {
@@ -1604,6 +1595,18 @@ const char* chargingStateName(m5::Power_Class::is_charging_t state) {
   }
 }
 
+m5::Power_Class::is_charging_t toM5ChargingState(hw::ChargeState state) {
+  switch (state) {
+    case hw::ChargeState::Charging:
+      return m5::Power_Class::is_charging;
+    case hw::ChargeState::Discharging:
+      return m5::Power_Class::is_discharging;
+    case hw::ChargeState::Unknown:
+    default:
+      return m5::Power_Class::charge_unknown;
+  }
+}
+
 String sleepAuditStatusLine() {
   switch (gSettings.badgeSleepMode) {
     case BadgeSleepMode::Light:
@@ -1619,11 +1622,12 @@ String sleepAuditStatusLine() {
 int32_t batteryLevelPercent() {
   const uint32_t now = millis();
   if (gLastPowerPollMs == 0 || now - gLastPowerPollMs >= profileBatteryPollMs()) {
-    gCachedBatteryMv = M5.Power.getBatteryVoltage();
-    gCachedBatteryLevel = M5.Power.getBatteryLevel();
-    gCachedBatteryCurrentMa = M5.Power.getBatteryCurrent();
-    gCachedVbusMv = M5.Power.getVBUSVoltage();
-    gCachedChargingState = M5.Power.isCharging();
+    const hw::BatterySample& sample = gBatteryManager.sample(now);
+    gCachedBatteryMv = sample.voltageMv;
+    gCachedBatteryLevel = sample.percent;
+    gCachedBatteryCurrentMa = sample.currentMa;
+    gCachedVbusMv = sample.vbusMv;
+    gCachedChargingState = toM5ChargingState(sample.chargeState);
     gLastPowerPollMs = now;
     if (isVerboseLogOk()) Serial.printf("Power poll: batteryMv=%d level=%ld currentMa=%ld vbusMv=%d charge=%s\n",
                   static_cast<int>(gCachedBatteryMv), static_cast<long>(gCachedBatteryLevel),
@@ -1650,11 +1654,12 @@ void tracePowerBattery() {
     return;
   }
   gLastPowerTracePollMs = now;
-  const int16_t batteryMv = M5.Power.getBatteryVoltage();
-  const int32_t level = M5.Power.getBatteryLevel();
-  const int32_t currentMa = M5.Power.getBatteryCurrent();
-  const int16_t vbusMv = M5.Power.getVBUSVoltage();
-  const auto charging = M5.Power.isCharging();
+  const hw::BatterySample& sample = gBatteryManager.sample(now);
+  const int16_t batteryMv = sample.voltageMv;
+  const int32_t level = sample.percent;
+  const int32_t currentMa = sample.currentMa;
+  const int16_t vbusMv = sample.vbusMv;
+  const auto charging = toM5ChargingState(sample.chargeState);
   PWR_LOGF("battery mv=%d level=%ld currentMa=%ld vbusMv=%d charge=%s screen=%s idle=%s cpu=%u\n",
            static_cast<int>(batteryMv), static_cast<long>(level), static_cast<long>(currentMa),
            static_cast<int>(vbusMv), chargingStateName(charging), screenName(gScreen),
@@ -1892,8 +1897,7 @@ void cyclePowerMode() {
 }
 
 void disableUnusedRadiosAndPeripherals(const char* reason) {
-  WiFi.disconnect(true, true);
-  WiFi.mode(WIFI_OFF);
+  gWifiManager.disconnectAndPowerOff(reason);
   btStop();
   M5.Speaker.stop();
   Serial.printf("Power policy: unused radios/peripherals off reason=%s wifi=off bluetooth=off speaker=stopped\n",
@@ -2051,24 +2055,35 @@ void maybeEnterBadgeSleep() {
                 static_cast<unsigned>(napDurationS));
   enterPowerStage(PowerStage::LightNap);
   ++gLightSleepEnteredCount;
-  esp_sleep_enable_timer_wakeup(napDurationUs);
-  esp_light_sleep_start();
-  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+  gDisplayManager.prepareForSleep();
+  gRtcManager.markSleep(static_cast<uint8_t>(hw::SleepMode::Light), napDurationUs / 1000);
+  const hw::SleepResult sleepResult = gSleepManager.enterLightSleep(napDurationUs, true, "badge light nap");
+  gRtcManager.markWake(sleepResult.wakeCause);
+  gWakeManager.capture();
+  gDisplayManager.recoverAfterWake();
+  if (!sleepResult.entered) {
+    ++gLightSleepFailedCount;
+    gLastSleepAttempt = String("light nap failed err=") + static_cast<int>(sleepResult.error);
+    enterPowerStage(PowerStage::WarmIdle);
+    Serial.printf("Light nap failed: err=%d failures=%u\n", static_cast<int>(sleepResult.error),
+                  static_cast<unsigned>(gLightSleepFailedCount));
+    return;
+  }
 
   const uint32_t wakeNow = millis();
-  const uint32_t napDur = wakeNow > now ? wakeNow - now : 0;
+  const uint32_t napDur = sleepResult.sleptMs > 0 ? sleepResult.sleptMs : (wakeNow > now ? wakeNow - now : 0);
   gLastLightSleepDurationMs = napDur;
   gLightSleepTotalMs += napDur;
   if (napDur > gLongestLightSleepMs) gLongestLightSleepMs = napDur;
   ++gLightSleepWakeCount;
   gLastLightSleepMs = wakeNow;
   gLastWakeTimestampMs = wakeNow;
-  gLastWakeReason = wakeReasonName(esp_sleep_get_wakeup_cause());
+  gLastWakeReason = wakeReasonName(sleepResult.wakeCause);
   enterPowerStage(PowerStage::WarmIdle);
-  Serial.printf("Light nap wake: reason=%s dur=%ums total=%ums wakes=%u\n",
+  Serial.printf("Light nap wake: reason=%s dur=%ums total=%ums wakes=%u touchWake=%s\n",
                 gLastWakeReason.c_str(), static_cast<unsigned>(napDur),
                 static_cast<unsigned>(gLightSleepTotalMs),
-                static_cast<unsigned>(gLightSleepWakeCount));
+                static_cast<unsigned>(gLightSleepWakeCount), sleepResult.touchWakeConfigured ? "yes" : "no");
   // Post-wake input guard: block touches for 400ms so a wake tap cannot record an answer
   gInputLocked = true;
   gInputLockedAtMs = wakeNow;
@@ -2171,6 +2186,20 @@ void enterPowerStage(PowerStage newStage) {
   gPowerStage = newStage;
   ++gStageTransitionCount;
   gStageEnteredAtMs = millis();
+  switch (newStage) {
+    case PowerStage::Active:
+      gPowerManager.applyMode(hw::PowerRuntimeMode::InteractiveMode, "stage active");
+      break;
+    case PowerStage::WarmIdle:
+      gPowerManager.applyMode(hw::PowerRuntimeMode::IdleMode, "stage warm idle");
+      break;
+    case PowerStage::LightNap:
+      gPowerManager.applyMode(hw::PowerRuntimeMode::IdleMode, "stage light nap");
+      break;
+    case PowerStage::Hibernate:
+      gPowerManager.applyMode(hw::PowerRuntimeMode::IdleMode, "stage hibernate");
+      break;
+  }
 }
 
 void cyclePowerProfile() {
@@ -3366,7 +3395,13 @@ void prepareFullRefresh(const char* reason = nullptr, bool highQuality = false) 
   bool hardCleanTriggered = false;
   const bool cleanRefresh = chooseRefreshClean(reason, highQuality, hardCleanTriggered);
   lockInputForRefresh(reason, cleanRefresh);
-  display.setEpdMode(cleanRefresh ? m5gfx::epd_quality : m5gfx::epd_fastest);
+  if (cleanRefresh) {
+    gDisplayManager.refreshClean(reason);
+  } else if (gSettings.refreshMode == RefreshMode::Balanced) {
+    gDisplayManager.refreshBalanced(reason);
+  } else {
+    gDisplayManager.refreshFast(reason);
+  }
   display.fillScreen(TFT_WHITE);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
   display.setTextWrap(false, false);
@@ -3386,11 +3421,11 @@ void cleanWhiteRefresh(const char* reason) {
   Serial.printf("Clean white refresh: %s\n", reason);
   noteForcedCleanRefresh(reason);
   lockInputForRefresh(reason, true);
-  display.setEpdMode(m5gfx::epd_quality);
+  gDisplayManager.refreshClean(reason);
   display.fillScreen(TFT_WHITE);
   finishDisplayRefresh();
   delay(250);
-  display.setEpdMode(m5gfx::epd_fastest);
+  gDisplayManager.refreshFast("post-clean restore");
 }
 
 bool drawBadgeImage(BadgeLanguage language) {
@@ -10826,6 +10861,13 @@ void setup() {
 
   M5.begin(cfg);
   waitForSerial();
+  gWakeManager.begin();
+  gRtcManager.begin();
+  gBatteryManager.begin();
+  gDisplayManager.begin();
+  gPowerManager.begin();
+  gSleepManager.begin();
+  gTouchManager.begin();
   captureNormalPortraitRotation();
   gSessionId = static_cast<uint32_t>(ESP.getEfuseMac()) ^ esp_random() ^ millis();
   loadSettings();
@@ -10838,8 +10880,12 @@ void setup() {
   const esp_sleep_wakeup_cause_t wakeReason = esp_sleep_get_wakeup_cause();
   gLastWakeReason = wakeReasonName(wakeReason);
   Serial.printf("Wake reason: %s (%d)\n", wakeReasonName(wakeReason), static_cast<int>(wakeReason));
+  Serial.printf("Reset reason: %s\n", hw::WakeManager::resetReasonName(gWakeManager.latest().resetReason));
+  Serial.printf("RTC boot count: %u last app=%s\n", static_cast<unsigned>(gRtcManager.snapshot().bootCount),
+                hw::RTCManager::appName(gRtcManager.snapshot().lastSelectedApp));
   Serial.println("Power sleep policy: deep/light sleep deferred until PaperS3 touch wake is physically verified.");
-  Serial.println("Wake sources: timer=supported uart=supported(auto) touch-INT=unverified gpio-btn=not-configured deep=blocked");
+  Serial.printf("Wake sources: timer=supported uart=supported(auto) touch=%s deep=blocked\n",
+                gTouchManager.wakeCaveat());
   Serial.printf("M5 board id: %d\n", static_cast<int>(M5.getBoard()));
   Serial.printf("Display at boot: %dx%d rotation=%u normalPortrait=%u\n", M5.Display.width(), M5.Display.height(),
                 M5.Display.getRotation() & 3, gNormalPortraitRotation);
