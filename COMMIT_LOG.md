@@ -92,3 +92,27 @@ Each commit was followed by `pio run`; all builds passed before moving on.
 - Check Japanese week/day headings, feedback header/body/grammar tag, Reference rows, and Results for layout regressions.
 - Open Japanese -> Font Lab (JP), confirm it reaches page 1, and cycle all pages.
 - Smoke-test Interview Practice, Drills, and Exam rendering and touch behavior.
+
+## 2026-06-23 hardware layer and Reader refactor
+
+### Commits
+
+- `953cf0a` - reference-notes.
+- `b2965ae` - hardware-layer.
+- `f3d37cc` - power-diagnostics.
+- `96eb04e` - reader-app.
+- `docs` - documents this pass, test plan, and shipping notes.
+
+### Verification so far
+
+- `pio run` passed after `hardware-layer`: RAM `70.5%`, flash `57.5%`.
+- `pio run` passed after `power-diagnostics`: RAM `70.5%`, flash `57.6%`.
+- `pio run` passed after `reader-app`: RAM `70.6%`, flash `58.0%`.
+- Latest `firmware.bin` before docs: `3802016` bytes, below the 12 MB guardrail.
+
+### Hardware QA
+
+- Verify Reader list/open/page-turn/font/home with TXT/MD files in `/paperBadge/books`.
+- Verify Power Lab wake/reset/RTC/display/SD/heap rows on USB and battery.
+- Verify GT911 light-sleep GPIO wake does not wake-loop on the physical PaperS3.
+- Smoke-test Badge, Interview, Japanese, and Settings after flashing.

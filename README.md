@@ -10,9 +10,9 @@ PaperBadge is the hardware shell for the M5PaperS3 e-ink device. PaperCoach is t
 
 The current embedded PaperCoach content pack is senior AI/Product Manager interview practice. Future content packs should be able to support offline Japanese N3-style grammar, vocabulary, and kanji drills, including weak-area tracking and SRS-like review, without requiring Wi-Fi, cloud calls, or live AI services.
 
-It boots into a static conference badge and exposes a normal-orientation Home menu with Badge, Practice, Drills, Exam, Glossary, Results, Settings, and Japanese. Diagnostic tools are under Settings → Advanced.
+It boots into a static conference badge and exposes a normal-orientation Home menu with Badge, Interview, Japanese, Reader, and Settings. Diagnostic tools are under Settings -> Advanced.
 
-Current firmware version in source: `v5.9-dev2`.
+Current firmware version in source: `v5.9-dev3`.
 
 ## Quick Commands
 
@@ -35,6 +35,9 @@ Default upload and monitor port: `/dev/cu.usbmodem1101` (macOS — use `cu.` pre
 - `/papercoach/debug/render_trace.txt`: render trace output.
 - `/papercoach/debug/embedded_deck_dump.md`: on-device deck text export.
 - `/papercoach/progress/session_results.json`: SD-backed drill/exam session results.
+- `/paperBadge/books/*.txt`, `/paperBadge/books/*.md`: Reader MVP books.
+- `/paperBadge/library_index.json`: Reader SD index cache.
+- `/paperBadge/reader_state.json`: last Reader file/page/offset.
 
 ## PaperCoach Modes
 
@@ -43,6 +46,7 @@ Default upload and monitor port: `/dev/cu.usbmodem1101` (macOS — use `cu.` pre
 - Exam: run a 5- or 10-question mixed exam with no immediate feedback; summary appears at the end.
 - Glossary: category grid for AI/RAG, Evals, Metrics, Product, and Interview terms.
 - Results: paginated e-ink summary, category bars, weakest areas, recent misses, and recommended next practice.
+- Reader: SD-backed TXT/Markdown reader with simple pagination, page-turn tap zones, font-size cycle, and saved progress. EPUB is indexed as a future format stub.
 - Settings: reader size, refresh mode, power profile, orientation. Advanced (under Settings) contains typography lab, render trace export, deck export, visual QA, font lab, and power diagnostics.
 
 ## Current UX Decisions
@@ -52,16 +56,19 @@ Default upload and monitor port: `/dev/cu.usbmodem1101` (macOS — use `cu.` pre
 - Sans Bold-like is the recommended English default text style. High Contrast remains useful when maximum density/contrast is needed.
 - Balanced refresh is the recommended default: clean refresh for major transitions/feedback/badge, faster refresh for ordinary page turns.
 - Badge language should use Manual toggle during QA; Auto interval should stay Off unless explicitly testing auto-rotate.
-- Deep sleep is not enabled by default because PaperS3 touch wake is not physically verified.
+- Deep sleep touch wake is blocked because PaperS3 GT911 INT is GPIO48, which is not RTC-wake capable on ESP32-S3.
+- Light sleep can use timer wake plus GT911 GPIO wake; verify behavior on hardware before relying on it for long unattended sessions.
 - Static non-Badge reading and diagnostic screens can enter a logged light idle state after inactivity; touch remains active.
 
 ## Badge And Power Behavior
 
-Badge mode is static by default and uses e-ink as intended: render once, hold the image, and avoid redraws unless the user acts. Wi-Fi and Bluetooth are shut off at boot and during power policy refreshes; speaker output is stopped; IMU polling is disabled in `M5.config()`. Sleep controls are under Settings → Advanced → Power Lab; Light uses short timer-based light sleep after static Badge idle, and Deep experiment is blocked until PaperS3 touch wake is physically verified.
+Badge mode is static by default and uses e-ink as intended: render once, hold the image, and avoid redraws unless the user acts. Wi-Fi and Bluetooth are shut off at boot and during power policy refreshes; speaker output is stopped; IMU polling is disabled in `M5.config()`. Sleep controls are under Settings -> Advanced -> Power Lab; Light uses short light-sleep cycles with timer wake and best-effort GT911 GPIO wake, and Deep experiment is blocked until a verified RTC wake source exists.
 
 ## Known Limitations
 
 - Deep sleep touch wake is not enabled automatically.
+- Reader TXT pagination is intentionally simple in this MVP and caps loaded text at 220 KB.
+- EPUB, CBZ/manga, and PDF rendering are not implemented.
 - Results are session-oriented; SD persistence writes the current session only.
 - Glossary search and SRS are not implemented yet.
 - Per-option drill explanations are not embedded yet, so feedback omits the weaker-options block and logs the missing detail.
@@ -82,6 +89,7 @@ Badge mode is static by default and uses e-ink as intended: render once, hold th
 - [QA Guide](docs/QA_GUIDE.md)
 - [Content Schema](docs/CONTENT_SCHEMA.md)
 - [Power Notes](docs/POWER_NOTES.md)
+- [Reader and Power Test Plan](docs/READER_AND_POWER_TEST_PLAN.md)
 - [Asset Notes](docs/ASSET_NOTES.md)
 
 ## Version Status
