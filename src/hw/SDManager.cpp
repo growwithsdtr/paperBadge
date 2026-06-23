@@ -139,6 +139,9 @@ bool SDManager::loadIndexCache() {
 bool SDManager::saveIndexCache() const {
   if (!mounted_) return false;
   ensureAppDir();
+  if (SD.exists(kIndexPath)) {
+    SD.remove(kIndexPath);
+  }
 
   File file = SD.open(kIndexPath, FILE_WRITE);
   if (!file) return false;

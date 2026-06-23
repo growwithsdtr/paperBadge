@@ -13,6 +13,7 @@
 
 #include "embedded_assets.h"
 #include "embedded_papercoach_deck.h"
+#include "apps/ReaderApp.h"
 #include "hw/BatteryManager.h"
 #include "hw/Diagnostics.h"
 #include "hw/DisplayManager.h"
@@ -26,6 +27,7 @@
 
 namespace {
 namespace hw = paperbadge::hw;
+namespace apps = paperbadge::apps;
 
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSdSpiHz = 25000000;
@@ -171,6 +173,7 @@ enum class Screen {
   JapaneseReference,
   JapaneseResults,
   JapaneseMockTest,
+  Reader,
 };
 
 enum class BadgeLanguage {
@@ -679,6 +682,7 @@ uint32_t profileListenWindowMs();
 uint32_t profileBatteryPollMs();
 void enterPowerStage(PowerStage newStage);
 void renderAdvanced(const char* refreshReason);
+void renderReader(const char* refreshReason = "reader");
 CoachItemView coachItemAt(size_t index);
 bool isOptionDrillScreen(Screen screen, const CoachItemView& item);
 
@@ -694,6 +698,7 @@ hw::SleepManager gSleepManager;
 hw::TouchManager gTouchManager;
 hw::WakeManager gWakeManager;
 hw::WifiManager gWifiManager;
+apps::ReaderApp gReaderApp;
 ImageAsset gBadgeEnSd;
 ImageAsset gBadgeJaSd;
 ImageAsset gProfileSd;
@@ -733,6 +738,7 @@ Rect gHostileFollowupButton;
 Rect gGlossaryButton;
 Rect gMockInterviewButton;
 Rect gJapaneseButton;
+Rect gReaderButton;
 Rect gJapaneseDailyButton;
 Rect gJapaneseMockTestButton;
 Rect gJapaneseReferenceButton;
@@ -1525,6 +1531,7 @@ bool isStaticIdleScreen(Screen screen) {
     case Screen::JapaneseReference:
     case Screen::JapaneseResults:
     case Screen::JapaneseMockTest:
+    case Screen::Reader:
       return true;
     default:
       return false;
@@ -1554,6 +1561,7 @@ bool isLightNapEligibleScreen(Screen screen) {
     case Screen::JapaneseDaily:
     case Screen::JapaneseReference:
     case Screen::JapaneseResults:
+    case Screen::Reader:
       return true;
     default:
       return false;
@@ -2073,12 +2081,18 @@ void maybeEnterBadgeSleep() {
                 static_cast<unsigned>(napDurationS));
   enterPowerStage(PowerStage::LightNap);
   ++gLightSleepEnteredCount;
+  if (gScreen == Screen::Reader) {
+    gReaderApp.onBeforeSleep();
+  }
   gDisplayManager.prepareForSleep();
   gRtcManager.markSleep(static_cast<uint8_t>(hw::SleepMode::Light), napDurationUs / 1000);
   const hw::SleepResult sleepResult = gSleepManager.enterLightSleep(napDurationUs, true, "badge light nap");
   gRtcManager.markWake(sleepResult.wakeCause);
   gWakeManager.capture();
   gDisplayManager.recoverAfterWake();
+  if (gScreen == Screen::Reader) {
+    gReaderApp.onAfterWake();
+  }
   if (!sleepResult.entered) {
     ++gLightSleepFailedCount;
     gLastSleepAttempt = String("light nap failed err=") + static_cast<int>(sleepResult.error);
@@ -3789,6 +3803,8 @@ const char* screenName(Screen screen) {
       return "Japanese Results";
     case Screen::JapaneseMockTest:
       return "Japanese Mock Test";
+    case Screen::Reader:
+      return "Reader";
     case Screen::InterviewPractice:
     case Screen::Drills:
     case Screen::BlitzQuiz:
@@ -7087,6 +7103,7 @@ void renderCoachScreen() {
 
 void renderHome(const char* refreshReason = "mode switch") {
   gScreen = Screen::Home;
+  gRtcManager.setLastSelectedApp(hw::PersistedApp::Home);
   applyAppRotation();
   prepareFullRefresh(refreshReason, true);
 
@@ -7099,14 +7116,16 @@ void renderHome(const char* refreshReason = "mode switch") {
   const int32_t width = display.width();
   const int32_t buttonX = 34;
   const int32_t buttonW = width - 68;
-  const int32_t buttonH = 112;
-  const int32_t gap = 20;
+  const int32_t buttonH = 96;
+  const int32_t gap = 16;
   int32_t y = 120;
   gBadgeButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
   gInterviewButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
   gJapaneseButton = {buttonX, y, buttonW, buttonH};
+  y += buttonH + gap;
+  gReaderButton = {buttonX, y, buttonW, buttonH};
   y += buttonH + gap;
   gSettingsButton = {buttonX, y, buttonW, buttonH};
   // Clear rects that are no longer on Home (now in InterviewMenu)
@@ -7120,10 +7139,22 @@ void renderHome(const char* refreshReason = "mode switch") {
   drawButton(gBadgeButton, "Badge", IconType::Badge);
   drawButton(gInterviewButton, "Interview", IconType::Practice);
   drawButton(gJapaneseButton, "Japanese");
+  drawButton(gReaderButton, "Reader");
   drawButton(gSettingsButton, "Settings", IconType::Settings);
 
   finishDisplayRefresh();
-  Serial.println("Home: Badge / Interview / Japanese / Settings");
+  Serial.println("Home: Badge / Interview / Japanese / Reader / Settings");
+}
+
+void renderReader(const char* refreshReason) {
+  gScreen = Screen::Reader;
+  gRtcManager.setLastSelectedApp(hw::PersistedApp::Reader);
+  applyAppRotation();
+  prepareFullRefresh(refreshReason, false);
+  gReaderApp.render();
+  finishDisplayRefresh();
+  Serial.printf("Reader shown: view=%s sd=%s books=%u\n", gReaderApp.viewName(), gSdManager.lastStatus(),
+                static_cast<unsigned>(gSdManager.bookCount()));
 }
 
 void renderInterviewMenu(const char* refreshReason = "mode switch") {
@@ -10870,10 +10901,26 @@ void handleTouch() {
       renderInterviewMenu();
     } else if (hitTarget(gJapaneseButton, "japanese", tapX, tapY)) {
       renderJapaneseMenu();
+    } else if (hitTarget(gReaderButton, "reader", tapX, tapY)) {
+      gReaderApp.onEnter();
+      renderReader("reader entry");
     } else if (hitTarget(gSettingsButton, "settings", tapX, tapY)) {
       renderSettings();
     }
     noteIgnoredIfNoHit(tapX, tapY);
+    return;
+  }
+
+  if (gScreen == Screen::Reader) {
+    const apps::ReaderAction action = gReaderApp.handleTap(tapX, tapY);
+    if (action == apps::ReaderAction::ExitRequested) {
+      gReaderApp.onExit();
+      renderHome("reader home");
+    } else if (action == apps::ReaderAction::RenderRequested) {
+      renderReader("reader tap");
+    } else {
+      noteIgnoredIfNoHit(tapX, tapY);
+    }
     return;
   }
 
@@ -10983,6 +11030,7 @@ void setup() {
   Serial.printf("SD mounted %s.\n", gSdMounted ? "yes" : "no");
   Serial.printf("SD index status: %s books=%u\n", gSdManager.lastStatus(),
                 static_cast<unsigned>(gSdManager.bookCount()));
+  gReaderApp.begin(&gSdManager, &gBatteryManager, &gRtcManager, &gDisplayManager);
   initializeJapaneseResultsBackend();
   gBadgeJsonLoaded = loadBadgeJson();
   findSdImage("badge EN", kBadgeEnCandidates, countOf(kBadgeEnCandidates), gBadgeEnSd);
