@@ -1,3 +1,30 @@
+# Hardware & Japanese Final Polish
+
+Branch: `hardware-japanese-final-polish`
+Base: `9d70d95` (`hardware-layer-reader-refactor` tip)
+
+## Commits
+
+- `a39ebea` — review: add final hardware japanese polish plan + all changes
+  - Japanese body/choice/prompt/explanation font sizes bumped to spec targets
+  - `japaneseTagPxForReader()` helper added
+  - Home "Japanese" → "日本語" (Gothic-rendered)
+  - Home Interview icon: Practice → SpeakingHead (microphone primitive)
+  - Japanese menu "Daily Questions" → "Practice"
+  - Japanese menu "Font Lab (JP)" → "Font Lab JP"
+  - Source/Week/Day Select screen titles: "Daily Questions" → "Practice"
+  - Font Lab JP page 1 ladder: removed 20px, start at 24px; footer guard tightened
+  - Font Lab JP page 2 (Mixed): annotation guarded against footer overlap
+  - Font Lab JP page 3: Meta sizes replaced with Explanation stress test
+  - Font Lab JP page 4: New font candidate comparison page
+  - `kFontLabPageCount`: 4 → 5
+  - Grammar tag uses `japaneseTagPxForReader()` instead of hardcoded 24
+  - Docs: HARDWARE_JAPANESE_FINAL_POLISH_PLAN.md
+
+Build: SUCCESS — Flash 58.0% (3.80 MB / 6.55 MB), RAM 70.6%
+
+---
+
 # Overnight implementation log
 
 Base: `f2315aa` (`v5.9-dev3`)
