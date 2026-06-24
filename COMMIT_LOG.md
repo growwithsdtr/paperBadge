@@ -1,3 +1,89 @@
+# Study UI Power Reader Overhaul
+
+Branch: `study-ui-power-reader-overhaul`
+
+## Commits
+
+- `6fc7ef0` — study-ui-power-reader-overhaul: power policy, JP typography, feedback flow, mixed EN/JP, embedded reader samples
+
+### Power policy (responsive-first)
+- Responsive: `WarmIdle@5min` (was 60s), LightSleep disabled
+- Balanced: `WarmIdle@2min` (was 15s), `LightSleep@5min` (was 10min)
+- Max Battery: `WarmIdle@1min` (was 5s), `LightSleep@4min` (was 5min)
+- No deep-sleep; no experimental DFS; CPU restored before touch processing
+
+### Japanese typography unified
+- Reader L (XL): body/prompt/choice/explanation all 40px, English EN explanation 32px
+- Reader M (Large): all 36px, English 28px
+- Reader S (Medium): all 32px, English 24px
+- Added `japaneseStudyBodyPx/ChoicePx/ExplanationPx/MetaPx/EnglishPx/FooterPx` named aliases
+
+### Feedback pagination rebuilt
+- Pre-measures all content blocks before drawing
+- Single-page when all content fits: footer shows Next→next question (no wasted page)
+- Multi-page: page 0 shows result + answer + answer sentence + partial JP explanation; page 1 shows EN + grammar tag
+- No more "Tap More for explanation." waste page
+
+### Mixed EN/JP renderer
+- `splitIntoScriptRuns()` splits UTF-8 text into same-script runs
+- `drawMixedScriptLine()` renders a line with per-run font switching
+- `drawMixedScriptWrappedText()` wraps and renders mixed paragraphs
+- English runs → FreeSansBold; Japanese runs → lgfxJapanGothic
+- No tofu boxes; no Gothic for English prose
+
+### Reader embedded samples
+- `TxtReader::openFromString()` opens content from RAM (no SD required)
+- English sample: Metro Study Tips (~400 words, multiple pages at all sizes)
+- Japanese sample: N3 vocabulary short paragraphs with hiragana/kanji
+- Library screen shows embedded samples with "Embedded sample" label when SD has no books
+- Tap any row to open sample with full Reader pagination and font size support
+
+### Font Lab + tooling
+- Font Lab page 4: actionable status message pointing to `tools/prepare_jp_fonts.sh`
+- `tools/prepare_jp_fonts.sh`: downloads BIZ UDPGothic Bold, calls subset script
+- `tools/subset_jp_font.py`: pyftsubset wrapper for N3 codepoints (OFL 1.1 license)
+
+Build: SUCCESS — Flash 69.5% (4.55 MB / 6.55 MB), RAM 71.1%
+Flash: SUCCESS — 4555088 bytes written, verified
+
+## Physical QA checklist
+
+### Power policy
+- [ ] Responsive mode: use device for 2 minutes — all taps first-try, no CPU downscale
+- [ ] Responsive mode: idle 5 min on Home screen, tap once — wakes and acts immediately (or reliably)
+- [ ] Balanced mode: idle 2 min on Home — serial shows WarmIdle entered after ~2min
+- [ ] Max Battery mode: idle 1 min on Badge — serial shows WarmIdle after ~1min
+
+### Japanese typography
+- [ ] Reader L: question prompt and 4 answer choices all at 40px consistent size
+- [ ] Reader M: question prompt and choices all at 36px
+- [ ] Feedback (Reader L): first feedback screen shows result + answer + answer sentence + JP explanation
+- [ ] Feedback (Reader L): no screen whose only content is "Tap More"
+- [ ] Q003 EN explanation: no square boxes for 違っていました
+- [ ] Q004 EN explanation: no square boxes for 引っ越した
+- [ ] English words in EN explanation use FreeSansBold; Japanese examples use Gothic font
+
+### Reader embedded samples
+- [ ] Reader without SD: Library shows "Embedded sample documents" header
+- [ ] Two rows visible: "Sample EN — Metro Study" and "Sample JP — N3 Vocab"
+- [ ] Open English sample: text in FreeSansBold, multiple pages at Reader L
+- [ ] Open Japanese sample: kana/kanji readable, wrapping correct, no missing glyphs
+- [ ] Page turns work (tap left/right thirds and footer buttons)
+- [ ] "Library" and "Home" footer buttons work from embedded sample
+- [ ] Font size button cycles S/M/L correctly on embedded sample
+
+### Font Lab
+- [ ] Font Lab page 4 shows: "External JP font: not embedded" + "Run: tools/prepare_jp_fonts.sh"
+- [ ] lgfxJapanGothic samples at 28/36/40px visible with 郵便局 sample
+- [ ] efontJA_24_b sample visible
+
+### Interview regression check
+- [ ] Interview Practice: question renders, options selectable
+- [ ] Drills: renders and taps work
+- [ ] Exam: renders, question answer selectable
+
+---
+
 # Touch / Reader / Feedback Bugfix Pass
 
 Branch: `touch-reader-feedback-bugfix-pass`
