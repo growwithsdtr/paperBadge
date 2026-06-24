@@ -260,8 +260,7 @@ void ReaderApp::renderReading() {
   display.drawString(status, 26, 48);
   display.drawLine(24, 76, width - 24, 76, muted);
 
-  display.setTextFont(2);
-  display.setTextSize(textScale());
+  applyBodyFont();
   display.setTextColor(textColor, TFT_WHITE);
   int32_t y = 94;
   const int32_t lineH = lineHeight();
@@ -395,10 +394,10 @@ void ReaderApp::saveProgress() {
 uint16_t ReaderApp::charsPerLine() const {
   int32_t usableWidth = M5.Display.width() - 56;
   if (usableWidth < 120) usableWidth = 120;
-  const uint8_t scale = textScale();
-  const uint8_t approxCharWidth = scale == 1 ? 6 : (scale == 2 ? 12 : 18);
+  // Average character width estimates for FreeSansBold proportional fonts
+  const uint8_t approxCharWidth = textScale() == 1 ? 11 : (textScale() == 2 ? 16 : 22);
   int32_t chars = usableWidth / approxCharWidth;
-  if (chars < 18) chars = 18;
+  if (chars < 10) chars = 10;
   return static_cast<uint16_t>(chars);
 }
 
@@ -414,8 +413,22 @@ uint8_t ReaderApp::textScale() const {
   return static_cast<uint8_t>(constrain(fontSize_, 1, 3));
 }
 
+void ReaderApp::applyBodyFont() const {
+  auto& display = M5.Display;
+  switch (textScale()) {
+    case 3:  display.setFont(&fonts::FreeSansBold24pt7b); break;  // Reader L: ~44px
+    case 2:  display.setFont(&fonts::FreeSansBold18pt7b); break;  // Reader M: ~34px
+    default: display.setFont(&fonts::FreeSansBold12pt7b); break;  // Reader S: ~24px
+  }
+  display.setTextSize(1);
+}
+
 int32_t ReaderApp::lineHeight() const {
-  return 18 * textScale() + 8;
+  switch (textScale()) {
+    case 3:  return 54;  // FreeSansBold24pt7b ~44px + leading
+    case 2:  return 44;  // FreeSansBold18pt7b ~34px + leading
+    default: return 34;  // FreeSansBold12pt7b ~24px + leading
+  }
 }
 
 bool ReaderApp::isTxtLike(const hw::BookEntry& book) {

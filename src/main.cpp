@@ -2149,7 +2149,7 @@ uint32_t loopDelayMs() {
   if (gIdleModeActive && isStaticIdleScreen(gScreen)) {
     if (gPowerProfile == PowerProfile::BadgeMax) return 800;   // Max Battery
     if (gPowerProfile == PowerProfile::Aggressive) return 500; // Balanced
-    return 300;                                                 // Responsive
+    return 50;                                                  // Responsive: keep full poll rate so taps aren't missed
   }
   if (gSettings.powerMode == PowerMode::BatterySaver || gSettings.powerMode == PowerMode::ConferenceBadge) {
     return 120;
@@ -2256,7 +2256,7 @@ uint32_t profileIdleScaleThresholdMs() {
     case PowerProfile::Aggressive: return 15000;  // Balanced: WarmIdle@15s
     case PowerProfile::BadgeMax:   return 5000;   // Max Battery: WarmIdle@5s
     case PowerProfile::Balanced:
-    default:                        return 30000;  // Responsive: WarmIdle@30s
+    default:                        return 60000;  // Responsive: WarmIdle@60s
   }
 }
 
@@ -4590,6 +4590,27 @@ String sanitizeJapaneseText(const String& text) {
 // Wraps by UTF-8 code point / measured display width instead of English space-splitting, so
 // Japanese text (no spaces between words) wraps correctly. Respects explicit '\n' and never
 // splits a multi-byte UTF-8 sequence mid-character.
+// Kinsoku (禁則処理): characters that must not appear at the start of a wrapped line.
+static bool isKinsokuForbiddenStart(const String& ch) {
+  static const char* kForbidden[] = {
+    "\xe3\x80\x81", // 、
+    "\xe3\x80\x82", // 。
+    "\xe3\x80\x8d", // 」
+    "\xe3\x80\x8f", // 』
+    "\xef\xbc\x89", // ）
+    "\xe3\x80\x91", // 】
+    "\xef\xbc\x81", // ！
+    "\xef\xbc\x9f", // ？
+    "\xe3\x83\xbc", // ー
+    "\xe3\x81\xa3", // っ
+    "\xe3\x83\x83", // ッ
+  };
+  for (const char* f : kForbidden) {
+    if (ch == f) return true;
+  }
+  return false;
+}
+
 TextLayoutResult wrapJapaneseTextToLines(const String& text, int32_t width, int32_t lineHeight, uint8_t maxLines,
                                          String* lines) {
   auto& display = M5.Display;
@@ -4614,8 +4635,14 @@ TextLayoutResult wrapJapaneseTextToLines(const String& text, int32_t width, int3
 
     const String candidate = line + character;
     if (line.length() > 0 && display.textWidth(candidate) > width) {
-      result.overflow = appendWrappedLine(lines, result.lineCount, maxLines, line) || result.overflow;
-      line = character;
+      if (isKinsokuForbiddenStart(character)) {
+        // Absorb the forbidden-start char into the current line rather than orphaning it
+        result.overflow = appendWrappedLine(lines, result.lineCount, maxLines, candidate) || result.overflow;
+        line = "";
+      } else {
+        result.overflow = appendWrappedLine(lines, result.lineCount, maxLines, line) || result.overflow;
+        line = character;
+      }
     } else {
       line = candidate;
     }
@@ -4750,6 +4777,17 @@ uint8_t japaneseExplanationPxForReader() {
     default:                   return 32;
   }
 }
+
+// English text appearing inside Japanese feedback — uses FreeSansBold sized to the reader setting.
+uint8_t japaneseModeEnglishPxForReader() {
+  switch (canonicalFontSizeMode(gSettings.fontSizeMode)) {
+    case FontSizeMode::Medium: return 24;  // FreeSansBold12pt7b
+    case FontSizeMode::XL:     return 31;  // FreeSansBold18pt7b
+    case FontSizeMode::Large:
+    default:                   return 31;  // FreeSansBold18pt7b
+  }
+}
+
 void applyJapaneseMetaFont()        { applyGothicFont(japaneseMetaPxForReader()); }
 void applyJapanesePromptFont()      { applyGothicFont(japanesePromptPxForReader()); }
 void applyJapaneseChoiceFont()      { applyGothicFont(japaneseChoicePxForReader()); }
@@ -7940,10 +7978,10 @@ void renderJapaneseDaily(const char* refreshReason = "japanese entry") {
     y += l3.height + 10;
 
     // English meaning can contain Japanese examples; mixed lines use the Japanese-safe path.
-    const uint8_t enPx = 20;
+    const uint8_t enPx = japaneseModeEnglishPxForReader();
     display.setTextColor(TFT_BLACK, TFT_WHITE);
     String englishLine = String("EN: ") + item.explanationEnglish;
-    const uint8_t mixedPx = containsJapaneseCodepoint(englishLine) ? 24 : enPx;
+    const uint8_t mixedPx = containsJapaneseCodepoint(englishLine) ? japaneseExplanationPxForReader() : enPx;
     const int32_t enLineH = static_cast<int32_t>(mixedPx) + 10;
     TextLayoutResult l4 = drawMixedJapaneseLabel(englishLine, contentX, y, contentW, enLineH, 3,
                                                   mixedPx, "japanese-english-explanation");
@@ -9935,19 +9973,23 @@ void renderFontLabJapaneseFontComparison() {
     y += static_cast<int32_t>(showcaseSizes[i]) + 46;
   }
 
-  // efontJA status and external font notes
+  // efontJA_24_b — built-in M5GFX bold efont at 24px; no build flag needed
+  if (y + 32 <= contentBottom) {
+    display.setFont(&fonts::efontJA_24_b);
+    display.setTextSize(1);
+    display.setTextColor(TFT_BLACK, TFT_WHITE);
+    // 郵便局 ゆうびんきょく  efontJA_24_b
+    display.drawString("\xe9\x83\xb5\xe4\xbe\xbf\xe5\xb1\x80\xe3\x80\x80\xe3\x82\x86\xe3\x81\x86\xe3\x81\xb3\xe3\x82\x93\xe3\x81\x8d\xe3\x82\x87\xe3\x81\x8f  efontJA_24_b", contentX, y);
+    y += 36;
+  }
   if (y + 24 <= contentBottom) {
     applyJapaneseEnglishLabelFont(18);
     display.setTextColor(metadataTextColor(), TFT_WHITE);
-    display.drawString("efontJA_24_b: not embedded (M5GFX has it; add to build_flags if needed)", contentX, y);
-    y += 26;
-  }
-  if (y + 24 <= contentBottom) {
     display.drawString("External JP font (BIZ UDPGothic/Noto): not embedded — see NOTES/JP_FONT_ASSET_NOTES.md", contentX, y);
     y += 26;
   }
   if (y + 24 <= contentBottom) {
-    display.drawString("Built-in lgfxJapanGothic is current fallback (20/24/28/32/36/40px available)", contentX, y);
+    display.drawString("Built-in lgfxJapanGothic: 20/24/28/32/36/40px  efontJA: 10/12/14/16/24px bold", contentX, y);
   }
 }
 

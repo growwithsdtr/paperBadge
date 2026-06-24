@@ -65,6 +65,7 @@ class ReaderApp {
   bool openBook(size_t index);
   bool reopenCurrentAtPage(uint32_t page);
   void saveProgress();
+  void applyBodyFont() const;
   uint16_t charsPerLine() const;
   uint8_t linesPerPage() const;
   uint8_t textScale() const;
