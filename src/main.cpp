@@ -46,8 +46,8 @@ constexpr const char* kResultsTempPath = "/papercoach/progress/session_results.t
 constexpr const char* kJapaneseResultsPath = "/papercoach/japanese/progress/results.log";
 constexpr const char* kJapaneseSessionCounterPath = "/papercoach/japanese/progress/session_counter.txt";
 constexpr uint32_t kDefaultLanguageIntervalSeconds = 15;
-constexpr uint32_t kInputDebounceMs = 250;
-constexpr uint32_t kInputCleanRefreshDebounceMs = 600;
+constexpr uint32_t kInputDebounceMs = 50;              // ms to ignore taps after fast refresh
+constexpr uint32_t kInputCleanRefreshDebounceMs = 150; // ms to ignore taps after clean refresh
 constexpr uint32_t kBatterySaverIdleMs = 180000;
 constexpr uint32_t kConferenceBadgeIdleMs = 30000;
 constexpr uint32_t kStaticScreenIdleMs = 90000;
@@ -827,6 +827,7 @@ uint8_t gJapaneseNavWeek = 1;
 uint8_t gJapaneseNavDay = 1;
 int8_t gJapaneseSelectedOption = -1;
 bool gJapaneseShowFeedback = false;
+int8_t gJapaneseFeedbackPage = 0;  // 0 = result+answer, 1 = explanation
 bool gJapaneseMockTestAwaitingAnswer = false;
 uint32_t gJapaneseQuestionShownAtMs = 0;
 uint8_t gMockStep = 0;
@@ -1764,6 +1765,11 @@ void restoreActiveCpu(const char* reason) {
 }
 
 void maybeScaleIdleCpu(const char* reason) {
+  // Responsive profile: never scale CPU — prioritise instant first-tap response.
+  if (gPowerProfile == PowerProfile::Balanced) {
+    Serial.printf("WarmIdle: CPU scale skipped in Responsive profile screen=%s\n", screenName(gScreen));
+    return;
+  }
   if (!kEnableIdleCpuScaling || gIdleCpuScaled || !isStaticIdleScreen(gScreen)) {
     PWR_LOGF("cpu scale skipped enabled=%s already=%s static=%s screen=%s reason=%s\n",
              kEnableIdleCpuScaling ? "yes" : "no", gIdleCpuScaled ? "yes" : "no",
@@ -7210,7 +7216,10 @@ void renderReader(const char* refreshReason) {
   gScreen = Screen::Reader;
   gRtcManager.setLastSelectedApp(hw::PersistedApp::Reader);
   applyAppRotation();
-  prepareFullRefresh(refreshReason, false);
+  // Clean refresh on entry to clear ghosting from previous screen; fast for page turns.
+  const bool cleanEntry = (refreshReason == nullptr ||
+                           strcmp(refreshReason, "reader tap") != 0);
+  prepareFullRefresh(refreshReason, cleanEntry);
   gReaderApp.render();
   finishDisplayRefresh();
   Serial.printf("Reader shown: view=%s sd=%s books=%u\n", gReaderApp.viewName(), gSdManager.lastStatus(),
@@ -7947,72 +7956,102 @@ void renderJapaneseDaily(const char* refreshReason = "japanese entry") {
     // No Next pre-answer — user selects an answer to advance
     gJapaneseNextButton = {};
   } else {
-    // Feedback section
+    // Feedback — split into two pages to avoid overflow at large reader sizes.
+    // Page 0: "Correct"/"Wrong" label + correct answer line.
+    // Page 1: answer sentence + JP explanation + EN explanation + grammar tag.
     const bool correct = gJapaneseSelectedOption == static_cast<int8_t>(item.correctChoice);
     const uint8_t titlePx = (choicePx <= 28) ? 28 : (choicePx <= 32 ? 32 : 36);
-    applyJapaneseEnglishLabelFont(titlePx);
-    display.setTextColor(TFT_BLACK, TFT_WHITE);
-    display.drawString(correct ? "Correct" : "Wrong", contentX, promptY);
-
-    int32_t y = promptY + static_cast<int32_t>(titlePx) + 12;
-
-    // Correct answer line — Japanese Gothic
     const uint8_t explPx = japaneseExplanationPxForReader();
     const int32_t explLineH = japaneseLineHeight(explPx);
-    applyJapaneseChoiceFont();
-    String correctLine = String(static_cast<char>('A' + item.correctChoice)) + ". " +
-                         item.choiceJapanese[item.correctChoice];
-    TextLayoutResult l1 =
-        drawJapaneseWrappedText(correctLine, contentX, y, contentW, japaneseLineHeight(choicePx), 2, "japanese-correct");
-    y += l1.height + 12;
+    const int32_t contentBottom = footerY - 10;
 
-    // Answer sentence — Japanese Gothic at explanation size
-    applyJapaneseExplanationFont();
-    TextLayoutResult l2 = drawJapaneseWrappedText(item.answerSentenceJapanese, contentX, y, contentW,
-                                                   explLineH, 3, "japanese-answer-sentence");
-    y += l2.height + 10;
-
-    // Japanese explanation — Gothic at explanation size
-    TextLayoutResult l3 = drawJapaneseWrappedText(item.explanationJapanese, contentX, y, contentW,
-                                                   explLineH, 3, "japanese-explanation");
-    y += l3.height + 10;
-
-    // English meaning can contain Japanese examples; mixed lines use the Japanese-safe path.
-    const uint8_t enPx = japaneseModeEnglishPxForReader();
-    display.setTextColor(TFT_BLACK, TFT_WHITE);
-    String englishLine = String("EN: ") + item.explanationEnglish;
-    const uint8_t mixedPx = containsJapaneseCodepoint(englishLine) ? japaneseExplanationPxForReader() : enPx;
-    const int32_t enLineH = static_cast<int32_t>(mixedPx) + 10;
-    TextLayoutResult l4 = drawMixedJapaneseLabel(englishLine, contentX, y, contentW, enLineH, 3,
-                                                  mixedPx, "japanese-english-explanation");
-    y += l4.height + 8;
-
-    // Grammar tag — grammarPattern can contain Japanese (e.g. "～ものだ"), use Gothic path
-    if (item.grammarPattern[0] != '\0') {
-      const uint8_t tagPx = japaneseTagPxForReader();
-      applyGothicFont(tagPx);
-      display.setTextColor(metadataTextColor(), TFT_WHITE);
-      String tagLine = String("Grammar: ") + item.grammarPattern;
-      const int32_t tagLineH = japaneseLineHeight(tagPx);
-      drawMixedJapaneseLabel(tagLine, contentX, y, contentW, tagLineH, 2, tagPx, "japanese-grammar-tag");
+    if (gJapaneseFeedbackPage == 0) {
+      // Page 0: result + correct answer
+      applyJapaneseEnglishLabelFont(titlePx);
       display.setTextColor(TFT_BLACK, TFT_WHITE);
-    }
+      display.drawString(correct ? "Correct" : "Wrong", contentX, promptY);
 
-    // Post-feedback 3-part footer: [Prev] [Home] [Next]
-    gJapanesePrevButton = {contentX, footerY, navW, footerH};
-    gHomeButton         = {contentX + navW + 14, footerY, navW, footerH};
-    gJapaneseNextButton = {contentX + (navW + 14) * 2, footerY, navW, footerH};
+      int32_t y = promptY + static_cast<int32_t>(titlePx) + 12;
 
-    if (hasPrev) {
-      drawButton(gJapanesePrevButton, "Prev");
+      applyJapaneseChoiceFont();
+      String correctLine = String(static_cast<char>('A' + item.correctChoice)) + ". " +
+                           item.choiceJapanese[item.correctChoice];
+      if (y + japaneseLineHeight(choicePx) <= contentBottom) {
+        TextLayoutResult l1 = drawJapaneseWrappedText(correctLine, contentX, y, contentW,
+                                                       japaneseLineHeight(choicePx), 3, "japanese-correct");
+        y += l1.height + 16;
+      }
+
+      // Hint line pointing to page 2
+      if (y + 30 <= contentBottom) {
+        applyJapaneseEnglishLabelFont(20);
+        display.setTextColor(metadataTextColor(), TFT_WHITE);
+        display.drawString("Tap More for explanation.", contentX, y);
+      }
+
+      // Footer: [Prev] [Home] [More→]
+      gJapanesePrevButton = {contentX, footerY, navW, footerH};
+      gHomeButton         = {contentX + navW + 14, footerY, navW, footerH};
+      gJapaneseNextButton = {contentX + (navW + 14) * 2, footerY, navW, footerH};
+      if (hasPrev) { drawButton(gJapanesePrevButton, "Prev"); } else { gJapanesePrevButton = {}; }
+      drawButton(gHomeButton, "", IconType::Home);
+      drawButton(gJapaneseNextButton, "More");
+
     } else {
-      gJapanesePrevButton = {};
-    }
-    drawButton(gHomeButton, "", IconType::Home);
-    if (hasNext) {
-      drawButton(gJapaneseNextButton, "Next", IconType::Next);
-    } else {
-      gJapaneseNextButton = {};
+      // Page 1: answer sentence + JP explanation + EN explanation + grammar tag
+      int32_t y = promptY;
+
+      applyJapaneseExplanationFont();
+      if (y + explLineH <= contentBottom) {
+        TextLayoutResult l2 = drawJapaneseWrappedText(item.answerSentenceJapanese, contentX, y, contentW,
+                                                       explLineH, 3, "japanese-answer-sentence");
+        y += l2.height + 10;
+      }
+
+      if (y + explLineH <= contentBottom) {
+        TextLayoutResult l3 = drawJapaneseWrappedText(item.explanationJapanese, contentX, y, contentW,
+                                                       explLineH, 3, "japanese-explanation");
+        y += l3.height + 10;
+      }
+
+      // English explanation — always render with FreeSansBold regardless of embedded Japanese.
+      // Japanese examples inside the English field render as fallback glyphs; English is readable.
+      const uint8_t enPx = japaneseModeEnglishPxForReader();
+      const int32_t enLineH = static_cast<int32_t>(enPx) + 10;
+      if (y + enLineH <= contentBottom) {
+        applyJapaneseEnglishLabelFont(enPx);
+        display.setTextColor(TFT_BLACK, TFT_WHITE);
+        String englishLine = String("EN: ") + item.explanationEnglish;
+        String enLines[kMaxWrappedLines];
+        const uint8_t enMaxLines = static_cast<uint8_t>((contentBottom - y) / enLineH);
+        const uint8_t enLineLimit = (enMaxLines > kMaxWrappedLines ? kMaxWrappedLines : enMaxLines);
+        TextLayoutResult l4 = wrapMixedJapaneseText(englishLine, contentW, enLineH, enLineLimit, enLines);
+        for (uint8_t li = 0; li < l4.lineCount; ++li) {
+          display.drawString(enLines[li], contentX, y + li * enLineH);
+        }
+        y += static_cast<int32_t>(l4.lineCount) * enLineH + 8;
+        Serial.printf("EN explanation: field=japanese-english-explanation lines=%u overflow=%s\n",
+                      static_cast<unsigned>(l4.lineCount), l4.overflow ? "yes" : "no");
+      }
+
+      // Grammar tag
+      if (item.grammarPattern[0] != '\0' && y + 40 <= contentBottom) {
+        const uint8_t tagPx = japaneseTagPxForReader();
+        applyGothicFont(tagPx);
+        display.setTextColor(metadataTextColor(), TFT_WHITE);
+        String tagLine = String("Grammar: ") + item.grammarPattern;
+        const int32_t tagLineH = japaneseLineHeight(tagPx);
+        drawMixedJapaneseLabel(tagLine, contentX, y, contentW, tagLineH, 2, tagPx, "japanese-grammar-tag");
+        display.setTextColor(TFT_BLACK, TFT_WHITE);
+      }
+
+      // Footer: [Prev] [Home] [Next→] (Next = next question from explanation page)
+      gJapanesePrevButton = {contentX, footerY, navW, footerH};
+      gHomeButton         = {contentX + navW + 14, footerY, navW, footerH};
+      gJapaneseNextButton = {contentX + (navW + 14) * 2, footerY, navW, footerH};
+      if (hasPrev) { drawButton(gJapanesePrevButton, "Prev"); } else { gJapanesePrevButton = {}; }
+      drawButton(gHomeButton, "", IconType::Home);
+      if (hasNext) { drawButton(gJapaneseNextButton, "Next", IconType::Next); } else { gJapaneseNextButton = {}; }
     }
   }
 
@@ -10619,6 +10658,7 @@ void handleTouch() {
       gJapaneseQuestionIndex = 0;
       gJapaneseSelectedOption = -1;
       gJapaneseShowFeedback = false;
+      gJapaneseFeedbackPage = 0;
       gCoachNeedsCleanEntryRefresh = true;
       renderJapaneseDaily("japanese daily entry");
     }
@@ -10652,6 +10692,7 @@ void handleTouch() {
         if (hitTarget(gJapaneseOptionButtons[i], target, tapX, tapY)) {
           gJapaneseSelectedOption = static_cast<int8_t>(i);
           gJapaneseShowFeedback = true;
+          gJapaneseFeedbackPage = 0;
           recordJapaneseAnswer(item, i);
           renderJapaneseDaily("japanese feedback");
           return;
@@ -10663,13 +10704,19 @@ void handleTouch() {
           --gJapaneseQuestionIndex;
           gJapaneseSelectedOption = -1;
           gJapaneseShowFeedback = false;
+          gJapaneseFeedbackPage = 0;
           renderJapaneseDaily("prev question");
         }
-      } else if (hitTarget(gJapaneseNextButton, "japanese next question", tapX, tapY)) {
-        if (gJapaneseQuestionIndex + 1 < kJapaneseDayItemCount) {
+      } else if (hitTarget(gJapaneseNextButton, "japanese next/more", tapX, tapY)) {
+        if (gJapaneseFeedbackPage == 0) {
+          // "More" — advance to explanation page
+          gJapaneseFeedbackPage = 1;
+          renderJapaneseDaily("feedback explanation page");
+        } else if (gJapaneseQuestionIndex + 1 < kJapaneseDayItemCount) {
           ++gJapaneseQuestionIndex;
           gJapaneseSelectedOption = -1;
           gJapaneseShowFeedback = false;
+          gJapaneseFeedbackPage = 0;
           renderJapaneseDaily("next question");
         }
       } else if (hitTarget(gHomeButton, "home", tapX, tapY)) {

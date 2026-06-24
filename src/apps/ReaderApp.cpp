@@ -64,9 +64,8 @@ void ReaderApp::onLowBattery() {
 void ReaderApp::render() {
   auto& display = M5.Display;
   display.setTextDatum(textdatum_t::top_left);
-  display.setTextFont(2);
-  display.setTextSize(1);
-  display.setTextColor(displayManager_ ? displayManager_->color(hw::PaletteColor::Text) : TFT_BLACK, TFT_WHITE);
+  display.setTextWrap(false, false);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
 
   switch (view_) {
     case View::Reading:
@@ -168,15 +167,17 @@ void ReaderApp::renderLibrary() {
   auto& display = M5.Display;
   const int32_t width = display.width();
   const int32_t height = display.height();
-  const uint32_t textColor = displayManager_ ? displayManager_->color(hw::PaletteColor::Text) : TFT_BLACK;
-  const uint32_t muted = displayManager_ ? displayManager_->color(hw::PaletteColor::MutedText) : TFT_DARKGREY;
+  const uint32_t textColor = TFT_BLACK;
+  const uint32_t muted = TFT_DARKGREY;
 
-  display.setTextFont(4);
+  // Title
+  display.setFont(&fonts::FreeSansBold24pt7b);
   display.setTextSize(1);
   display.setTextColor(textColor, TFT_WHITE);
-  display.drawString("Reader", 28, 24);
+  display.drawString("Reader", 28, 16);
 
-  display.setTextFont(2);
+  // Status line (SD + battery)
+  display.setFont(&fonts::FreeSansBold9pt7b);
   display.setTextColor(muted, TFT_WHITE);
   String status = String(library_.count()) + " books";
   if (sd_) {
@@ -187,13 +188,13 @@ void ReaderApp::renderLibrary() {
     status += "  ";
     status += battery_->summaryLine();
   }
-  renderStatusLine(status);
+  display.drawString(status, 28, 64);
 
   const int32_t rowX = 26;
   const int32_t rowW = width - 52;
-  const int32_t rowH = 70;
-  const int32_t gap = 10;
-  int32_t y = 114;
+  const int32_t rowH = 80;
+  const int32_t gap = 8;
+  int32_t y = 96;
   visibleRows_ = 0;
   for (uint8_t i = 0; i < 6; ++i) {
     bookRows_[i] = {};
@@ -205,21 +206,27 @@ void ReaderApp::renderLibrary() {
     if (!book) continue;
     bookRows_[i] = {rowX, y, rowW, rowH};
     display.drawRect(rowX, y, rowW, rowH, textColor);
+    // Book title in readable body font
+    display.setFont(&fonts::FreeSansBold12pt7b);
     display.setTextColor(textColor, TFT_WHITE);
     display.drawString(book->title, rowX + 14, y + 10);
+    // Metadata in small muted font
+    display.setFont(&fonts::FreeSansBold9pt7b);
     display.setTextColor(muted, TFT_WHITE);
     display.drawString(book->extension + "  " + String(book->size / 1024) + " KB  " + shortPath(book->path, 36),
-                       rowX + 14, y + 40);
+                       rowX + 14, y + 50);
     y += rowH + gap;
     ++visibleRows_;
   }
 
   if (library_.count() == 0) {
+    display.setFont(&fonts::FreeSansBold12pt7b);
     display.setTextColor(textColor, TFT_WHITE);
     display.drawString("No TXT or MD books found.", 34, 180);
+    display.setFont(&fonts::FreeSansBold9pt7b);
     display.setTextColor(muted, TFT_WHITE);
-    display.drawString("Place files in /paperBadge/books or /books on the SD card.", 34, 218);
-    display.drawString("EPUB entries are listed as placeholders for a later parser.", 34, 248);
+    display.drawString("Place .txt or .md files in /paperBadge/books or /books on SD.", 34, 218);
+    display.drawString("EPUB listed as placeholder only.", 34, 244);
   }
 
   const int32_t footerY = height - 76;
@@ -240,40 +247,42 @@ void ReaderApp::renderReading() {
   auto& display = M5.Display;
   const int32_t width = display.width();
   const int32_t height = display.height();
-  const uint32_t textColor = displayManager_ ? displayManager_->color(hw::PaletteColor::Text) : TFT_BLACK;
-  const uint32_t muted = displayManager_ ? displayManager_->color(hw::PaletteColor::MutedText) : TFT_DARKGREY;
+  const uint32_t textColor = TFT_BLACK;
+  const uint32_t muted = TFT_DARKGREY;
 
   const reader::TxtPageView page = txt_.pageView();
-  display.setTextFont(2);
+
+  // Header: book title + page info in small readable font
+  display.setFont(&fonts::FreeSansBold12pt7b);
   display.setTextSize(1);
   display.setTextColor(textColor, TFT_WHITE);
-  display.drawString(txt_.title(), 26, 18);
+  display.drawString(txt_.title(), 26, 14);
   display.setTextColor(muted, TFT_WHITE);
   const uint32_t safePageCount = page.pageCount > 0 ? page.pageCount : 1;
-  String status = String("Page ") + (page.page + 1) + "/" + safePageCount +
-                  "  offset " + page.byteOffset;
+  String status = String("Page ") + (page.page + 1) + "/" + safePageCount;
   if (txt_.truncated()) status += "  truncated";
   if (battery_) {
     status += "  ";
     status += battery_->summaryLine();
   }
-  display.drawString(status, 26, 48);
-  display.drawLine(24, 76, width - 24, 76, muted);
+  display.drawString(status, 26, 42);
+  display.drawLine(24, 70, width - 24, 70, muted);
 
+  // Body text — proportional FreeSansBold font
   applyBodyFont();
   display.setTextColor(textColor, TFT_WHITE);
-  int32_t y = 94;
+  int32_t y = 86;
   const int32_t lineH = lineHeight();
   for (uint16_t i = 0; i < page.lineCount; ++i) {
-    if (y > height - 108) break;
+    if (y + lineH > height - 100) break;
     display.drawString(txt_.lineAt(page.firstLine + i), 28, y);
     y += lineH;
   }
 
-  display.setTextFont(2);
-  display.setTextSize(1);
+  // Hint line in small muted font
+  display.setFont(&fonts::FreeSansBold9pt7b);
   display.setTextColor(muted, TFT_WHITE);
-  display.drawString("Tap left/right page zones", 28, height - 100);
+  display.drawString("Tap left / right thirds to turn pages", 28, height - 98);
 
   const int32_t footerY = height - 76;
   const int32_t buttonW = (width - 52 - 20) / 3;
@@ -283,8 +292,9 @@ void ReaderApp::renderReading() {
   rescanRect_ = {};
   prevListRect_ = {};
   nextListRect_ = {};
+  const char* sizeLabel = (fontSize_ == 1) ? "Font S" : (fontSize_ == 2 ? "Font M" : "Font L");
   renderFooterButton(libraryRect_, "Library");
-  renderFooterButton(fontRect_, String("Font ") + static_cast<unsigned>(fontSize_));
+  renderFooterButton(fontRect_, sizeLabel);
   renderFooterButton(homeRect_, "Home");
 }
 
@@ -292,18 +302,21 @@ void ReaderApp::renderMessage() {
   auto& display = M5.Display;
   const int32_t width = display.width();
   const int32_t height = display.height();
-  const uint32_t textColor = displayManager_ ? displayManager_->color(hw::PaletteColor::Text) : TFT_BLACK;
-  const uint32_t muted = displayManager_ ? displayManager_->color(hw::PaletteColor::MutedText) : TFT_DARKGREY;
+  const uint32_t textColor = TFT_BLACK;
+  const uint32_t muted = TFT_DARKGREY;
 
-  display.setTextFont(4);
+  display.setFont(&fonts::FreeSansBold24pt7b);
   display.setTextSize(1);
   display.setTextColor(textColor, TFT_WHITE);
-  display.drawString("Reader", 28, 24);
-  display.setTextFont(2);
+  display.drawString("Reader", 28, 20);
+
+  display.setFont(&fonts::FreeSansBold12pt7b);
   display.setTextColor(textColor, TFT_WHITE);
-  display.drawString(message_, 34, 150);
+  display.drawString(message_, 34, 130);
+
+  display.setFont(&fonts::FreeSansBold9pt7b);
   display.setTextColor(muted, TFT_WHITE);
-  display.drawString("Tap anywhere to return to the library.", 34, 190);
+  display.drawString("Tap anywhere to return to the library.", 34, 180);
 
   homeRect_ = {26, height - 76, width - 52, 54};
   renderFooterButton(homeRect_, "Home");
@@ -311,20 +324,20 @@ void ReaderApp::renderMessage() {
 
 void ReaderApp::renderFooterButton(const Rect& rect, const String& label) {
   auto& display = M5.Display;
-  const uint32_t textColor = displayManager_ ? displayManager_->color(hw::PaletteColor::Text) : TFT_BLACK;
+  const uint32_t textColor = TFT_BLACK;
   display.drawRect(rect.x, rect.y, rect.w, rect.h, textColor);
-  display.setTextFont(2);
+  display.setFont(&fonts::FreeSansBold12pt7b);
   display.setTextSize(1);
   display.setTextColor(textColor, TFT_WHITE);
   const int32_t textW = display.textWidth(label);
-  display.drawString(label, rect.x + (rect.w - textW) / 2, rect.y + 18);
+  display.drawString(label, rect.x + (rect.w - textW) / 2, rect.y + 14);
 }
 
 void ReaderApp::renderStatusLine(const String& text) {
   auto& display = M5.Display;
-  display.setTextFont(2);
+  display.setFont(&fonts::FreeSansBold9pt7b);
   display.setTextSize(1);
-  display.drawString(text, 30, 70);
+  display.drawString(text, 30, 66);
 }
 
 void ReaderApp::refreshLibrary(bool force) {
@@ -394,7 +407,7 @@ void ReaderApp::saveProgress() {
 uint16_t ReaderApp::charsPerLine() const {
   int32_t usableWidth = M5.Display.width() - 56;
   if (usableWidth < 120) usableWidth = 120;
-  // Average character width estimates for FreeSansBold proportional fonts
+  // Average character width for proportional FreeSansBold fonts
   const uint8_t approxCharWidth = textScale() == 1 ? 11 : (textScale() == 2 ? 16 : 22);
   int32_t chars = usableWidth / approxCharWidth;
   if (chars < 10) chars = 10;
@@ -402,10 +415,11 @@ uint16_t ReaderApp::charsPerLine() const {
 }
 
 uint8_t ReaderApp::linesPerPage() const {
-  int32_t usableHeight = M5.Display.height() - 204;
-  if (usableHeight < 120) usableHeight = 120;
+  // Content area: from y=86 to height-100 (leaves room for footer)
+  int32_t usableHeight = M5.Display.height() - 186;
+  if (usableHeight < 80) usableHeight = 80;
   int32_t lines = usableHeight / lineHeight();
-  if (lines < 3) lines = 3;
+  if (lines < 2) lines = 2;
   return static_cast<uint8_t>(lines);
 }
 
