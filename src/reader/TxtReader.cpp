@@ -34,6 +34,18 @@ bool TxtReader::open(const String& path, uint16_t charsPerLine, uint8_t linesPer
   return !lines_.empty();
 }
 
+bool TxtReader::openFromString(const String& title, const String& content,
+                                uint16_t charsPerLine, uint8_t linesPerPage) {
+  close();
+  path_ = String("@embedded:") + title;
+  title_ = title;
+  text_ = content;
+  truncated_ = false;
+  paginate(charsPerLine, linesPerPage);
+  open_ = true;
+  return !lines_.empty();
+}
+
 void TxtReader::close() {
   open_ = false;
   truncated_ = false;

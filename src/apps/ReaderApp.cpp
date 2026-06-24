@@ -6,6 +6,62 @@
 namespace paperbadge {
 namespace apps {
 
+// ---- Embedded sample documents ----
+// Shown when SD has no books. Original content only.
+
+const char* ReaderApp::kEmbeddedTitles[] = {
+  "Sample EN — Metro Study",
+  "Sample JP — N3 Vocab",
+};
+
+const char* ReaderApp::kEmbeddedContent[] = {
+  // English sample: micro-study on a train
+  "Metro Study Tips\n"
+  "\n"
+  "This is an embedded sample document. It appears when no books are found on the SD card.\n"
+  "\n"
+  "The PaperBadge Reader is designed for micro-study on a commute. The 4.7-inch e-paper screen "
+  "is easy on the eyes even in bright sunlight or a moving train.\n"
+  "\n"
+  "How to use this device well:\n"
+  "\n"
+  "Keep sessions short. Five to ten minutes of focused reading or practice is more effective "
+  "than an hour of passive scrolling. The e-paper display saves battery and reduces glare, "
+  "making it ideal for repeated short sessions.\n"
+  "\n"
+  "Tap the right side of the screen to advance a page. Tap the left side to go back. "
+  "The footer buttons also work for navigation.\n"
+  "\n"
+  "Font size can be changed with the Font button below. Reader S fits more text per page. "
+  "Reader L is easier to read while standing.\n"
+  "\n"
+  "To load your own content, place .txt or .md files in /paperBadge/books or /books on the "
+  "SD card. Files up to 220 KB are supported. Longer files are truncated at the limit.\n"
+  "\n"
+  "This sample document is original test content and is not copyrighted material.\n"
+  "\n"
+  "— End of embedded English sample —\n",
+
+  // Japanese sample: N3 vocabulary
+  "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\xe3\x82\xb5\xe3\x83\xb3\xe3\x83\x97\xe3\x83\xab\n"
+  "\n"
+  "\xe3\x81\x93\xe3\x82\x8c\xe3\x81\xaf\xe5\x86\x85\xe8\x94\xb5\xe3\x82\xb5\xe3\x83\xb3\xe3\x83\x97\xe3\x83\xab\xe3\x81\xa7\xe3\x81\x99\xe3\x80\x82\n"
+  "\n"
+  "\xe9\x83\xb5\xe4\xbe\xbf\xe5\xb1\x80\xe3\x81\xa7\xe8\x8d\xb7\xe7\x89\xa9\xe3\x82\x92\xe5\x8f\x97\xe3\x81\x91\xe5\x8f\x96\xe3\x82\x8a\xe3\x81\xbe\xe3\x81\x97\xe3\x81\x9f\xe3\x80\x82\n"
+  "\n"
+  "\xe5\x85\x88\xe9\x80\xb1\xe3\x80\x81\xe6\x96\xb0\xe3\x81\x97\xe3\x81\x84\xe5\xa0\xb4\xe6\x89\x80\xe3\x81\xab\xe5\xbc\x95\xe3\x81\xa3\xe8\xb6\x8a\xe3\x81\x97\xe3\x81\xbe\xe3\x81\x97\xe3\x81\x9f\xe3\x80\x82\n"
+  "\n"
+  "\xe5\xad\x90\xe4\xbe\x9b\xe3\x81\xae\xe3\x81\x93\xe3\x82\x8d\xe3\x80\x81\xe3\x81\x93\xe3\x81\xae\xe8\xb1\x8a\xe3\x81\x8b\xe3\x81\xaa\xe5\x9c\xb0\xe5\x8c\xba\xe3\x81\xab\xe4\xbd\x8f\xe3\x82\x93\xe3\x81\xa7\xe3\x81\x84\xe3\x81\xbe\xe3\x81\x97\xe3\x81\x9f\xe3\x80\x82\n"
+  "\n"
+  "\xe9\x81\x95\xe3\x81\x86\xe3\x81\xa8\xe3\x81\x84\xe3\x81\x86\xe8\xa8\x80\xe8\x91\x89\xe3\x81\xaf\xe3\x80\x81\xe9\x96\x93\xe9\x81\x95\xe3\x81\x88\xe3\x82\x8b\xe3\x81\xbe\xe3\x81\x9f\xe3\x81\xaf\xe7\x95\xb0\xe3\x81\xaa\xe3\x82\x8b\xe3\x81\x93\xe3\x81\xa8\xe3\x82\x92\xe6\x84\x8f\xe5\x91\xb3\xe3\x81\x97\xe3\x81\xbe\xe3\x81\x99\xe3\x80\x82\n"
+  "\n"
+  "\xe6\x89\x8b\xe7\xb4\x99\xe3\x82\x92\xe9\x80\x81\xe3\x82\x8b\xe3\x81\xab\xe3\x81\xaf\xe3\x80\x81\xe9\x83\xb5\xe4\xbe\xbf\xe5\xb1\x80\xe3\x81\xab\xe8\xa1\x8c\xe3\x81\x8d\xe3\x81\xbe\xe3\x81\x99\xe3\x80\x82\n"
+  "\n"
+  "\xe6\xad\xa3\xe3\x81\x97\xe3\x81\x84\xe8\xaa\xad\xe3\x81\xbf\xe6\x96\xb9\xe3\x82\x92\xe7\xb7\xb4\xe7\xbf\x92\xe3\x81\x97\xe3\x81\xaa\xe3\x81\x8c\xe3\x82\x89\xe8\xaa\xad\xe3\x82\x93\xe3\x81\xa7\xe3\x81\x8f\xe3\x81\xa0\xe3\x81\x95\xe3\x81\x84\xe3\x80\x82\n"
+  "\n"
+  "--- \xe3\x82\xb5\xe3\x83\xb3\xe3\x83\x97\xe3\x83\xab\xe7\xb5\x82\xe3\x82\x8f\xe3\x82\x8a ---\n",
+};
+
 namespace {
 String shortPath(const String& path, size_t maxLen = 46) {
   if (path.length() <= maxLen) return path;
@@ -220,13 +276,30 @@ void ReaderApp::renderLibrary() {
   }
 
   if (library_.count() == 0) {
+    // Show embedded sample documents when SD has no books
     display.setFont(&fonts::FreeSansBold12pt7b);
     display.setTextColor(textColor, TFT_WHITE);
-    display.drawString("No TXT or MD books found.", 34, 180);
+    display.drawString("Embedded sample documents", 34, y > 96 ? y : 96);
     display.setFont(&fonts::FreeSansBold9pt7b);
     display.setTextColor(muted, TFT_WHITE);
-    display.drawString("Place .txt or .md files in /paperBadge/books or /books on SD.", 34, 218);
-    display.drawString("EPUB listed as placeholder only.", 34, 244);
+    display.drawString("SD not mounted or no books found.", 34, (y > 96 ? y : 96) + 32);
+    display.setTextColor(textColor, TFT_WHITE);
+
+    int32_t embedY = (y > 96 ? y : 96) + 66;
+    for (uint8_t i = 0; i < kEmbeddedCount; ++i) {
+      if (i < 6) {
+        bookRows_[i] = {rowX, embedY, rowW, rowH};
+        display.setFont(&fonts::FreeSansBold12pt7b);
+        display.setTextColor(textColor, TFT_WHITE);
+        display.drawRect(rowX, embedY, rowW, rowH, textColor);
+        display.drawString(kEmbeddedTitles[i], rowX + 14, embedY + 10);
+        display.setFont(&fonts::FreeSansBold9pt7b);
+        display.setTextColor(muted, TFT_WHITE);
+        display.drawString("Embedded sample  \xe2\x80\xa2  tap to open", rowX + 14, embedY + 50);
+        embedY += rowH + gap;
+        ++visibleRows_;
+      }
+    }
   }
 
   const int32_t footerY = height - 76;
@@ -351,6 +424,10 @@ void ReaderApp::refreshLibrary(bool force) {
 }
 
 bool ReaderApp::openBook(size_t index) {
+  // If SD library is empty, the index refers to an embedded sample
+  if (library_.count() == 0) {
+    return openEmbedded(static_cast<uint8_t>(index));
+  }
   const hw::BookEntry* book = library_.at(index);
   if (!book) {
     return false;
@@ -373,6 +450,22 @@ bool ReaderApp::openBook(size_t index) {
   }
   view_ = View::Reading;
   saveProgress();
+  return true;
+}
+
+bool ReaderApp::openEmbedded(uint8_t index) {
+  if (index >= kEmbeddedCount) {
+    message_ = "Embedded sample not found.";
+    view_ = View::Message;
+    return false;
+  }
+  if (!txt_.openFromString(String(kEmbeddedTitles[index]), String(kEmbeddedContent[index]),
+                            charsPerLine(), linesPerPage())) {
+    message_ = String("Could not open embedded sample: ") + kEmbeddedTitles[index];
+    view_ = View::Message;
+    return false;
+  }
+  view_ = View::Reading;
   return true;
 }
 

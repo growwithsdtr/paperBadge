@@ -63,6 +63,7 @@ class ReaderApp {
   void renderStatusLine(const String& text);
   void refreshLibrary(bool force);
   bool openBook(size_t index);
+  bool openEmbedded(uint8_t index);
   bool reopenCurrentAtPage(uint32_t page);
   void saveProgress();
   void applyBodyFont() const;
@@ -71,6 +72,10 @@ class ReaderApp {
   uint8_t textScale() const;
   int32_t lineHeight() const;
   static bool isTxtLike(const hw::BookEntry& book);
+
+  static const char* kEmbeddedTitles[];
+  static const char* kEmbeddedContent[];
+  static constexpr uint8_t kEmbeddedCount = 2;
 
   hw::SDManager* sd_ = nullptr;
   hw::BatteryManager* battery_ = nullptr;

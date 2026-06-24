@@ -17,6 +17,7 @@ struct TxtPageView {
 class TxtReader {
  public:
   bool open(const String& path, uint16_t charsPerLine, uint8_t linesPerPage);
+  bool openFromString(const String& title, const String& content, uint16_t charsPerLine, uint8_t linesPerPage);
   void close();
   bool isOpen() const { return open_; }
   bool truncated() const { return truncated_; }

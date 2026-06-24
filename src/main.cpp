@@ -977,6 +977,8 @@ TextLayoutResult wrapTextToLines(const String& text, int32_t width, int32_t line
 bool containsJapaneseCodepoint(const String& text);
 TextLayoutResult wrapMixedJapaneseText(const String& text, int32_t width, int32_t lineHeight, uint8_t maxLines,
                                        String* lines);
+TextLayoutResult drawMixedScriptWrappedText(const String& text, int32_t x, int32_t y, int32_t maxWidth,
+                                             int32_t lineHeight, uint8_t maxLines, uint8_t enPx, uint8_t jpPx);
 void logLayoutBox(const char* field, const Rect& box, int32_t usedHeight, uint8_t pageCount, bool overflow);
 int32_t coachFooterTop();
 void logCurrentLayoutDiagnostics(const char* reason);
@@ -2257,12 +2259,13 @@ void cyclePowerProfile() {
 }
 
 uint32_t profileIdleScaleThresholdMs() {
-  // WarmIdle CPU scaling thresholds per profile
+  // WarmIdle CPU scaling thresholds per product power policy.
+  // Interactive screens stay at full CPU until these thresholds.
   switch (gPowerProfile) {
-    case PowerProfile::Aggressive: return 15000;  // Balanced: WarmIdle@15s
-    case PowerProfile::BadgeMax:   return 5000;   // Max Battery: WarmIdle@5s
+    case PowerProfile::Aggressive: return 120000;  // Balanced: WarmIdle@2min
+    case PowerProfile::BadgeMax:   return 60000;   // Max Battery: WarmIdle@1min
     case PowerProfile::Balanced:
-    default:                        return 60000;  // Responsive: WarmIdle@60s
+    default:                        return 300000;  // Responsive: WarmIdle@5min
   }
 }
 
@@ -2274,8 +2277,8 @@ bool profileAllowsLightSleep() {
 uint32_t profileLightSleepIdleMs() {
   // Time idle before entering LightNap (only used when profileAllowsLightSleep())
   switch (gPowerProfile) {
-    case PowerProfile::Aggressive: return 600000;  // Balanced: 10 min
-    case PowerProfile::BadgeMax:   return 300000;  // Max Battery: 5 min
+    case PowerProfile::Aggressive: return 300000;  // Balanced: 5 min
+    case PowerProfile::BadgeMax:   return 240000;  // Max Battery: 4 min
     case PowerProfile::Balanced:
     default:                        return 999999999; // Responsive: disabled
   }
@@ -4668,6 +4671,181 @@ TextLayoutResult wrapMixedJapaneseText(const String& text, int32_t width, int32_
   return wrapTextToLines(text, width, lineHeight, maxLines, lines);
 }
 
+// ---- Mixed-script segmented renderer ----
+// Splits UTF-8 text into runs of same script (Latin/ASCII vs Japanese) and renders each run
+// with the correct font: FreeSansBold for Latin, lgfxJapanGothic for Japanese.
+// This prevents tofu boxes for Japanese glyphs in English explanation fields and ugly Gothic
+// rendering of English prose.
+
+struct ScriptRun {
+  String text;
+  bool isJapanese = false;
+};
+
+static uint8_t kMaxScriptRuns = 24;
+
+static uint8_t splitIntoScriptRuns(const String& text, ScriptRun* runs, uint8_t maxRuns) {
+  uint8_t count = 0;
+  for (size_t i = 0; i < text.length() && count < maxRuns;) {
+    const uint8_t ch = static_cast<uint8_t>(text[i]);
+    const uint8_t seqLen = utf8SequenceLength(ch);
+    // Japanese: codepoints starting with 0xE3 and above cover hiragana/katakana/kanji
+    const bool jpChar = (ch >= 0xE3);
+    if (count == 0 || runs[count - 1].isJapanese != jpChar) {
+      if (count < maxRuns) {
+        runs[count].text = "";
+        runs[count].isJapanese = jpChar;
+        ++count;
+      } else {
+        break;
+      }
+    }
+    for (uint8_t b = 0; b < seqLen && i + b < text.length(); ++b) {
+      runs[count - 1].text += text[i + b];
+    }
+    i += seqLen;
+  }
+  return count;
+}
+
+// Renders a single already-wrapped line with per-run font switching.
+// Returns the display-x position after the last character.
+static int32_t drawMixedScriptLine(const String& line, int32_t x, int32_t y, uint8_t enPx, uint8_t jpPx) {
+  auto& display = M5.Display;
+  ScriptRun runs[24];
+  uint8_t runCount = splitIntoScriptRuns(line, runs, 24);
+  int32_t curX = x;
+  for (uint8_t r = 0; r < runCount; ++r) {
+    if (runs[r].text.length() == 0) continue;
+    if (runs[r].isJapanese) {
+      applyGothicFont(jpPx);
+    } else {
+      applySansBoldFont(enPx);
+    }
+    display.setTextDatum(textdatum_t::top_left);
+    const int32_t runW = display.textWidth(runs[r].text);
+    display.drawString(runs[r].text, curX, y);
+    curX += runW;
+  }
+  return curX;
+}
+
+// Wraps and renders a mixed-script paragraph.
+// English runs use FreeSansBold at enPx; Japanese runs use lgfxJapanGothic at jpPx.
+// Line breaking occurs at ASCII space boundaries in English runs and at any JP codepoint boundary.
+TextLayoutResult drawMixedScriptWrappedText(const String& text, int32_t x, int32_t y, int32_t maxWidth,
+                                             int32_t lineHeight, uint8_t maxLines, uint8_t enPx, uint8_t jpPx) {
+  auto& display = M5.Display;
+  TextLayoutResult result;
+  result.lineCount = 0;
+  result.overflow = false;
+
+  // Word-wrap: split text into tokens (space-delimited for Latin, char-by-char for JP)
+  // then accumulate into lines, measuring each token with the right font.
+  String currentLine;
+  int32_t currentWidth = 0;
+  const int32_t spaceWidth = [&]() {
+    applySansBoldFont(enPx);
+    return display.textWidth(" ");
+  }();
+
+  auto flushLine = [&](const String& line) {
+    if (result.lineCount >= maxLines) {
+      result.overflow = true;
+      return;
+    }
+    drawMixedScriptLine(line, x, y + result.lineCount * lineHeight, enPx, jpPx);
+    result.lineCount++;
+    result.height = result.lineCount * lineHeight;
+  };
+
+  // Tokenise: produce (token, isJP, width) tuples
+  struct Token { String text; bool isJP; int32_t w; };
+  static Token tokens[64];
+  uint8_t tokenCount = 0;
+
+  // Build tokens by splitting into script runs then splitting EN runs by space
+  ScriptRun runs[24];
+  uint8_t runCount = splitIntoScriptRuns(text, runs, 24);
+  for (uint8_t r = 0; r < runCount && tokenCount < 63; ++r) {
+    if (runs[r].text.length() == 0) continue;
+    if (runs[r].isJapanese) {
+      // Each JP character is its own token to allow breaks
+      for (size_t i = 0; i < runs[r].text.length() && tokenCount < 63;) {
+        const uint8_t ch = static_cast<uint8_t>(runs[r].text[i]);
+        const uint8_t seqLen = utf8SequenceLength(ch);
+        Token& tok = tokens[tokenCount++];
+        tok.text = "";
+        tok.isJP = true;
+        for (uint8_t b = 0; b < seqLen && i + b < runs[r].text.length(); ++b) {
+          tok.text += runs[r].text[i + b];
+        }
+        applyGothicFont(jpPx);
+        tok.w = display.textWidth(tok.text);
+        i += seqLen;
+      }
+    } else {
+      // Split EN run by spaces into word tokens
+      String word;
+      for (size_t i = 0; i <= runs[r].text.length() && tokenCount < 63; ++i) {
+        const char c = i < runs[r].text.length() ? runs[r].text[i] : '\0';
+        if (c == ' ' || c == '\0') {
+          if (word.length() > 0) {
+            Token& tok = tokens[tokenCount++];
+            tok.isJP = false;
+            tok.text = word;
+            applySansBoldFont(enPx);
+            tok.w = display.textWidth(word);
+            word = "";
+          }
+          if (c == ' ' && tokenCount < 63) {
+            Token& tok = tokens[tokenCount++];
+            tok.isJP = false;
+            tok.text = " ";
+            tok.w = spaceWidth;
+          }
+        } else {
+          word += c;
+        }
+      }
+    }
+  }
+
+  // Assemble tokens into lines
+  for (uint8_t t = 0; t < tokenCount; ++t) {
+    const Token& tok = tokens[t];
+    if (tok.text == " " && currentLine.length() == 0) continue; // skip leading space on new line
+    if (tok.text == "\n" || tok.text == "\r") {
+      flushLine(currentLine);
+      currentLine = "";
+      currentWidth = 0;
+      continue;
+    }
+    if (currentWidth + tok.w > maxWidth && currentLine.length() > 0) {
+      // trim trailing space from line
+      String trimmed = currentLine;
+      while (trimmed.length() > 0 && trimmed[trimmed.length() - 1] == ' ') {
+        trimmed.remove(trimmed.length() - 1);
+      }
+      flushLine(trimmed);
+      if (result.overflow) break;
+      // skip leading space token when starting new line
+      currentLine = (tok.text == " ") ? "" : tok.text;
+      currentWidth = (tok.text == " ") ? 0 : tok.w;
+    } else {
+      currentLine += tok.text;
+      currentWidth += tok.w;
+    }
+  }
+  if (currentLine.length() > 0 && !result.overflow) {
+    flushLine(currentLine);
+  }
+  if (result.lineCount == 0) {
+    result.height = 0;
+  }
+  return result;
+}
+
 int32_t japaneseLineHeight(uint8_t px) {
   return static_cast<int32_t>(px) + 16;
 }
@@ -4768,31 +4946,42 @@ uint8_t japanesePromptPxForReader() {
   }
 }
 uint8_t japaneseChoicePxForReader() {
+  // Same as body/prompt — all main study content must be the same size family.
   switch (canonicalFontSizeMode(gSettings.fontSizeMode)) {
     case FontSizeMode::Medium: return 32;
-    case FontSizeMode::XL:     return 36;  // conservative: 40 may not fit 4 stacked buttons
+    case FontSizeMode::XL:     return 40;
     case FontSizeMode::Large:
     default:                   return 36;
   }
 }
 uint8_t japaneseExplanationPxForReader() {
+  // Explanation text follows body size so feedback is visually consistent with the question.
   switch (canonicalFontSizeMode(gSettings.fontSizeMode)) {
-    case FontSizeMode::Medium: return 28;
-    case FontSizeMode::XL:     return 36;
+    case FontSizeMode::Medium: return 32;
+    case FontSizeMode::XL:     return 40;
     case FontSizeMode::Large:
-    default:                   return 32;
+    default:                   return 36;
   }
 }
 
-// English text appearing inside Japanese feedback — uses FreeSansBold sized to the reader setting.
+// English text appearing inside Japanese feedback — FreeSansBold sized to reader setting.
 uint8_t japaneseModeEnglishPxForReader() {
   switch (canonicalFontSizeMode(gSettings.fontSizeMode)) {
     case FontSizeMode::Medium: return 24;  // FreeSansBold12pt7b
-    case FontSizeMode::XL:     return 31;  // FreeSansBold18pt7b
+    case FontSizeMode::XL:     return 32;  // FreeSansBold18pt7b (≈32px rendered)
     case FontSizeMode::Large:
-    default:                   return 31;  // FreeSansBold18pt7b
+    default:                   return 28;  // between 12pt and 18pt → use 18pt at 1× scale
   }
 }
+
+// ---- Public aliases used across the Japanese practice screens ----
+// These let call-sites name intent rather than the internal sizing helper.
+inline uint8_t japaneseStudyBodyPx()        { return japanesePromptPxForReader(); }
+inline uint8_t japaneseStudyChoicePx()      { return japaneseChoicePxForReader(); }
+inline uint8_t japaneseStudyExplanationPx() { return japaneseExplanationPxForReader(); }
+inline uint8_t japaneseStudyMetaPx()        { return japaneseMetaPxForReader(); }
+inline uint8_t japaneseStudyEnglishPx()     { return japaneseModeEnglishPxForReader(); }
+inline uint8_t japaneseStudyFooterPx()      { return 24; }
 
 void applyJapaneseMetaFont()        { applyGothicFont(japaneseMetaPxForReader()); }
 void applyJapanesePromptFont()      { applyGothicFont(japanesePromptPxForReader()); }
@@ -7956,96 +8145,148 @@ void renderJapaneseDaily(const char* refreshReason = "japanese entry") {
     // No Next pre-answer — user selects an answer to advance
     gJapaneseNextButton = {};
   } else {
-    // Feedback — split into two pages to avoid overflow at large reader sizes.
-    // Page 0: "Correct"/"Wrong" label + correct answer line.
-    // Page 1: answer sentence + JP explanation + EN explanation + grammar tag.
+    // Feedback: content-aware pagination.
+    // Pre-measure all blocks and determine if everything fits on one page.
+    // Never show a page whose only content is "Tap More for explanation."
     const bool correct = gJapaneseSelectedOption == static_cast<int8_t>(item.correctChoice);
     const uint8_t titlePx = (choicePx <= 28) ? 28 : (choicePx <= 32 ? 32 : 36);
-    const uint8_t explPx = japaneseExplanationPxForReader();
+    const uint8_t explPx = japaneseStudyExplanationPx();
     const int32_t explLineH = japaneseLineHeight(explPx);
+    const uint8_t enPx = japaneseStudyEnglishPx();
+    const int32_t enLineH = static_cast<int32_t>(enPx) + 12;
+    const uint8_t tagPx = japaneseTagPxForReader();
+    const int32_t tagLineH = japaneseLineHeight(tagPx);
     const int32_t contentBottom = footerY - 10;
+    const int32_t available = contentBottom - promptY;
+
+    // Measure block heights (without drawing)
+    String correctLine = String(static_cast<char>('A' + item.correctChoice)) + ". " +
+                         item.choiceJapanese[item.correctChoice];
+    const int32_t h_result = static_cast<int32_t>(titlePx) + 14;
+    String tmpLines[kMaxWrappedLines];
+    applyJapaneseChoiceFont();
+    TextLayoutResult mCorrect = wrapJapaneseTextToLines(correctLine, contentW,
+                                  japaneseLineHeight(choicePx), 3, tmpLines);
+    const int32_t h_answer = mCorrect.height + 16;
+    applyJapaneseExplanationFont();
+    TextLayoutResult mSentence = wrapJapaneseTextToLines(item.answerSentenceJapanese, contentW,
+                                   explLineH, 4, tmpLines);
+    const int32_t h_sentence = mSentence.lineCount > 0 ? mSentence.height + 12 : 0;
+    TextLayoutResult mJpExpl = wrapJapaneseTextToLines(item.explanationJapanese, contentW,
+                                 explLineH, 4, tmpLines);
+    const int32_t h_jpexpl = mJpExpl.lineCount > 0 ? mJpExpl.height + 12 : 0;
+    // EN explanation measured with FreeSansBold (worst case: use wrapTextToLines)
+    applySansBoldFont(enPx);
+    const String englishLine = String("EN: ") + item.explanationEnglish;
+    TextLayoutResult mEnExpl = wrapTextToLines(englishLine, contentW, enLineH,
+                                 static_cast<uint8_t>((available) / enLineH), tmpLines);
+    const int32_t h_enexpl = mEnExpl.lineCount > 0 ? mEnExpl.height + 12 : 0;
+    const int32_t h_tag = (item.grammarPattern[0] != '\0') ? tagLineH + 8 : 0;
+
+    const int32_t totalH = h_result + h_answer + h_sentence + h_jpexpl + h_enexpl + h_tag;
+    const bool singlePage = (totalH <= available);
+
+    // Clamp feedback page: if we're on page 1 but it's a single-page item, reset
+    if (singlePage && gJapaneseFeedbackPage > 0) {
+      gJapaneseFeedbackPage = 0;
+    }
+
+    Serial.printf("Feedback layout: total=%ld available=%ld singlePage=%s page=%d\n",
+                  static_cast<long>(totalH), static_cast<long>(available),
+                  singlePage ? "yes" : "no", static_cast<int>(gJapaneseFeedbackPage));
 
     if (gJapaneseFeedbackPage == 0) {
-      // Page 0: result + correct answer
+      // Page 0: result + correct answer + as much explanation as fits.
+      int32_t y = promptY;
+
+      // "Correct" / "Wrong" label
       applyJapaneseEnglishLabelFont(titlePx);
       display.setTextColor(TFT_BLACK, TFT_WHITE);
-      display.drawString(correct ? "Correct" : "Wrong", contentX, promptY);
+      display.drawString(correct ? "Correct" : "Wrong", contentX, y);
+      y += h_result;
 
-      int32_t y = promptY + static_cast<int32_t>(titlePx) + 12;
-
+      // Correct answer line
       applyJapaneseChoiceFont();
-      String correctLine = String(static_cast<char>('A' + item.correctChoice)) + ". " +
-                           item.choiceJapanese[item.correctChoice];
+      display.setTextColor(TFT_BLACK, TFT_WHITE);
       if (y + japaneseLineHeight(choicePx) <= contentBottom) {
         TextLayoutResult l1 = drawJapaneseWrappedText(correctLine, contentX, y, contentW,
                                                        japaneseLineHeight(choicePx), 3, "japanese-correct");
         y += l1.height + 16;
       }
 
-      // Hint line pointing to page 2
-      if (y + 30 <= contentBottom) {
-        applyJapaneseEnglishLabelFont(20);
-        display.setTextColor(metadataTextColor(), TFT_WHITE);
-        display.drawString("Tap More for explanation.", contentX, y);
+      // Answer sentence (JP)
+      applyJapaneseExplanationFont();
+      if (h_sentence > 0 && y + explLineH <= contentBottom) {
+        TextLayoutResult l2 = drawJapaneseWrappedText(item.answerSentenceJapanese, contentX, y, contentW,
+                                                       explLineH, 4, "japanese-answer-sentence");
+        y += l2.height + 12;
       }
 
-      // Footer: [Prev] [Home] [More→]
+      // JP explanation — show if room remains
+      if (h_jpexpl > 0 && y + explLineH <= contentBottom) {
+        const uint8_t linesLeft = static_cast<uint8_t>((contentBottom - y) / explLineH);
+        TextLayoutResult l3 = drawJapaneseWrappedText(item.explanationJapanese, contentX, y, contentW,
+                                                       explLineH,
+                                                       static_cast<uint8_t>(linesLeft < 4 ? linesLeft : 4),
+                                                       "japanese-explanation");
+        y += l3.height + 12;
+      }
+
+      // EN explanation — only on single-page items or when enough space remains
+      if (singlePage && h_enexpl > 0 && y + enLineH <= contentBottom) {
+        display.setTextColor(TFT_BLACK, TFT_WHITE);
+        const uint8_t enMaxLines = static_cast<uint8_t>((contentBottom - y) / enLineH);
+        TextLayoutResult l4 = drawMixedScriptWrappedText(englishLine, contentX, y, contentW,
+                                                          enLineH, enMaxLines, enPx, explPx);
+        y += l4.height + 12;
+        Serial.printf("EN explanation mixed: lines=%u overflow=%s\n",
+                      static_cast<unsigned>(l4.lineCount), l4.overflow ? "yes" : "no");
+      }
+
+      // Grammar tag (single page only)
+      if (singlePage && h_tag > 0 && y + tagLineH <= contentBottom) {
+        applyGothicFont(tagPx);
+        display.setTextColor(metadataTextColor(), TFT_WHITE);
+        String tagLine = String("Grammar: ") + item.grammarPattern;
+        drawMixedJapaneseLabel(tagLine, contentX, y, contentW, tagLineH, 2, tagPx, "japanese-grammar-tag");
+        display.setTextColor(TFT_BLACK, TFT_WHITE);
+      }
+
+      // Footer
       gJapanesePrevButton = {contentX, footerY, navW, footerH};
       gHomeButton         = {contentX + navW + 14, footerY, navW, footerH};
       gJapaneseNextButton = {contentX + (navW + 14) * 2, footerY, navW, footerH};
       if (hasPrev) { drawButton(gJapanesePrevButton, "Prev"); } else { gJapanesePrevButton = {}; }
       drawButton(gHomeButton, "", IconType::Home);
-      drawButton(gJapaneseNextButton, "More");
+      if (singlePage) {
+        if (hasNext) { drawButton(gJapaneseNextButton, "Next", IconType::Next); }
+        else { gJapaneseNextButton = {}; }
+      } else {
+        drawButton(gJapaneseNextButton, "More");
+      }
 
     } else {
-      // Page 1: answer sentence + JP explanation + EN explanation + grammar tag
+      // Page 1: EN explanation + grammar tag (for multi-page items)
       int32_t y = promptY;
 
-      applyJapaneseExplanationFont();
-      if (y + explLineH <= contentBottom) {
-        TextLayoutResult l2 = drawJapaneseWrappedText(item.answerSentenceJapanese, contentX, y, contentW,
-                                                       explLineH, 3, "japanese-answer-sentence");
-        y += l2.height + 10;
-      }
-
-      if (y + explLineH <= contentBottom) {
-        TextLayoutResult l3 = drawJapaneseWrappedText(item.explanationJapanese, contentX, y, contentW,
-                                                       explLineH, 3, "japanese-explanation");
-        y += l3.height + 10;
-      }
-
-      // English explanation — always render with FreeSansBold regardless of embedded Japanese.
-      // Japanese examples inside the English field render as fallback glyphs; English is readable.
-      const uint8_t enPx = japaneseModeEnglishPxForReader();
-      const int32_t enLineH = static_cast<int32_t>(enPx) + 10;
-      if (y + enLineH <= contentBottom) {
-        applyJapaneseEnglishLabelFont(enPx);
+      if (h_enexpl > 0) {
         display.setTextColor(TFT_BLACK, TFT_WHITE);
-        String englishLine = String("EN: ") + item.explanationEnglish;
-        String enLines[kMaxWrappedLines];
         const uint8_t enMaxLines = static_cast<uint8_t>((contentBottom - y) / enLineH);
-        const uint8_t enLineLimit = (enMaxLines > kMaxWrappedLines ? kMaxWrappedLines : enMaxLines);
-        TextLayoutResult l4 = wrapMixedJapaneseText(englishLine, contentW, enLineH, enLineLimit, enLines);
-        for (uint8_t li = 0; li < l4.lineCount; ++li) {
-          display.drawString(enLines[li], contentX, y + li * enLineH);
-        }
-        y += static_cast<int32_t>(l4.lineCount) * enLineH + 8;
-        Serial.printf("EN explanation: field=japanese-english-explanation lines=%u overflow=%s\n",
+        TextLayoutResult l4 = drawMixedScriptWrappedText(englishLine, contentX, y, contentW,
+                                                          enLineH, enMaxLines, enPx, explPx);
+        y += l4.height + 12;
+        Serial.printf("EN explanation mixed p1: lines=%u overflow=%s\n",
                       static_cast<unsigned>(l4.lineCount), l4.overflow ? "yes" : "no");
       }
 
-      // Grammar tag
-      if (item.grammarPattern[0] != '\0' && y + 40 <= contentBottom) {
-        const uint8_t tagPx = japaneseTagPxForReader();
+      if (h_tag > 0 && y + tagLineH <= contentBottom) {
         applyGothicFont(tagPx);
         display.setTextColor(metadataTextColor(), TFT_WHITE);
         String tagLine = String("Grammar: ") + item.grammarPattern;
-        const int32_t tagLineH = japaneseLineHeight(tagPx);
         drawMixedJapaneseLabel(tagLine, contentX, y, contentW, tagLineH, 2, tagPx, "japanese-grammar-tag");
         display.setTextColor(TFT_BLACK, TFT_WHITE);
       }
 
-      // Footer: [Prev] [Home] [Next→] (Next = next question from explanation page)
       gJapanesePrevButton = {contentX, footerY, navW, footerH};
       gHomeButton         = {contentX + navW + 14, footerY, navW, footerH};
       gJapaneseNextButton = {contentX + (navW + 14) * 2, footerY, navW, footerH};
@@ -10024,11 +10265,19 @@ void renderFontLabJapaneseFontComparison() {
   if (y + 24 <= contentBottom) {
     applyJapaneseEnglishLabelFont(18);
     display.setTextColor(metadataTextColor(), TFT_WHITE);
-    display.drawString("External JP font (BIZ UDPGothic/Noto): not embedded — see NOTES/JP_FONT_ASSET_NOTES.md", contentX, y);
+    display.drawString("External JP font: not embedded in firmware.", contentX, y);
     y += 26;
   }
   if (y + 24 <= contentBottom) {
-    display.drawString("Built-in lgfxJapanGothic: 20/24/28/32/36/40px  efontJA: 10/12/14/16/24px bold", contentX, y);
+    display.drawString("Run: tools/prepare_jp_fonts.sh  then rebuild.", contentX, y);
+    y += 26;
+  }
+  if (y + 24 <= contentBottom) {
+    display.drawString("Produces BIZ UDPGothic Bold subset for Font Lab.", contentX, y);
+    y += 26;
+  }
+  if (y + 24 <= contentBottom) {
+    display.drawString("Built-in: lgfxJapanGothic 20-40px  efontJA 24px bold", contentX, y);
   }
 }
 
