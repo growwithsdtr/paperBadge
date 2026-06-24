@@ -1,3 +1,54 @@
+# Responsiveness / Reader / JP Fonts Pass
+
+Branch: `responsiveness-reader-jp-fonts-pass`
+
+## Commits
+
+- `df0a9a9` — responsiveness-reader-jp-fonts: fix tap miss, Reader font, JP explanation, kinsoku, efontJA
+  - `loopDelayMs()`: Responsive idle 300ms → 50ms (eliminates missed taps after 30s idle)
+  - `profileIdleScaleThresholdMs()`: Responsive WarmIdle threshold 30s → 60s
+  - `ReaderApp::applyBodyFont()`: FreeSansBold12/18/24pt7b replaces setTextFont(2)+scale
+  - `lineHeight()` / `charsPerLine()` updated to proportional font metrics (34/44/54px, 11/16/22px widths)
+  - `japaneseModeEnglishPxForReader()`: 24px (S) / 31px (M/L) replaces hardcoded 20px
+  - Mixed-JP English explanation lines use `japaneseExplanationPxForReader()` when JP detected
+  - `isKinsokuForbiddenStart()` + `wrapJapaneseTextToLines()` kinsoku rule for 、。」』）】！？ーっッ
+  - Font Lab JP page 4: renders `fonts::efontJA_24_b` sample (no build flag needed)
+  - Plan note: `NOTES/RESPONSIVENESS_READER_JP_FONTS_PLAN.md`
+
+Build: SUCCESS — Flash 69.5% (4.55 MB / 6.55 MB), RAM 70.6%
+efontJA_24_b font data added ~750 KB — well under 12 MB guardrail.
+
+## Physical QA checklist
+
+### Touch responsiveness
+- [ ] After 60s+ idle on Home: first tap registers immediately (was needing 2-3 taps)
+- [ ] After 30s idle: first tap still registers (WarmIdle now at 60s, so no scale yet)
+- [ ] Japanese menu: taps responsive even after sitting idle
+
+### Reader
+- [ ] Open a TXT file at Reader S: text is ~24px FreeSansBold, clearly readable
+- [ ] Open at Reader M: text is ~34px FreeSansBold
+- [ ] Open at Reader L: text is ~44px FreeSansBold
+- [ ] Lines wrap correctly; no text cut off at right edge
+- [ ] Font cycle button cycles 1→2→3→1 and page count changes to match
+- [ ] Page turn and Library navigation still work
+
+### Japanese feedback English explanation
+- [ ] Settings → Reader L → Japanese practice → answer a question
+- [ ] English explanation "EN: ..." renders at FreeSansBold18pt7b (not tiny 20px)
+- [ ] If English explanation contains Japanese examples, those render at explanation size
+
+### Kinsoku
+- [ ] In Japanese practice, long prompts do not end a line with 、or 。at the start of the next line
+- [ ] Grammar tag lines do not start with 。or ）
+
+### Font Lab JP page 4
+- [ ] efontJA_24_b renders the 郵便局 sample (not boxes or ? glyphs)
+- [ ] Three lgfxJapanGothic samples (28/36/40px) still visible above it
+- [ ] No footer overlap
+
+---
+
 # Hardware & Japanese Final Polish
 
 Branch: `hardware-japanese-final-polish`
