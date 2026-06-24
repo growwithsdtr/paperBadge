@@ -74,7 +74,7 @@ constexpr size_t kMaxJapaneseResults = 64;
 constexpr size_t kMaxJapaneseRecentMisses = 200;
 constexpr size_t kMaxJapaneseConceptStats = 96;
 constexpr size_t kMaxJapaneseBucketStats = 96;
-constexpr uint8_t kFontLabPageCount = 4;
+constexpr uint8_t kFontLabPageCount = 5;
 constexpr int32_t kCoachMargin = 20;
 constexpr int32_t kCoachHeaderBottom = 132;
 constexpr const char* kHeaderSep = " | ";
@@ -272,6 +272,7 @@ enum class IconType : uint8_t {
   Results,
   Settings,
   Debug,
+  SpeakingHead,
 };
 
 enum class ButtonTextAlign : uint8_t {
@@ -3621,6 +3622,22 @@ void drawIcon(IconType icon, int32_t x, int32_t y, int32_t size) {
       drawThickLine(x + s / 5, y + (s * 4) / 5, x + s / 10, y + s - 2, t);
       drawThickLine(x + s / 5, y + (s * 4) / 5, x + s / 3, y + s - 2, t);
       break;
+    case IconType::SpeakingHead: {
+      // Microphone: capsule + U-shaped stand + base bar
+      const int32_t capX = x + s * 3 / 8;
+      const int32_t capW = s / 4;
+      const int32_t capH = s * 2 / 5;
+      display.fillRoundRect(capX, y + 2, capW, capH, 5, TFT_BLACK);
+      // Stand left arm
+      display.fillRect(x + s / 4, y + capH, t, s / 3, TFT_BLACK);
+      // Stand right arm
+      display.fillRect(x + s * 3 / 4 - t, y + capH, t, s / 3, TFT_BLACK);
+      // Stand post
+      display.fillRect(x + s / 2 - t, y + capH + s / 3, t * 2, s / 5, TFT_BLACK);
+      // Base
+      display.fillRect(x + s / 3, y + s - t - 2, s / 3, t, TFT_BLACK);
+      break;
+    }
     case IconType::None:
     default:
       break;
@@ -4627,10 +4644,10 @@ int32_t japaneseLineHeight(uint8_t px) {
 // typography setting.
 uint8_t japaneseBodyPxForReader() {
   switch (canonicalFontSizeMode(gSettings.fontSizeMode)) {
-    case FontSizeMode::Medium: return 24;  // Reader S
-    case FontSizeMode::XL:     return 32;  // Reader L
+    case FontSizeMode::Medium: return 32;  // Reader S
+    case FontSizeMode::XL:     return 40;  // Reader L
     case FontSizeMode::Large:
-    default:                   return 28;  // Reader M
+    default:                   return 36;  // Reader M
   }
 }
 
@@ -4696,6 +4713,7 @@ void drawJapaneseButton(const Rect& rect, const String& label, uint8_t japaneseP
 
 // Role-specific Japanese font sizes for headers, prompts, choices, and explanations.
 // Separated from japaneseBodyPxForReader() so each role can scale independently.
+// Meta stays compact (header/tag row). Body/choice/prompt/explanation scale up per spec.
 uint8_t japaneseMetaPxForReader() {
   switch (canonicalFontSizeMode(gSettings.fontSizeMode)) {
     case FontSizeMode::Medium: return 24;
@@ -4704,28 +4722,32 @@ uint8_t japaneseMetaPxForReader() {
     default:                   return 24;
   }
 }
+// Grammar/category tags: minimum 24px always.
+uint8_t japaneseTagPxForReader() {
+  return 24;
+}
 uint8_t japanesePromptPxForReader() {
+  switch (canonicalFontSizeMode(gSettings.fontSizeMode)) {
+    case FontSizeMode::Medium: return 32;
+    case FontSizeMode::XL:     return 40;
+    case FontSizeMode::Large:
+    default:                   return 36;
+  }
+}
+uint8_t japaneseChoicePxForReader() {
+  switch (canonicalFontSizeMode(gSettings.fontSizeMode)) {
+    case FontSizeMode::Medium: return 32;
+    case FontSizeMode::XL:     return 36;  // conservative: 40 may not fit 4 stacked buttons
+    case FontSizeMode::Large:
+    default:                   return 36;
+  }
+}
+uint8_t japaneseExplanationPxForReader() {
   switch (canonicalFontSizeMode(gSettings.fontSizeMode)) {
     case FontSizeMode::Medium: return 28;
     case FontSizeMode::XL:     return 36;
     case FontSizeMode::Large:
     default:                   return 32;
-  }
-}
-uint8_t japaneseChoicePxForReader() {
-  switch (canonicalFontSizeMode(gSettings.fontSizeMode)) {
-    case FontSizeMode::Medium: return 28;
-    case FontSizeMode::XL:     return 32;
-    case FontSizeMode::Large:
-    default:                   return 32;
-  }
-}
-uint8_t japaneseExplanationPxForReader() {
-  switch (canonicalFontSizeMode(gSettings.fontSizeMode)) {
-    case FontSizeMode::Medium: return 24;
-    case FontSizeMode::XL:     return 32;
-    case FontSizeMode::Large:
-    default:                   return 28;
   }
 }
 void applyJapaneseMetaFont()        { applyGothicFont(japaneseMetaPxForReader()); }
@@ -7137,13 +7159,13 @@ void renderHome(const char* refreshReason = "mode switch") {
   gDebugButton = {};
 
   drawButton(gBadgeButton, "Badge", IconType::Badge);
-  drawButton(gInterviewButton, "Interview", IconType::Practice);
-  drawButton(gJapaneseButton, "Japanese");
+  drawButton(gInterviewButton, "Interview", IconType::SpeakingHead);
+  drawButton(gJapaneseButton, "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e");  // 日本語
   drawButton(gReaderButton, "Reader");
   drawButton(gSettingsButton, "Settings", IconType::Settings);
 
   finishDisplayRefresh();
-  Serial.println("Home: Badge / Interview / Japanese / Reader / Settings");
+  Serial.println("Home: Badge / Interview / \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e / Reader / Settings");
 }
 
 void renderReader(const char* refreshReason) {
@@ -7376,11 +7398,11 @@ void renderJapaneseMenu(const char* refreshReason = "mode switch") {
   gJapaneseFontLabButton = {buttonX, y, buttonW, buttonH};
   gHomeButton = {buttonX, display.height() - 110, buttonW, 76};
 
-  drawButton(gJapaneseDailyButton, "Daily Questions");
+  drawButton(gJapaneseDailyButton, "Practice");
   drawButton(gJapaneseMockTestButton, "Mock Test");
   drawButton(gJapaneseReferenceButton, "Reference");
   drawButton(gJapaneseResultsButton, "Results");
-  drawButton(gJapaneseFontLabButton, "Font Lab (JP)");
+  drawButton(gJapaneseFontLabButton, "Font Lab JP");
   drawButton(gHomeButton, "", IconType::Home);
 
   finishDisplayRefresh();
@@ -7398,7 +7420,7 @@ void renderJapaneseSourceSelect(const char* refreshReason = "japanese entry") {
   display.setTextDatum(textdatum_t::top_left);
   applyCoachTitleFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.drawString("Daily Questions", 32, 34);
+  display.drawString("Practice", 32, 34);
   applyCoachMetadataFont();
   display.setTextColor(metadataTextColor(), TFT_WHITE);
   drawMixedJapaneseLabel("Select source", 34, 92, display.width() - 68, 32, 1, 24,
@@ -7445,7 +7467,7 @@ void renderJapaneseWeekSelect(const char* refreshReason = "japanese entry") {
   display.setTextDatum(textdatum_t::top_left);
   applyCoachTitleFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.drawString("Daily Questions", 32, 34);
+  display.drawString("Practice", 32, 34);
   applyCoachMetadataFont();
   display.setTextColor(metadataTextColor(), TFT_WHITE);
   drawMixedJapaneseLabel("500\xe5\x95\x8f N3  \xe2\x80\x94  Select week", 34, 92, display.width() - 68, 36, 1, 24,
@@ -7488,7 +7510,7 @@ void renderJapaneseDaySelect(const char* refreshReason = "japanese entry") {
   display.setTextDatum(textdatum_t::top_left);
   applyCoachTitleFont();
   display.setTextColor(TFT_BLACK, TFT_WHITE);
-  display.drawString("Daily Questions", 32, 34);
+  display.drawString("Practice", 32, 34);
   applyCoachMetadataFont();
   display.setTextColor(metadataTextColor(), TFT_WHITE);
   drawMixedJapaneseLabel("500\xe5\x95\x8f N3  \xc2\xb7  Week 1  \xe2\x80\x94  Select day", 34, 92,
@@ -7929,10 +7951,12 @@ void renderJapaneseDaily(const char* refreshReason = "japanese entry") {
 
     // Grammar tag — grammarPattern can contain Japanese (e.g. "～ものだ"), use Gothic path
     if (item.grammarPattern[0] != '\0') {
-      applyGothicFont(24);
+      const uint8_t tagPx = japaneseTagPxForReader();
+      applyGothicFont(tagPx);
       display.setTextColor(metadataTextColor(), TFT_WHITE);
       String tagLine = String("Grammar: ") + item.grammarPattern;
-      drawMixedJapaneseLabel(tagLine, contentX, y, contentW, 36, 2, 24, "japanese-grammar-tag");
+      const int32_t tagLineH = japaneseLineHeight(tagPx);
+      drawMixedJapaneseLabel(tagLine, contentX, y, contentW, tagLineH, 2, tagPx, "japanese-grammar-tag");
       display.setTextColor(TFT_BLACK, TFT_WHITE);
     }
 
@@ -9777,6 +9801,7 @@ void drawJapaneseFontLabRow(uint8_t px, const String& sample, int32_t y) {
 
 void renderFontLabJapaneseLadder() {
   auto& display = M5.Display;
+  const int32_t contentBottom = display.height() - 130;
   display.setTextDatum(textdatum_t::top_left);
   applyJapaneseEnglishLabelFont(32);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
@@ -9784,20 +9809,27 @@ void renderFontLabJapaneseLadder() {
   drawFontLabPageChrome();
   applyJapaneseEnglishLabelFont(20);
   display.setTextColor(metadataTextColor(), TFT_WHITE);
-  display.drawString("Built-in Gothic ladder; min readable target: 24px", 30, 128);
+  display.drawString("Built-in Gothic: 24-40px  "
+                     "\xe3\x81\x82\xe3\x81\x84\xe3\x81\x86\xe3\x81\x88\xe3\x81\x8a\xe3\x80\x80"
+                     "\xe3\x82\xa2\xe3\x82\xa4\xe3\x82\xa6\xe3\x82\xa8\xe3\x82\xaa\xe3\x80\x80"
+                     "\xe9\x83\xb5\xe4\xbe\xbf\xe5\xb1\x80\xe3\x80\x80\xe3\x81\xb6\xe3\x82\x93\xe3\x81\xbd\xe3\x81\x86",
+                     30, 128);
 
-  const String sample = "あいうえお  アイウエオ  郵便局  ぶんぽう";
-  int32_t y = 176;
-  const uint8_t sizes[] = {20, 24, 28, 32, 36, 40};
+  // 5 sizes per spec (no 20px — too small for readable Japanese)
+  const String sample = "\xe3\x81\x82\xe3\x81\x84\xe3\x81\x86\xe3\x81\x88\xe3\x81\x8a\xe3\x80\x80\xe3\x82\xa2\xe3\x82\xa4\xe3\x82\xa6\xe3\x82\xa8\xe3\x82\xaa\xe3\x80\x80\xe9\x83\xb5\xe4\xbe\xbf\xe5\xb1\x80\xe3\x80\x80\xe3\x81\xb6\xe3\x82\x93\xe3\x81\xbd\xe3\x81\x86";
+  int32_t y = 172;
+  const uint8_t sizes[] = {24, 28, 32, 36, 40};
   for (uint8_t i = 0; i < countOf(sizes); ++i) {
+    // Guard: ensure label (18px) + sample (sizes[i]) + margins fit before the footer
+    if (y + 24 + static_cast<int32_t>(sizes[i]) + 10 > contentBottom) break;
     drawJapaneseFontLabRow(sizes[i], sample, y);
-    y += sizes[i] + 48;
-    if (y > display.height() - 120) break;
+    y += static_cast<int32_t>(sizes[i]) + 50;
   }
 }
 
 void renderFontLabJapaneseMixed() {
   auto& display = M5.Display;
+  const int32_t contentBottom = display.height() - 130;
   display.setTextDatum(textdatum_t::top_left);
   applyJapaneseEnglishLabelFont(32);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
@@ -9807,22 +9839,44 @@ void renderFontLabJapaneseMixed() {
   const int32_t contentX = kCoachMargin;
   const int32_t contentW = display.width() - kCoachMargin * 2;
   int32_t y = 140;
-  drawMixedJapaneseLabel("N3 \xc2\xb7 W1D1 \xc2\xb7 500\xe5\x95\x8f \xc2\xb7 \xe3\x81\xb6\xe3\x82\x93\xe3\x81\xbd\xe3\x81\x86",
-                         contentX, y, contentW, 36, 1, 24, "fontlab-jp-header");
-  y += 54;
-  drawMixedJapaneseLabel("\xe3\x80\x8c\xe9\x83\xb5\xe4\xbe\xbf\xe5\xb1\x80\xe3\x80\x8d\xe3\x81\xae\xe8\xaa\xad\xe3\x81\xbf\xe6\x96\xb9\xe3\x81\xa8\xe3\x81\x97\xe3\x81\xa6\xe6\xad\xa3\xe3\x81\x97\xe3\x81\x84\xe3\x82\x82\xe3\x81\xae\xe3\x81\xaf\xe3\x81\xa9\xe3\x82\x8c\xe3\x81\xa7\xe3\x81\x99\xe3\x81\x8b\xe3\x80\x82",
-                         contentX, y, contentW, 44, 3, 32, "fontlab-jp-prompt");
-  y += 150;
-  Rect option = {contentX, y, contentW, 92};
-  drawJapaneseOptionButton(option, "A. \xe3\x82\x86\xe3\x81\x86\xe3\x81\xb3\xe3\x82\x93\xe3\x81\x8d\xe3\x82\x87\xe3\x81\x8f");
-  y += 116;
-  applyJapaneseEnglishLabelFont(20);
-  display.setTextColor(metadataTextColor(), TFT_WHITE);
-  display.drawString("source?: no  fonts: mixed safe path + built-in Gothic", contentX, y);
+
+  // Header: N3 · W1D1 · 500問 · もじ
+  if (y < contentBottom) {
+    drawMixedJapaneseLabel("N3 \xc2\xb7 W1D1 \xc2\xb7 500\xe5\x95\x8f \xc2\xb7 \xe3\x82\x82\xe3\x81\x98",
+                           contentX, y, contentW, 36, 1, 24, "fontlab-jp-header");
+    y += 54;
+  }
+
+  // Prompt: 「郵便局」の読み方として正しいものはどれですか。
+  if (y < contentBottom) {
+    const int32_t maxPromptY = contentBottom - 130;  // leave room for option button
+    const int32_t availH = maxPromptY - y;
+    const uint8_t promptLines = static_cast<uint8_t>(availH / 44 > 0 ? availH / 44 : 1);
+    drawMixedJapaneseLabel(
+        "\xe3\x80\x8c\xe9\x83\xb5\xe4\xbe\xbf\xe5\xb1\x80\xe3\x80\x8d\xe3\x81\xae\xe8\xaa\xad\xe3\x81\xbf\xe6\x96\xb9\xe3\x81\xa8\xe3\x81\x97\xe3\x81\xa6\xe6\xad\xa3\xe3\x81\x97\xe3\x81\x84\xe3\x82\x82\xe3\x81\xae\xe3\x81\xaf\xe3\x81\xa9\xe3\x82\x8c\xe3\x81\xa7\xe3\x81\x99\xe3\x81\x8b\xe3\x80\x82",
+        contentX, y, contentW, 44, promptLines < 3 ? promptLines : 3, 32, "fontlab-jp-prompt");
+    y += 150;
+  }
+
+  // Choice button: A. ゆうびんきょく
+  if (y + 92 <= contentBottom) {
+    Rect option = {contentX, y, contentW, 92};
+    drawJapaneseOptionButton(option, "A. \xe3\x82\x86\xe3\x81\x86\xe3\x81\xb3\xe3\x82\x93\xe3\x81\x8d\xe3\x82\x87\xe3\x81\x8f");
+    y += 110;
+  }
+
+  // Annotation — only if it fits above footer
+  if (y + 28 <= contentBottom) {
+    applyJapaneseEnglishLabelFont(20);
+    display.setTextColor(metadataTextColor(), TFT_WHITE);
+    display.drawString("fonts: mixed safe path + built-in Gothic", contentX, y);
+  }
 }
 
-void renderFontLabJapaneseMeta() {
+// Font Lab JP page 3: explanation stress test
+void renderFontLabJapaneseExplanation() {
   auto& display = M5.Display;
+  const int32_t contentBottom = display.height() - 130;
   display.setTextDatum(textdatum_t::top_left);
   applyJapaneseEnglishLabelFont(32);
   display.setTextColor(TFT_BLACK, TFT_WHITE);
@@ -9830,15 +9884,71 @@ void renderFontLabJapaneseMeta() {
   drawFontLabPageChrome();
   applyJapaneseEnglishLabelFont(20);
   display.setTextColor(metadataTextColor(), TFT_WHITE);
-  display.drawString("Meta sizes; minimum readable output: 24px", 30, 128);
+  display.drawString("Explanation stress test — current reader sizes", 30, 128);
 
-  const String sample = "N3 \xc2\xb7 W1D1 \xc2\xb7 500\xe5\x95\x8f \xc2\xb7 \xe3\x81\xb6\xe3\x82\x93\xe3\x81\xbd\xe3\x81\x86";
-  drawJapaneseFontLabRow(20, sample, 188);
-  applyJapaneseEnglishLabelFont(18);
-  display.setTextColor(metadataTextColor(), TFT_WHITE);
-  display.drawString("20px: comparison only; below runtime minimum for readable Japanese", kCoachMargin, 250);
-  drawJapaneseFontLabRow(24, sample, 310);
-  drawJapaneseFontLabRow(28, sample, 430);
+  const int32_t contentX = kCoachMargin;
+  const int32_t contentW = display.width() - kCoachMargin * 2;
+  int32_t y = 172;
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+
+  const uint8_t explPx = japaneseExplanationPxForReader();
+  const int32_t explLineH = japaneseLineHeight(explPx);
+  const uint8_t maxLines = static_cast<uint8_t>((contentBottom - y) / explLineH);
+
+  // 「郵便局」は、手紙や荷物を送ったり受け取ったりする場所です。読み方は「ゆうびんきょく」です。
+  applyJapaneseExplanationFont();
+  TextLayoutResult r1 = drawJapaneseWrappedText(
+      "\xe3\x80\x8c\xe9\x83\xb5\xe4\xbe\xbf\xe5\xb1\x80\xe3\x80\x8d\xe3\x81\xaf\xe3\x80\x81\xe6\x89\x8b\xe7\xb4\x99\xe3\x82\x84\xe8\x8d\xb7\xe7\x89\xa9\xe3\x82\x92\xe9\x80\x81\xe3\x81\xa3\xe3\x81\x9f\xe3\x82\x8a\xe5\x8f\x97\xe3\x81\x91\xe5\x8f\x96\xe3\x81\xa3\xe3\x81\x9f\xe3\x82\x8a\xe3\x81\x99\xe3\x82\x8b\xe5\xa0\xb4\xe6\x89\x80\xe3\x81\xa7\xe3\x81\x99\xe3\x80\x82\xe8\xaa\xad\xe3\x81\xbf\xe6\x96\xb9\xe3\x81\xaf\xe3\x80\x8c\xe3\x82\x86\xe3\x81\x86\xe3\x81\xb3\xe3\x82\x93\xe3\x81\x8d\xe3\x82\x87\xe3\x81\x8f\xe3\x80\x8d\xe3\x81\xa7\xe3\x81\x99\xe3\x80\x82",
+      contentX, y, contentW, explLineH, maxLines > 0 ? maxLines : 4, "fontlab-explanation");
+  y += r1.height + 14;
+
+  if (y + 28 <= contentBottom) {
+    applyJapaneseEnglishLabelFont(18);
+    display.setTextColor(metadataTextColor(), TFT_WHITE);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "explPx=%u  lineH=%d  lines=%u  overflow=%s",
+             static_cast<unsigned>(explPx), static_cast<int>(explLineH),
+             static_cast<unsigned>(r1.lineCount), r1.overflow ? "yes" : "no");
+    display.drawString(buf, contentX, y);
+  }
+}
+
+// Font Lab JP page 4: font candidate comparison
+void renderFontLabJapaneseFontComparison() {
+  auto& display = M5.Display;
+  const int32_t contentBottom = display.height() - 130;
+  display.setTextDatum(textdatum_t::top_left);
+  applyJapaneseEnglishLabelFont(32);
+  display.setTextColor(TFT_BLACK, TFT_WHITE);
+  display.drawString("Font Lab JP", 28, 24);
+  drawFontLabPageChrome();
+
+  const int32_t contentX = kCoachMargin;
+  int32_t y = 136;
+
+  // Built-in Gothic samples at key sizes
+  const uint8_t showcaseSizes[] = {28, 36, 40};
+  const String sample = "\xe9\x83\xb5\xe4\xbe\xbf\xe5\xb1\x80\xe3\x80\x80\xe3\x82\x86\xe3\x81\x86\xe3\x81\xb3\xe3\x82\x93\xe3\x81\x8d\xe3\x82\x87\xe3\x81\x8f";
+  for (uint8_t i = 0; i < countOf(showcaseSizes); ++i) {
+    if (y + 24 + static_cast<int32_t>(showcaseSizes[i]) + 6 > contentBottom) break;
+    drawJapaneseFontLabRow(showcaseSizes[i], sample, y);
+    y += static_cast<int32_t>(showcaseSizes[i]) + 46;
+  }
+
+  // efontJA status and external font notes
+  if (y + 24 <= contentBottom) {
+    applyJapaneseEnglishLabelFont(18);
+    display.setTextColor(metadataTextColor(), TFT_WHITE);
+    display.drawString("efontJA_24_b: not embedded (M5GFX has it; add to build_flags if needed)", contentX, y);
+    y += 26;
+  }
+  if (y + 24 <= contentBottom) {
+    display.drawString("External JP font (BIZ UDPGothic/Noto): not embedded — see NOTES/JP_FONT_ASSET_NOTES.md", contentX, y);
+    y += 26;
+  }
+  if (y + 24 <= contentBottom) {
+    display.drawString("Built-in lgfxJapanGothic is current fallback (20/24/28/32/36/40px available)", contentX, y);
+  }
 }
 
 void renderFontLab(const char* refreshReason = "mode switch") {
@@ -9859,8 +9969,10 @@ void renderFontLab(const char* refreshReason = "mode switch") {
       renderFontLabJapaneseLadder();
     } else if (gFontLabPage == 2) {
       renderFontLabJapaneseMixed();
+    } else if (gFontLabPage == 3) {
+      renderFontLabJapaneseExplanation();
     } else {
-      renderFontLabJapaneseMeta();
+      renderFontLabJapaneseFontComparison();
     }
     gHomeButton = {26, display.height() - 82, display.width() - 52, 58};
     drawButton(gHomeButton, "Home");
