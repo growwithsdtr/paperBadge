@@ -1,3 +1,53 @@
+# Touch / Reader / Feedback Bugfix Pass
+
+Branch: `touch-reader-feedback-bugfix-pass`
+
+## Commits
+
+- `1346954` — touch-reader-feedback-bugfix: fix debounce, CPU guard, reader fonts, feedback pagination
+  - `kInputDebounceMs` 250 → 50 ms, `kInputCleanRefreshDebounceMs` 600 → 150 ms
+    (eliminates 1-2s post-navigation dead zone — primary touch miss cause)
+  - `maybeScaleIdleCpu()`: Responsive profile (`PowerProfile::Balanced`) returns early
+    — CPU never scales to 80 MHz on interactive screens in Responsive mode
+  - `renderReader()`: clean refresh on entry (not page-turns) clears ghosting that
+    made Reader text appear pale/washed out
+  - `ReaderApp.cpp`: full rewrite — all `setTextFont(2)` GLCD 6px bitmap font replaced
+    with `FreeSansBold9/12/24pt7b` across Library, Reading, Message, and footer buttons
+  - `gJapaneseFeedbackPage` (0/1): feedback split into two pages
+    — Page 0: Correct/Wrong + correct answer + "Tap More" hint
+    — Page 1: answer sentence + JP explanation + EN explanation + grammar tag
+  - EN explanation always rendered with `applyJapaneseEnglishLabelFont` (FreeSansBold),
+    not Gothic — even when explanation contains embedded Japanese examples
+  - `NOTES/TOUCH_READER_FEEDBACK_BUGFIX_PLAN.md`: root cause analysis doc
+
+Build: SUCCESS — Flash 69.4% (4.55 MB / 6.55 MB), RAM 70.6%
+Flash: SUCCESS — 4549248 bytes written, verified
+
+## Physical QA checklist
+
+### Touch responsiveness
+- [ ] Home → navigate to Japanese: first tap after screen settles registers immediately
+- [ ] After 60s+ idle on Home (Responsive mode): tap registers, serial shows CPU NOT scaled
+- [ ] Home → Reader → page turn → Back: all taps register within ~200ms of screen settling
+
+### Reader
+- [ ] Library screen: "Reader" title large, book titles readable (~24px), metadata legible
+- [ ] Empty SD / no books: readable message text, not tiny gray GLCD dots
+- [ ] Open TXT at Reader S: body text ~24px FreeSansBold, high contrast black
+- [ ] Open TXT at Reader M: body text ~34px FreeSansBold
+- [ ] Open TXT at Reader L: body text ~44px FreeSansBold
+- [ ] Footer buttons (Library / Font S/M/L / Home): readable labels, not tiny
+- [ ] Entering Reader from Home: clean refresh (no pale ghosting), text is crisp black
+
+### Japanese feedback pagination
+- [ ] Answer any question → feedback page 0: shows Correct/Wrong + answer + "Tap More" hint
+- [ ] Tap "More": page 1 shows answer sentence + JP explanation + EN explanation
+- [ ] EN explanation on page 1: rendered FreeSansBold (not Gothic), English readable
+- [ ] At Reader L: page 1 content does NOT overflow into footer area
+- [ ] Tap "Next" from page 1: advances to next question, resets to page 0
+
+---
+
 # Responsiveness / Reader / JP Fonts Pass
 
 Branch: `responsiveness-reader-jp-fonts-pass`
