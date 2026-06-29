@@ -1,4 +1,6 @@
 .pio/
+/sdkconfig.*
+!/sdkconfig.defaults
 .vscode/
 .DS_Store
 dist/

@@ -1,0 +1,11 @@
+# PaperBadge ESP-IDF Paper S3 layout. Keep comments ASCII-only for PlatformIO.
+#
+# 16 MB flash. The app partition is intentionally large enough for
+# embedded Japanese font subsets plus manga/reader code while staying
+# under the repo guardrail of a 12 MB firmware image.
+#
+# Name,       Type, SubType, Offset,   Size
+nvs,          data, nvs,     0x9000,   0x6000
+phy_init,     data, phy,     0xf000,   0x1000
+factory,      app,  factory, 0x10000,  0xB00000
+storage,      data, fat,     0xB10000, 0x4F0000
