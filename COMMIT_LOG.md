@@ -1,3 +1,29 @@
+# Aggressive Paper S3 ESP-IDF / Manga Shell
+
+Branch: `codex/aggressive-papers3-idf-overhaul`
+
+## Commits
+
+- `2a3b2af` — overhaul: migrate PaperS3 firmware to ESP-IDF manga shell
+  - Switched PlatformIO from Arduino/M5Unified to ESP-IDF 5.5 via `espressif32@6.12.0`
+  - Added 16 MB Paper S3 partition layout with 0xB00000 app slot (<12 MB cap)
+  - Vendored build-relevant epdiy, JPEGDEC, PNGdec, and miniz components
+  - Added epdiy Paper S3 display HAL, direct GT911 touch, SDSPI SD mount, ADC battery/charge logging, NVS deep-sleep metadata
+  - Added ESP-IDF app shell with Home entries: Badge, Interview, 日本語, Manga, Reader, Settings
+  - Manga opens CBZ/ZIP JPEG archives from `/paperBadge/content/manga` with upstream page loader/progress backend
+  - Reader opens TXT/MD plus minimal EPUB XHTML/HTML extraction from `/paperBadge/content/books`
+  - Japanese practice runs embedded sample questions and fixes single-page feedback: `Next` advances instead of looping on explanation
+  - Embedded BIZ UDGothic Regular and IPAex Gothic sparse firmware fonts with bundled OFL/IPA licenses; JP font lab renders both samples
+  - Power UX includes manual light sleep, deep sleep power-off, touch wake drain, battery log path `/paperBadge/logs/battery.log`
+
+Build: SUCCESS — Flash 10.1% (1,162,457 bytes / 11,534,336 bytes), RAM 7.2%
+Flash: SUCCESS — 1,162,976 bytes written to `/dev/cu.usbmodem1101`, verified
+Serial smoke: monitor connected, but no boot transcript was captured after upload/reset
+
+Known first-shell gaps:
+- Interview content is preserved in the repo but not fully ported into the ESP-IDF renderer yet; the current Interview entry is a read-only placeholder.
+- Manga v1 path is JPEG-in-CBZ/ZIP first; PNG-in-CBZ and richer bookshelf thumbnails can follow once hardware smoke is confirmed.
+
 # Study UI Power Reader Overhaul
 
 Branch: `study-ui-power-reader-overhaul`
