@@ -19,6 +19,7 @@ Base: `d76e86c` (`codex/aggressive-papers3-idf-overhaul`)
 - `6eedaec` — add manga preprocessor
 - `e4844ff` — add manga ocr sidecar schema
 - `a2dd916` — add japanese data schema index scaffold
+- `93f72c0` — document heavy sprint
 
 ## Summary
 
