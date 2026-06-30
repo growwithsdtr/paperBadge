@@ -70,9 +70,12 @@ enum class Screen {
     Home,
     Badge,
     Interview,
+    InterviewPracticeMenu,
+    InterviewCardList,
     InterviewPractice,
     InterviewDrillQ,
     InterviewDrillFB,
+    InterviewGlossaryList,
     InterviewGlossary,
     InterviewResults,
     Japanese,
@@ -90,6 +93,12 @@ enum class Screen {
 enum class JapaneseFontFace : uint8_t {
     IpaCurrent = 0,
     BizUdGothic = 1,
+};
+
+enum class InterviewPracticeMode : uint8_t {
+    All,
+    MustMaster,
+    Category,
 };
 
 struct BookFile {
@@ -158,6 +167,7 @@ Rect g_badge_qr_rect;
 
 // Interview menu / sub-screen rects
 Rect g_iv_menu_buttons[5];   // Practice, Drills, Exam, Glossary, Results
+Rect g_iv_practice_buttons[4];
 Rect g_iv_choices[4];        // drill MCQ options
 
 // ── Manga globals ─────────────────────────────────────────────────────
@@ -194,6 +204,10 @@ bool g_jp_feedback_single = true;
 // ── Interview state ───────────────────────────────────────────────────
 int g_iv_card_idx = 0;
 bool g_iv_card_spoken = false;   // false=title view, true=spoken answer view
+int g_iv_answer_page = 0;
+InterviewPracticeMode g_iv_practice_mode = InterviewPracticeMode::All;
+int g_iv_practice_section_idx = -1;
+int g_iv_card_list_page = 0;
 
 int g_iv_drill_idx = 0;          // index into kDrills[] (MCQ only)
 int g_iv_drill_answer = -1;
@@ -210,6 +224,8 @@ int g_iv_exam_score = 0;
 bool g_iv_in_exam = false;
 
 int g_iv_gloss_idx = 0;
+int g_iv_gloss_category_idx = -1;
+int g_iv_gloss_list_page = 0;
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -817,6 +833,12 @@ void iv_build_exam() {
     for (int i = 0; i < static_cast<int>(embedded_papercoach::kDrillCount); ++i) {
         if (iv_drill_is_mcq(i)) pool.push_back(i);
     }
+    if (pool.empty()) {
+        g_iv_exam_count = 0;
+        g_iv_exam_current = 0;
+        g_iv_exam_score = 0;
+        return;
+    }
     // Shuffle with a simple LCG
     uint32_t seed = static_cast<uint32_t>(esp_timer_get_time() & 0xFFFFFFFF);
     for (size_t i = pool.size() - 1; i > 0; --i) {
@@ -831,13 +853,119 @@ void iv_build_exam() {
     std::memset(g_iv_exam_answers, 0, sizeof(g_iv_exam_answers));
 }
 
+std::vector<int> iv_section_first_indices() {
+    std::vector<int> firsts;
+    for (int i = 0; i < static_cast<int>(embedded_papercoach::kCardCount); ++i) {
+        const char* id = embedded_papercoach::kCards[i].sectionId;
+        bool seen = false;
+        for (int first : firsts) {
+            if (std::strcmp(embedded_papercoach::kCards[first].sectionId, id) == 0) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen) firsts.push_back(i);
+    }
+    return firsts;
+}
+
+bool iv_card_matches_filter(int idx) {
+    if (idx < 0 || idx >= static_cast<int>(embedded_papercoach::kCardCount)) return false;
+    const auto& c = embedded_papercoach::kCards[idx];
+    if (g_iv_practice_mode == InterviewPracticeMode::MustMaster && !c.mustMaster) return false;
+    if (g_iv_practice_mode == InterviewPracticeMode::Category) {
+        const auto sections = iv_section_first_indices();
+        if (g_iv_practice_section_idx < 0 ||
+            g_iv_practice_section_idx >= static_cast<int>(sections.size())) {
+            return false;
+        }
+        const char* wanted = embedded_papercoach::kCards[sections[g_iv_practice_section_idx]].sectionId;
+        return std::strcmp(c.sectionId, wanted) == 0;
+    }
+    return true;
+}
+
+std::vector<int> iv_filtered_cards() {
+    std::vector<int> cards;
+    for (int i = 0; i < static_cast<int>(embedded_papercoach::kCardCount); ++i) {
+        if (iv_card_matches_filter(i)) cards.push_back(i);
+    }
+    return cards;
+}
+
+int iv_next_filtered_card(int from, int step) {
+    int i = from + step;
+    while (i >= 0 && i < static_cast<int>(embedded_papercoach::kCardCount)) {
+        if (iv_card_matches_filter(i)) return i;
+        i += step;
+    }
+    return -1;
+}
+
+int iv_answer_page_count(const embedded_papercoach::Card& c) {
+    const int body_w = ps3::display::width() - 76;
+    const int spoken_lines = static_cast<int>(wrap_text(c.spoken ? c.spoken : "", body_w).size());
+    int pages = std::max(1, (spoken_lines + 11) / 12);
+    if ((c.anchor && c.anchor[0]) || (c.watch && c.watch[0])) ++pages;
+    if ((c.theme && c.theme[0]) || (c.confidence && c.confidence[0])) ++pages;
+    return pages;
+}
+
+int iv_spoken_page_count(const embedded_papercoach::Card& c) {
+    const int body_w = ps3::display::width() - 76;
+    const int spoken_lines = static_cast<int>(wrap_text(c.spoken ? c.spoken : "", body_w).size());
+    return std::max(1, (spoken_lines + 11) / 12);
+}
+
+int draw_labeled_block(int x, int y, int max_w, const std::string& label,
+                       const char* body, int max_lines = 0) {
+    if (!body || !body[0]) return y;
+    draw_text(x, y, label);
+    y += active_font().height() + 6;
+    y = draw_wrapped(x + 16, y, max_w - 16, body, max_lines) + 12;
+    return y;
+}
+
+std::vector<const char*> iv_glossary_categories() {
+    std::vector<const char*> cats;
+    for (int i = 0; i < static_cast<int>(embedded_papercoach::kGlossaryCount); ++i) {
+        const char* cat = embedded_papercoach::kGlossaryTerms[i].category;
+        if (!cat || !cat[0]) cat = "General";
+        bool seen = false;
+        for (const char* existing : cats) {
+            if (std::strcmp(existing, cat) == 0) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen) cats.push_back(cat);
+    }
+    return cats;
+}
+
+std::vector<int> iv_glossary_terms_for_category(int category_idx) {
+    std::vector<int> terms;
+    const auto cats = iv_glossary_categories();
+    if (category_idx < 0 || category_idx >= static_cast<int>(cats.size())) return terms;
+    const char* wanted = cats[category_idx];
+    for (int i = 0; i < static_cast<int>(embedded_papercoach::kGlossaryCount); ++i) {
+        const char* cat = embedded_papercoach::kGlossaryTerms[i].category;
+        if (!cat || !cat[0]) cat = "General";
+        if (std::strcmp(cat, wanted) == 0) terms.push_back(i);
+    }
+    return terms;
+}
+
 // ── Forward declarations ───────────────────────────────────────────────
 void render_home(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_badge();
 void render_interview(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_interview_practice_menu(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_interview_card_list(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_interview_practice(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_interview_drill_q(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_interview_drill_fb(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_interview_glossary_list(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_interview_glossary(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_interview_results(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_manga_library(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
@@ -885,9 +1013,12 @@ Screen fallback_back_target(Screen screen) {
         case Screen::ReaderLibrary:
         case Screen::Settings:
             return Screen::Home;
+        case Screen::InterviewPracticeMenu:
+        case Screen::InterviewCardList:
         case Screen::InterviewPractice:
         case Screen::InterviewDrillQ:
         case Screen::InterviewDrillFB:
+        case Screen::InterviewGlossaryList:
         case Screen::InterviewGlossary:
         case Screen::InterviewResults:
             return Screen::Interview;
@@ -922,9 +1053,12 @@ void render_screen(Screen screen, ps3::display::RefreshMode mode = ps3::display:
         case Screen::Home:               render_home(mode); break;
         case Screen::Badge:              render_badge(); break;
         case Screen::Interview:          render_interview(mode); break;
+        case Screen::InterviewPracticeMenu: render_interview_practice_menu(mode); break;
+        case Screen::InterviewCardList:  render_interview_card_list(mode); break;
         case Screen::InterviewPractice:  render_interview_practice(mode); break;
         case Screen::InterviewDrillQ:    render_interview_drill_q(mode); break;
         case Screen::InterviewDrillFB:   render_interview_drill_fb(mode); break;
+        case Screen::InterviewGlossaryList: render_interview_glossary_list(mode); break;
         case Screen::InterviewGlossary:  render_interview_glossary(mode); break;
         case Screen::InterviewResults:   render_interview_results(mode); break;
         case Screen::MangaLibrary:       render_manga_library(mode); break;
@@ -1114,6 +1248,79 @@ void render_interview(ps3::display::RefreshMode mode) {
     ps3::display::flush(mode);
 }
 
+// ── Interview — Practice menu / list ─────────────────────────────────
+void render_interview_practice_menu(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
+    g_screen = Screen::InterviewPracticeMenu;
+    ps3::display::clear();
+    draw_header("Practice", "PaperCoach");
+    const char* labels[] = {"All Cards", "Must Master", "By Category", "Resume"};
+    for (int i = 0; i < 4; ++i) {
+        g_iv_practice_buttons[i] = {34, 104 + i * 96, ps3::display::width() - 68, 76};
+        draw_button(g_iv_practice_buttons[i], labels[i]);
+    }
+    draw_wrapped(34, 510, ps3::display::width() - 68,
+                 "Choose a practice lane, then pick a specific card from the list.");
+    draw_footer("Menu", nullptr, nullptr);
+    ps3::display::flush(mode);
+}
+
+void render_interview_card_list(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
+    g_screen = Screen::InterviewCardList;
+    ps3::display::clear();
+    for (int i = 0; i < 10; ++i) g_list_rows[i] = {};
+
+    if (g_iv_practice_mode == InterviewPracticeMode::Category &&
+        g_iv_practice_section_idx < 0) {
+        const auto sections = iv_section_first_indices();
+        draw_header("Practice Categories", std::to_string(sections.size()));
+        int y = 86;
+        for (int i = 0; i < static_cast<int>(sections.size()) && i < 9; ++i) {
+            const auto& c = embedded_papercoach::kCards[sections[i]];
+            g_list_rows[i] = {24, y, ps3::display::width() - 48, 72};
+            draw_rect(g_list_rows[i]);
+            draw_wrapped(g_list_rows[i].x + 14, g_list_rows[i].y + 16,
+                         g_list_rows[i].w - 28,
+                         std::string(c.sectionId) + ". " + c.section, 1);
+            y += 78;
+        }
+        draw_footer("Back", nullptr, nullptr);
+        ps3::display::flush(mode);
+        return;
+    }
+
+    const auto cards = iv_filtered_cards();
+    const int page_size = 8;
+    const int page_count = std::max(1, static_cast<int>((cards.size() + page_size - 1) / page_size));
+    g_iv_card_list_page = std::max(0, std::min(g_iv_card_list_page, page_count - 1));
+    const char* title = "All Cards";
+    if (g_iv_practice_mode == InterviewPracticeMode::MustMaster) title = "Must Master";
+    if (g_iv_practice_mode == InterviewPracticeMode::Category) title = "Category Cards";
+    draw_header(title, std::to_string(cards.size()) + " cards");
+    int y = 82;
+    const int start = g_iv_card_list_page * page_size;
+    for (int row = 0; row < page_size && start + row < static_cast<int>(cards.size()); ++row) {
+        const int card_idx = cards[start + row];
+        const auto& c = embedded_papercoach::kCards[card_idx];
+        g_list_rows[row] = {22, y, ps3::display::width() - 44, 80};
+        draw_rect(g_list_rows[row]);
+        const std::string label = std::string(c.sectionId) + c.number +
+                                  (c.mustMaster ? " * " : "   ") + c.title;
+        draw_wrapped(g_list_rows[row].x + 12, g_list_rows[row].y + 14,
+                     g_list_rows[row].w - 24, label, 2);
+        y += 86;
+    }
+    if (cards.empty()) {
+        draw_wrapped(34, 140, ps3::display::width() - 68,
+                     "No cards match this practice filter.");
+    }
+    draw_footer("Back",
+                g_iv_card_list_page > 0 ? "Prev" : nullptr,
+                g_iv_card_list_page + 1 < page_count ? "Next" : nullptr);
+    ps3::display::flush(mode);
+}
+
 // ── Interview — Practice ──────────────────────────────────────────────
 void render_interview_practice(ps3::display::RefreshMode mode) {
     restore_app_orientation();
@@ -1132,8 +1339,29 @@ void render_interview_practice(ps3::display::RefreshMode mode) {
     draw_hline(20, y, ps3::display::width() - 40);
     y += 12;
     if (g_iv_card_spoken) {
-        // Show the spoken answer
-        draw_wrapped(30, y, ps3::display::width() - 60, c.spoken, 14);
+        const int page_count = iv_answer_page_count(c);
+        g_iv_answer_page = std::max(0, std::min(g_iv_answer_page, page_count - 1));
+        const int spoken_pages = iv_spoken_page_count(c);
+        if (g_iv_answer_page < spoken_pages) {
+            draw_text(30, y, "Spoken answer");
+            y += active_font().height() + 6;
+            const auto lines = wrap_text(c.spoken ? c.spoken : "", ps3::display::width() - 76);
+            const int first = g_iv_answer_page * 12;
+            for (int i = 0; i < 12 && first + i < static_cast<int>(lines.size()); ++i) {
+                draw_text(46, y, lines[first + i]);
+                y += active_font().height() + 8;
+            }
+        } else if (g_iv_answer_page == spoken_pages) {
+            y = draw_labeled_block(30, y, ps3::display::width() - 60,
+                                   "Anchor", c.anchor, 5);
+            draw_labeled_block(30, y, ps3::display::width() - 60,
+                               "Watch-out", c.watch, 6);
+        } else {
+            y = draw_labeled_block(30, y, ps3::display::width() - 60,
+                                   "Theme", c.theme, 3);
+            draw_labeled_block(30, y, ps3::display::width() - 60,
+                               "Confidence", c.confidence, 5);
+        }
     } else {
         // Show prompt to reveal
         draw_wrapped(30, y, ps3::display::width() - 60,
@@ -1141,9 +1369,14 @@ void render_interview_practice(ps3::display::RefreshMode mode) {
                      "Theme: " + std::string(c.theme) + "\n"
                      "Confidence: " + c.confidence, 6);
     }
-    draw_footer(g_iv_card_idx > 0 ? "Prev" : "Menu",
-                g_iv_card_spoken ? "Hide" : "Reveal",
-                g_iv_card_idx + 1 < static_cast<int>(embedded_papercoach::kCardCount) ? "Next" : nullptr);
+    const int prev = iv_next_filtered_card(g_iv_card_idx, -1);
+    const int next = iv_next_filtered_card(g_iv_card_idx, +1);
+    const int page_count = g_iv_card_spoken ? iv_answer_page_count(c) : 1;
+    draw_footer(prev >= 0 ? "Prev" : "List",
+                g_iv_card_spoken
+                    ? (g_iv_answer_page + 1 < page_count ? "More" : "Question")
+                    : "Reveal",
+                next >= 0 ? "Next" : nullptr);
     ps3::display::flush(mode);
 }
 
@@ -1176,7 +1409,10 @@ void render_interview_drill_q(ps3::display::RefreshMode mode) {
     for (int i = 0; i <= g_iv_drill_idx; ++i) {
         if (iv_drill_is_mcq(i)) ++mcq_pos;
     }
-    draw_header("Drills", std::to_string(mcq_pos));
+    draw_header(g_iv_in_exam ? "Exam" : "Drills",
+                g_iv_in_exam
+                    ? (std::to_string(g_iv_exam_current + 1) + "/" + std::to_string(g_iv_exam_count))
+                    : std::to_string(mcq_pos));
     int y = 80;
     y = draw_wrapped(30, y, ps3::display::width() - 60, d.prompt, 5) + 10;
     for (int i = 0; i < d.optionCount && i < 4; ++i) {
@@ -1230,6 +1466,53 @@ void render_interview_drill_fb(ps3::display::RefreshMode mode) {
     ps3::display::flush(mode);
 }
 
+// ── Interview — Glossary list ────────────────────────────────────────
+void render_interview_glossary_list(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
+    g_screen = Screen::InterviewGlossaryList;
+    ps3::display::clear();
+    for (int i = 0; i < 10; ++i) g_list_rows[i] = {};
+
+    if (g_iv_gloss_category_idx < 0) {
+        const auto cats = iv_glossary_categories();
+        draw_header("Glossary Categories", std::to_string(cats.size()));
+        int y = 90;
+        for (int i = 0; i < static_cast<int>(cats.size()) && i < 9; ++i) {
+            g_list_rows[i] = {24, y, ps3::display::width() - 48, 72};
+            draw_rect(g_list_rows[i]);
+            draw_wrapped(g_list_rows[i].x + 14, g_list_rows[i].y + 18,
+                         g_list_rows[i].w - 28, cats[i], 1);
+            y += 78;
+        }
+        draw_footer("Menu", nullptr, nullptr);
+        ps3::display::flush(mode);
+        return;
+    }
+
+    const auto cats = iv_glossary_categories();
+    const auto terms = iv_glossary_terms_for_category(g_iv_gloss_category_idx);
+    const int page_size = 8;
+    const int page_count = std::max(1, static_cast<int>((terms.size() + page_size - 1) / page_size));
+    g_iv_gloss_list_page = std::max(0, std::min(g_iv_gloss_list_page, page_count - 1));
+    draw_header(g_iv_gloss_category_idx < static_cast<int>(cats.size()) ? cats[g_iv_gloss_category_idx] : "Glossary",
+                std::to_string(terms.size()));
+    int y = 82;
+    const int start = g_iv_gloss_list_page * page_size;
+    for (int row = 0; row < page_size && start + row < static_cast<int>(terms.size()); ++row) {
+        const int term_idx = terms[start + row];
+        const auto& term = embedded_papercoach::kGlossaryTerms[term_idx];
+        g_list_rows[row] = {22, y, ps3::display::width() - 44, 80};
+        draw_rect(g_list_rows[row]);
+        draw_wrapped(g_list_rows[row].x + 12, g_list_rows[row].y + 16,
+                     g_list_rows[row].w - 24, term.term, 2);
+        y += 86;
+    }
+    draw_footer("Back",
+                g_iv_gloss_list_page > 0 ? "Prev" : nullptr,
+                g_iv_gloss_list_page + 1 < page_count ? "Next" : nullptr);
+    ps3::display::flush(mode);
+}
+
 // ── Interview — Glossary ──────────────────────────────────────────────
 void render_interview_glossary(ps3::display::RefreshMode mode) {
     restore_app_orientation();
@@ -1259,7 +1542,7 @@ void render_interview_results(ps3::display::RefreshMode mode) {
     restore_app_orientation();
     g_screen = Screen::InterviewResults;
     ps3::display::clear();
-    draw_header("Interview Results");
+    draw_header(g_iv_exam_count > 0 ? "Exam Results" : "Interview Results");
     int y = 90;
     y = draw_wrapped(30, y, ps3::display::width() - 60,
                      "Session summary", 1) + 10;
@@ -1272,7 +1555,7 @@ void render_interview_results(ps3::display::RefreshMode mode) {
         y = draw_wrapped(30, y, ps3::display::width() - 60,
                          "No drills completed this session.", 2) + 8;
     }
-    if (g_iv_exam_count > 0 && g_iv_in_exam) {
+    if (g_iv_exam_count > 0) {
         y = draw_wrapped(30, y, ps3::display::width() - 60,
                          "Last Exam: " + std::to_string(g_iv_exam_score) + "/" +
                          std::to_string(g_iv_exam_count), 2) + 8;
@@ -1809,9 +2092,7 @@ void handle_interview_menu(int x, int y) {
     }
     if (g_iv_menu_buttons[0].contains(x, y)) {
         nav_push(Screen::Interview);
-        g_iv_card_idx = 0;
-        g_iv_card_spoken = false;
-        render_interview_practice();
+        render_interview_practice_menu();
     } else if (g_iv_menu_buttons[1].contains(x, y)) {
         nav_push(Screen::Interview);
         g_iv_drill_idx = 0;
@@ -1833,31 +2114,129 @@ void handle_interview_menu(int x, int y) {
         }
     } else if (g_iv_menu_buttons[3].contains(x, y)) {
         nav_push(Screen::Interview);
-        g_iv_gloss_idx = 0;
-        render_interview_glossary();
+        g_iv_gloss_category_idx = -1;
+        g_iv_gloss_list_page = 0;
+        render_interview_glossary_list();
     } else if (g_iv_menu_buttons[4].contains(x, y)) {
         nav_push(Screen::Interview);
         render_interview_results();
     }
 }
 
+void handle_interview_practice_menu(int x, int y) {
+    if (g_footer_left.contains(x, y)) {
+        navigate_back();
+        return;
+    }
+    if (g_iv_practice_buttons[0].contains(x, y)) {
+        g_iv_practice_mode = InterviewPracticeMode::All;
+        g_iv_practice_section_idx = -1;
+        g_iv_card_list_page = 0;
+        nav_push(Screen::InterviewPracticeMenu);
+        render_interview_card_list();
+    } else if (g_iv_practice_buttons[1].contains(x, y)) {
+        g_iv_practice_mode = InterviewPracticeMode::MustMaster;
+        g_iv_practice_section_idx = -1;
+        g_iv_card_list_page = 0;
+        nav_push(Screen::InterviewPracticeMenu);
+        render_interview_card_list();
+    } else if (g_iv_practice_buttons[2].contains(x, y)) {
+        g_iv_practice_mode = InterviewPracticeMode::Category;
+        g_iv_practice_section_idx = -1;
+        g_iv_card_list_page = 0;
+        nav_push(Screen::InterviewPracticeMenu);
+        render_interview_card_list();
+    } else if (g_iv_practice_buttons[3].contains(x, y)) {
+        g_iv_card_spoken = false;
+        g_iv_answer_page = 0;
+        nav_push(Screen::InterviewPracticeMenu);
+        render_interview_practice();
+    }
+}
+
+void handle_interview_card_list(int x, int y) {
+    if (g_footer_left.contains(x, y)) {
+        if (g_iv_practice_mode == InterviewPracticeMode::Category &&
+            g_iv_practice_section_idx >= 0) {
+            g_iv_practice_section_idx = -1;
+            g_iv_card_list_page = 0;
+            render_interview_card_list();
+        } else {
+            navigate_back();
+        }
+        return;
+    }
+    if (g_footer_mid.contains(x, y) && g_iv_card_list_page > 0) {
+        --g_iv_card_list_page;
+        render_interview_card_list(ps3::display::RefreshMode::GL16);
+        return;
+    }
+    const auto cards = iv_filtered_cards();
+    const int page_size = 8;
+    const int page_count = std::max(1, static_cast<int>((cards.size() + page_size - 1) / page_size));
+    if (g_footer_right.contains(x, y) && g_iv_card_list_page + 1 < page_count) {
+        ++g_iv_card_list_page;
+        render_interview_card_list(ps3::display::RefreshMode::GL16);
+        return;
+    }
+
+    if (g_iv_practice_mode == InterviewPracticeMode::Category &&
+        g_iv_practice_section_idx < 0) {
+        const auto sections = iv_section_first_indices();
+        for (int i = 0; i < static_cast<int>(sections.size()) && i < 9; ++i) {
+            if (!g_list_rows[i].contains(x, y)) continue;
+            g_iv_practice_section_idx = i;
+            g_iv_card_list_page = 0;
+            render_interview_card_list();
+            return;
+        }
+        return;
+    }
+
+    const int start = g_iv_card_list_page * page_size;
+    for (int row = 0; row < page_size && start + row < static_cast<int>(cards.size()); ++row) {
+        if (!g_list_rows[row].contains(x, y)) continue;
+        g_iv_card_idx = cards[start + row];
+        g_iv_card_spoken = false;
+        g_iv_answer_page = 0;
+        nav_push(Screen::InterviewCardList);
+        render_interview_practice();
+        return;
+    }
+}
+
 void handle_interview_practice(int x, int y) {
     if (g_footer_left.contains(x, y)) {
-        if (g_iv_card_idx > 0) {
-            --g_iv_card_idx;
+        const int prev = iv_next_filtered_card(g_iv_card_idx, -1);
+        if (prev >= 0) {
+            g_iv_card_idx = prev;
             g_iv_card_spoken = false;
+            g_iv_answer_page = 0;
             render_interview_practice(ps3::display::RefreshMode::GL16);
         } else {
-            render_interview();
+            navigate_back();
         }
     } else if (g_footer_mid.contains(x, y)) {
-        g_iv_card_spoken = !g_iv_card_spoken;
-        if (g_iv_card_spoken) ++g_iv_session_practice;
+        if (!g_iv_card_spoken) {
+            g_iv_card_spoken = true;
+            g_iv_answer_page = 0;
+            ++g_iv_session_practice;
+        } else {
+            const int page_count = iv_answer_page_count(embedded_papercoach::kCards[g_iv_card_idx]);
+            if (g_iv_answer_page + 1 < page_count) {
+                ++g_iv_answer_page;
+            } else {
+                g_iv_card_spoken = false;
+                g_iv_answer_page = 0;
+            }
+        }
         render_interview_practice(ps3::display::RefreshMode::GL16);
     } else if (g_footer_right.contains(x, y)) {
-        if (g_iv_card_idx + 1 < static_cast<int>(embedded_papercoach::kCardCount)) {
-            ++g_iv_card_idx;
+        const int next = iv_next_filtered_card(g_iv_card_idx, +1);
+        if (next >= 0) {
+            g_iv_card_idx = next;
             g_iv_card_spoken = false;
+            g_iv_answer_page = 0;
             render_interview_practice(ps3::display::RefreshMode::GL16);
         }
     }
@@ -1880,6 +2259,18 @@ void handle_interview_drill_q(int x, int y) {
         if (g_iv_in_exam) {
             g_iv_exam_answers[g_iv_exam_current] = correct;
             if (correct) ++g_iv_exam_score;
+            ++g_iv_session_total;
+            if (correct) ++g_iv_session_correct;
+            ++g_iv_exam_current;
+            g_iv_drill_answer = -1;
+            if (g_iv_exam_current >= g_iv_exam_count) {
+                g_iv_in_exam = false;
+                render_interview_results();
+            } else {
+                g_iv_drill_idx = g_iv_exam_pool[g_iv_exam_current];
+                render_interview_drill_q();
+            }
+            return;
         }
         ++g_iv_session_total;
         if (correct) ++g_iv_session_correct;
@@ -1932,16 +2323,62 @@ void handle_interview_drill_fb(int x, int y) {
     }
 }
 
+void handle_interview_glossary_list(int x, int y) {
+    if (g_footer_left.contains(x, y)) {
+        if (g_iv_gloss_category_idx >= 0) {
+            g_iv_gloss_category_idx = -1;
+            g_iv_gloss_list_page = 0;
+            render_interview_glossary_list();
+        } else {
+            navigate_back();
+        }
+        return;
+    }
+    if (g_iv_gloss_category_idx < 0) {
+        const auto cats = iv_glossary_categories();
+        for (int i = 0; i < static_cast<int>(cats.size()) && i < 9; ++i) {
+            if (!g_list_rows[i].contains(x, y)) continue;
+            g_iv_gloss_category_idx = i;
+            g_iv_gloss_list_page = 0;
+            render_interview_glossary_list();
+            return;
+        }
+        return;
+    }
+
+    const auto terms = iv_glossary_terms_for_category(g_iv_gloss_category_idx);
+    const int page_size = 8;
+    const int page_count = std::max(1, static_cast<int>((terms.size() + page_size - 1) / page_size));
+    if (g_footer_mid.contains(x, y) && g_iv_gloss_list_page > 0) {
+        --g_iv_gloss_list_page;
+        render_interview_glossary_list(ps3::display::RefreshMode::GL16);
+        return;
+    }
+    if (g_footer_right.contains(x, y) && g_iv_gloss_list_page + 1 < page_count) {
+        ++g_iv_gloss_list_page;
+        render_interview_glossary_list(ps3::display::RefreshMode::GL16);
+        return;
+    }
+    const int start = g_iv_gloss_list_page * page_size;
+    for (int row = 0; row < page_size && start + row < static_cast<int>(terms.size()); ++row) {
+        if (!g_list_rows[row].contains(x, y)) continue;
+        g_iv_gloss_idx = terms[start + row];
+        nav_push(Screen::InterviewGlossaryList);
+        render_interview_glossary();
+        return;
+    }
+}
+
 void handle_interview_glossary(int x, int y) {
     if (g_footer_left.contains(x, y)) {
         if (g_iv_gloss_idx > 0) {
             --g_iv_gloss_idx;
             render_interview_glossary(ps3::display::RefreshMode::GL16);
         } else {
-            render_interview();
+            navigate_back();
         }
     } else if (g_footer_mid.contains(x, y)) {
-        render_interview();
+        navigate_back();
     } else if (g_footer_right.contains(x, y)) {
         if (g_iv_gloss_idx + 1 < static_cast<int>(embedded_papercoach::kGlossaryCount)) {
             ++g_iv_gloss_idx;
@@ -2249,9 +2686,12 @@ void handle_tap(int x, int y) {
         case Screen::Home:              handle_home(x, y); break;
         case Screen::Badge:             handle_badge(x, y); break;
         case Screen::Interview:         handle_interview_menu(x, y); break;
+        case Screen::InterviewPracticeMenu: handle_interview_practice_menu(x, y); break;
+        case Screen::InterviewCardList: handle_interview_card_list(x, y); break;
         case Screen::InterviewPractice: handle_interview_practice(x, y); break;
         case Screen::InterviewDrillQ:   handle_interview_drill_q(x, y); break;
         case Screen::InterviewDrillFB:  handle_interview_drill_fb(x, y); break;
+        case Screen::InterviewGlossaryList: handle_interview_glossary_list(x, y); break;
         case Screen::InterviewGlossary: handle_interview_glossary(x, y); break;
         case Screen::InterviewResults:  handle_interview_results(x, y); break;
         case Screen::MangaLibrary:      handle_manga_library(x, y); break;
