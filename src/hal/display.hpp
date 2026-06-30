@@ -4,6 +4,13 @@
 
 namespace ps3::display {
 
+enum class Rotation {
+    Landscape,
+    Portrait,
+    InvertedLandscape,
+    InvertedPortrait,
+};
+
 // e-paper refresh waveform selection. Trade-off: lower latency, more ghosting.
 enum class RefreshMode {
     GC16,      // 16-level grayscale, full ghost removal. Slowest, best
@@ -54,6 +61,11 @@ void flush_area(int x, int y, int w, int h,
 // value in [0, 15]; 0 = black, 15 = white. Out-of-range coords are
 // silently ignored.
 void put_pixel(int x, int y, uint8_t color);
+
+// Set the panel orientation at runtime. Width/height are updated to
+// match epdiy's logical rotated dimensions.
+void set_rotation(Rotation rotation);
+Rotation rotation();
 
 // Toggle the panel orientation by 180° at runtime.
 //   inverted = false : EPD_ROT_INVERTED_PORTRAIT (the default)

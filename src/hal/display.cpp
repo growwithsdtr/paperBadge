@@ -21,7 +21,7 @@ uint8_t* s_fb = nullptr;
 int s_w = 0;
 int s_h = 0;
 bool s_inited = false;
-bool s_inverted = false;   // mirrors the most recent set_inverted()
+Rotation s_rotation = Rotation::InvertedPortrait;
 constexpr int kTemperature = 20;
 }  // namespace
 
@@ -153,14 +153,32 @@ void put_pixel(int x, int y, uint8_t color) {
 }
 
 void set_inverted(bool inverted) {
-    if (!s_inited) return;
-    s_inverted = inverted;
-    epd_set_rotation(inverted ? EPD_ROT_PORTRAIT
-                              : EPD_ROT_INVERTED_PORTRAIT);
-    // s_w / s_h don't change: both rotations are 540×960 portrait.
-    // The caller is expected to repaint and tell touch::set_inverted.
+    set_rotation(inverted ? Rotation::Portrait : Rotation::InvertedPortrait);
 }
 
-bool is_inverted() { return s_inverted; }
+void set_rotation(Rotation rotation) {
+    if (!s_inited) return;
+    s_rotation = rotation;
+    switch (rotation) {
+        case Rotation::Landscape:
+            epd_set_rotation(EPD_ROT_LANDSCAPE);
+            break;
+        case Rotation::Portrait:
+            epd_set_rotation(EPD_ROT_PORTRAIT);
+            break;
+        case Rotation::InvertedLandscape:
+            epd_set_rotation(EPD_ROT_INVERTED_LANDSCAPE);
+            break;
+        case Rotation::InvertedPortrait:
+            epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+            break;
+    }
+    s_w = epd_rotated_display_width();
+    s_h = epd_rotated_display_height();
+}
+
+Rotation rotation() { return s_rotation; }
+
+bool is_inverted() { return s_rotation == Rotation::Portrait; }
 
 }  // namespace ps3::display

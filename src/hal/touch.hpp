@@ -60,6 +60,9 @@ void drain();
 // than wait for a discrete tap edge.
 bool current_finger(int* x, int* y);
 
+// Set the logical touch transform matching display::Rotation.
+void set_rotation(bool landscape, bool inverted);
+
 // Mirror the panel rotation toggle (display::set_inverted). When
 // inverted=true, GT911 raw coordinates are flipped 180° so logical
 // (x, y) keeps matching the user's perceived screen position.

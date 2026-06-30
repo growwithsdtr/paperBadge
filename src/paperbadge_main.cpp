@@ -1041,17 +1041,31 @@ void select_japanese_font(JapaneseFontFace face) {
 }
 
 void set_screen_orientation(bool inverted) {
-    if (ps3::display::is_inverted() == inverted) return;
     ps3::display::set_inverted(inverted);
     ps3::touch::set_inverted(inverted);
 }
 
+void set_screen_rotation(bool landscape, bool inverted) {
+    if (landscape) {
+        ps3::display::set_rotation(inverted ? ps3::display::Rotation::InvertedLandscape
+                                            : ps3::display::Rotation::Landscape);
+    } else {
+        ps3::display::set_rotation(inverted ? ps3::display::Rotation::Portrait
+                                            : ps3::display::Rotation::InvertedPortrait);
+    }
+    ps3::touch::set_rotation(landscape, inverted);
+}
+
 void restore_app_orientation() {
-    set_screen_orientation(ps3::settings::state().rotation_inverted);
+    set_screen_rotation(false, ps3::settings::state().rotation_inverted);
 }
 
 void use_manual_badge_orientation() {
-    set_screen_orientation(false);
+    set_screen_rotation(false, false);
+}
+
+void use_manga_orientation() {
+    set_screen_rotation(g_manga_landscape, ps3::settings::state().rotation_inverted);
 }
 
 // ── Interview helpers ─────────────────────────────────────────────────
@@ -1918,7 +1932,7 @@ void update_manga_progress() {
 }
 
 void render_manga_page(ps3::display::RefreshMode mode) {
-    restore_app_orientation();
+    use_manga_orientation();
     g_screen = Screen::MangaReading;
     if (!g_manga_open) {
         render_manga_library(ps3::display::RefreshMode::GC16);

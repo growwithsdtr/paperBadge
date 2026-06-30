@@ -39,10 +39,8 @@ int s_logical_h = 0;
 int s_native_w = 0;
 int s_native_h = 0;
 uint8_t* s_fb = nullptr;
-// Cached panel rotation for the duration of one decode(). Sampled
-// in display_jpeg() before invoking JPEGDEC so the inner loop can
-// branch without an extra function call per row.
-bool s_inverted_rotation = false;
+// Cached panel rotation for the duration of one decode().
+ps3::display::Rotation s_rotation = ps3::display::Rotation::InvertedPortrait;
 
 // Black-point lift LUT, rebuilt at the start of every decode from
 // the contrast level matching the caller's ContrastContext. The
@@ -69,35 +67,62 @@ int s_png_src_h = 0;
 int s_png_dst_w = 0;
 int s_png_dst_h = 0;
 
-// Per-pixel logical→native transforms (epdiy.c: _rotate).
-//
-//   EPD_ROT_INVERTED_PORTRAIT:                EPD_ROT_PORTRAIT (180°):
-//     native_x = logical_y                       native_x = max_native_x - logical_y
-//     native_y = max_native_y - logical_x        native_y = logical_x
-//
-// We bypass epd_draw_pixel and write the 4 bpp packed framebuffer
-// directly. Per-row, lx grows by 1 per col, so:
-//   INVERTED_PORTRAIT: ny decreases → fb_byte steps by -native_w_bytes
-//   PORTRAIT:          ny increases → fb_byte steps by +native_w_bytes
-// The col-bounds clip is hoisted out of the inner loop, and `nx & 1`
-// parity selects between two specialised loops (odd-nx writes the
-// high nibble, even-nx writes the low).
+bool logical_to_native(int lx, int ly, int* nx_out, int* ny_out) {
+    if (lx < 0 || ly < 0 || lx >= s_logical_w || ly >= s_logical_h) return false;
+    const int max_native_x = s_native_w - 1;
+    const int max_native_y = s_native_h - 1;
+    int nx = lx;
+    int ny = ly;
+    switch (s_rotation) {
+        case ps3::display::Rotation::Landscape:
+            nx = lx;
+            ny = ly;
+            break;
+        case ps3::display::Rotation::Portrait:
+            nx = max_native_x - ly;
+            ny = lx;
+            break;
+        case ps3::display::Rotation::InvertedLandscape:
+            nx = max_native_x - lx;
+            ny = max_native_y - ly;
+            break;
+        case ps3::display::Rotation::InvertedPortrait:
+            nx = ly;
+            ny = max_native_y - lx;
+            break;
+    }
+    if (nx < 0 || ny < 0 || nx >= s_native_w || ny >= s_native_h) return false;
+    if (nx_out) *nx_out = nx;
+    if (ny_out) *ny_out = ny;
+    return true;
+}
+
+void put_gray4_logical(int lx, int ly, uint8_t gray4) {
+    int nx = 0;
+    int ny = 0;
+    if (!logical_to_native(lx, ly, &nx, &ny)) return;
+    uint8_t* fb_byte = s_fb + ny * (s_native_w / 2) + (nx >> 1);
+    if (nx & 1) {
+        *fb_byte = (*fb_byte & 0x0F) | ((gray4 & 0x0F) << 4);
+    } else {
+        *fb_byte = (*fb_byte & 0xF0) | (gray4 & 0x0F);
+    }
+}
+
+void put_luma_logical(int lx, int ly, int luma) {
+    const uint8_t corrected = s_contrast_lut[luma & 0xFF];
+    put_gray4_logical(lx, ly, corrected >> 4);
+}
 
 // EIGHT_BIT_GRAYSCALE callback: pPixels is `iWidth` bytes of 8-bit
 // grayscale per row, MCU-block sized (16x16 typically).
 int draw_callback_grayscale(JPEGDRAW* p) {
     const int64_t t0 = esp_timer_get_time();
     const uint8_t* px = reinterpret_cast<const uint8_t*>(p->pPixels);
-    const int native_w_bytes = s_native_w / 2;
-    const int max_native_x = s_native_w - 1;
-    const int max_native_y = s_native_h - 1;
-    const bool inv = s_inverted_rotation;
-    const int  step = inv ? +native_w_bytes : -native_w_bytes;
 
     for (int row = 0; row < p->iHeight; ++row) {
         const int ly = s_offset_y + p->y + row;
         if (ly < 0 || ly >= s_logical_h) continue;
-        const int nx = inv ? (max_native_x - ly) : ly;
 
         // Clip the row to in-bounds cols (lx in [0, s_logical_w)).
         int col_min = -(s_offset_x + p->x);
@@ -106,30 +131,10 @@ int draw_callback_grayscale(JPEGDRAW* p) {
         if (col_max > p->iWidth) col_max = p->iWidth;
         if (col_min >= col_max) continue;
 
-        const int lx_start = s_offset_x + p->x + col_min;
-        const int ny_start = inv ? lx_start : (max_native_y - lx_start);
-        uint8_t* fb_byte = s_fb + ny_start * native_w_bytes + (nx >> 1);
-
         const uint8_t* src = px + row * p->iWidth + col_min;
         const int n = col_max - col_min;
-
-        if (nx & 1) {
-            // Odd nx → high nibble. The contrast LUT is applied in
-            // 8-bit space; (lut[v] & 0xF0) takes the top-4 bits of
-            // the corrected value, already in position for the high
-            // nibble.
-            for (int i = 0; i < n; ++i) {
-                const uint8_t g = s_contrast_lut[src[i]] & 0xF0;
-                *fb_byte = (*fb_byte & 0x0F) | g;
-                fb_byte += step;
-            }
-        } else {
-            // Even nx → low nibble.
-            for (int i = 0; i < n; ++i) {
-                const uint8_t g = s_contrast_lut[src[i]] >> 4;
-                *fb_byte = (*fb_byte & 0xF0) | g;
-                fb_byte += step;
-            }
+        for (int i = 0; i < n; ++i) {
+            put_luma_logical(s_offset_x + p->x + col_min + i, ly, src[i]);
         }
     }
     s_callback_total_us += esp_timer_get_time() - t0;
@@ -149,16 +154,10 @@ int draw_callback_grayscale(JPEGDRAW* p) {
 int draw_callback_dithered(JPEGDRAW* p) {
     const uint8_t* px = reinterpret_cast<const uint8_t*>(p->pPixels);
     const int src_pitch = (p->iWidth + 1) / 2;
-    const int native_w_bytes = s_native_w / 2;
-    const int max_native_x = s_native_w - 1;
-    const int max_native_y = s_native_h - 1;
-    const bool inv = s_inverted_rotation;
-    const int  step = inv ? +native_w_bytes : -native_w_bytes;
 
     for (int row = 0; row < p->iHeight; ++row) {
         const int ly = s_offset_y + p->y + row;
         if (ly < 0 || ly >= s_logical_h) continue;
-        const int nx = inv ? (max_native_x - ly) : ly;
 
         int col_min = -(s_offset_x + p->x);
         if (col_min < 0) col_min = 0;
@@ -166,32 +165,11 @@ int draw_callback_dithered(JPEGDRAW* p) {
         if (col_max > p->iWidth) col_max = p->iWidth;
         if (col_min >= col_max) continue;
 
-        const int lx_start = s_offset_x + p->x + col_min;
-        const int ny_start = inv ? lx_start : (max_native_y - lx_start);
-        uint8_t* fb_byte = s_fb + ny_start * native_w_bytes + (nx >> 1);
-
         const uint8_t* src_row = px + row * src_pitch;
-
-        if (nx & 1) {
-            // Odd nx → high nibble. For even col the gray4 is
-            // already in the high nibble of `pair`, so AND with 0xF0.
-            // For odd col the gray4 is in the low nibble, shift up.
-            for (int col = col_min; col < col_max; ++col) {
-                const uint8_t pair = src_row[col >> 1];
-                const uint8_t g = (col & 1)
-                                  ? static_cast<uint8_t>(pair << 4)
-                                  : static_cast<uint8_t>(pair & 0xF0);
-                *fb_byte = (*fb_byte & 0x0F) | g;
-                fb_byte += step;
-            }
-        } else {
-            // Even nx → low nibble.
-            for (int col = col_min; col < col_max; ++col) {
-                const uint8_t pair = src_row[col >> 1];
-                const uint8_t g = (col & 1) ? (pair & 0x0F) : (pair >> 4);
-                *fb_byte = (*fb_byte & 0xF0) | g;
-                fb_byte += step;
-            }
+        for (int col = col_min; col < col_max; ++col) {
+            const uint8_t pair = src_row[col >> 1];
+            const uint8_t g = (col & 1) ? (pair & 0x0F) : (pair >> 4);
+            put_gray4_logical(s_offset_x + p->x + col, ly, g);
         }
     }
     return 1;
@@ -240,10 +218,7 @@ bool display_jpeg(const uint8_t* data, size_t size, uint8_t* dest_fb,
     s_native_w = epd_width();
     s_native_h = epd_height();
     s_fb = dest_fb ? dest_fb : ps3::display::framebuffer();
-    // Cached for the whole decode so the per-pixel inner loop can
-    // step the framebuffer pointer in the right direction without
-    // re-reading the rotation flag every row.
-    s_inverted_rotation = ps3::display::is_inverted();
+    s_rotation = ps3::display::rotation();
     ps3::settings::build_contrast_lut(s_contrast_lut, ctx);
 
     s_callback_total_us = 0;
@@ -303,21 +278,7 @@ bool display_jpeg(const uint8_t* data, size_t size, uint8_t* dest_fb,
 namespace {
 
 void put_png_luma_pixel(int lx, int ly, int luma) {
-    if (lx < 0 || ly < 0 || lx >= s_logical_w || ly >= s_logical_h) return;
-
-    const bool inv = s_inverted_rotation;
-    const int native_w_bytes = s_native_w / 2;
-    const int max_native_x = s_native_w - 1;
-    const int max_native_y = s_native_h - 1;
-    const int nx = inv ? (max_native_x - ly) : ly;
-    const int ny = inv ? lx : (max_native_y - lx);
-    uint8_t* fb_byte = s_fb + ny * native_w_bytes + (nx >> 1);
-    const uint8_t corrected = s_contrast_lut[luma & 0xFF];
-    if (nx & 1) {
-        *fb_byte = (*fb_byte & 0x0F) | (corrected & 0xF0);
-    } else {
-        *fb_byte = (*fb_byte & 0xF0) | (corrected >> 4);
-    }
+    put_luma_logical(lx, ly, luma);
 }
 
 int rgb565_luma(uint16_t rgb) {
@@ -359,33 +320,8 @@ int draw_callback_png(PNGDRAW* p) {
     if (col_max > PNG_ROW_BUF_PIXELS) col_max = PNG_ROW_BUF_PIXELS;
     if (col_min >= col_max) return 1;
 
-    const bool inv = s_inverted_rotation;
-    const int  native_w_bytes = s_native_w / 2;
-    const int  max_native_x   = s_native_w - 1;
-    const int  max_native_y   = s_native_h - 1;
-    const int  step           = inv ? +native_w_bytes : -native_w_bytes;
-    const int  nx             = inv ? (max_native_x - ly) : ly;
-
-    const int lx_start = s_offset_x + col_min;
-    const int ny_start = inv ? lx_start : (max_native_y - lx_start);
-    uint8_t*  fb_byte  = s_fb + ny_start * native_w_bytes + (nx >> 1);
-
-    if (nx & 1) {
-        // Odd nx → high nibble.
-        for (int col = col_min; col < col_max; ++col) {
-            const int luma = rgb565_luma(s_png_row[col]);
-            const uint8_t g = s_contrast_lut[luma] & 0xF0;
-            *fb_byte = (*fb_byte & 0x0F) | g;
-            fb_byte += step;
-        }
-    } else {
-        // Even nx → low nibble.
-        for (int col = col_min; col < col_max; ++col) {
-            const int luma = rgb565_luma(s_png_row[col]);
-            const uint8_t g = s_contrast_lut[luma] >> 4;
-            *fb_byte = (*fb_byte & 0xF0) | g;
-            fb_byte += step;
-        }
+    for (int col = col_min; col < col_max; ++col) {
+        put_png_luma_pixel(s_offset_x + col, ly, rgb565_luma(s_png_row[col]));
     }
     return 1;
 }
@@ -453,7 +389,7 @@ bool display_png_impl(const uint8_t* data, size_t size,
     s_native_w = epd_width();
     s_native_h = epd_height();
     s_fb = dest_fb ? dest_fb : ps3::display::framebuffer();
-    s_inverted_rotation = ps3::display::is_inverted();
+    s_rotation = ps3::display::rotation();
     s_png_obj = png;
     ps3::settings::build_contrast_lut(s_contrast_lut, ctx);
 
@@ -624,13 +560,12 @@ bool display_bmp(const uint8_t* data, size_t size, uint8_t* dest_fb,
     const int offset_x = (screen_w - width) / 2;
     const int offset_y = (screen_h - height) / 2;
 
-    uint8_t*   fb              = dest_fb ? dest_fb : ps3::display::framebuffer();
-    const bool inv             = ps3::display::is_inverted();
-    const int  native_w        = epd_width();
-    const int  native_h        = epd_height();
-    const int  native_w_bytes  = native_w / 2;
-    const int  max_native_x    = native_w - 1;
-    const int  max_native_y    = native_h - 1;
+    s_logical_w = screen_w;
+    s_logical_h = screen_h;
+    s_native_w = epd_width();
+    s_native_h = epd_height();
+    s_fb = dest_fb ? dest_fb : ps3::display::framebuffer();
+    s_rotation = ps3::display::rotation();
 
     const uint8_t* px_base = data + pixel_offset;
     const int      bytes_per_pixel = bpp / 8;
@@ -646,9 +581,6 @@ bool display_bmp(const uint8_t* data, size_t size, uint8_t* dest_fb,
         // BMP rows default to bottom-up; top_down flips the order.
         const int     src_row = top_down ? row : (height - 1 - row);
         const uint8_t* src    = px_base + src_row * row_stride;
-
-        const int  nx     = inv ? (max_native_x - ly) : ly;
-        const bool nx_odd = (nx & 1);
 
         int col_min = -offset_x;
         if (col_min < 0) col_min = 0;
@@ -670,13 +602,7 @@ bool display_bmp(const uint8_t* data, size_t size, uint8_t* dest_fb,
             const uint8_t gray4 = rgb_to_gray4(R, G, B);
 
             const int lx     = offset_x + col;
-            const int ny     = inv ? lx : (max_native_y - lx);
-            uint8_t*  fb_byte = fb + ny * native_w_bytes + (nx >> 1);
-            if (nx_odd) {
-                *fb_byte = (*fb_byte & 0x0F) | (gray4 << 4);
-            } else {
-                *fb_byte = (*fb_byte & 0xF0) | gray4;
-            }
+            put_gray4_logical(lx, ly, gray4);
         }
     }
     ESP_LOGI(TAG, "BMP %dx%d %u bpp painted", width, height, (unsigned)bpp);

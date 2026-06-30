@@ -49,9 +49,10 @@ volatile bool s_live_down = false;
 volatile int  s_live_x    = 0;
 volatile int  s_live_y    = 0;
 
-// 180° rotation flip — when true, GT911 raw coordinates are mirrored
-// so logical (x, y) tracks the user's perceived screen position
-// after a panel rotation toggle. Mirrors display::set_inverted().
+// GT911 raw coordinates are calibrated to the firmware's normal
+// portrait logical space (540x960). These flags rotate that portrait
+// sample into the active epdiy logical display orientation.
+volatile bool s_landscape = false;
 volatile bool s_invert_xy = false;
 
 QueueHandle_t s_event_queue = nullptr;
@@ -148,14 +149,17 @@ bool read_one_tap(int* x_out, int* y_out) {
     const int gt_x = static_cast<int>((data[1] << 8) | data[0]);
     const int gt_y = static_cast<int>((data[3] << 8) | data[2]);
 
-    // GT911 on Paper S3 is calibrated to logical (rotated) screen
-    // coordinates — see the diagnostic capture in stage 2. Pass
-    // through as-is by default; mirror 180° when the panel was
-    // flipped via display::set_inverted() so logical (x, y) keeps
-    // matching the displayed image.
+    // GT911 on Paper S3 is calibrated to the normal portrait logical
+    // coordinates. Rotate that sample into the active display mode.
     int final_x = gt_x;
     int final_y = gt_y;
-    if (s_invert_xy) {
+    if (s_landscape && s_invert_xy) {
+        final_x = epd_rotated_display_width() - 1 - gt_y;
+        final_y = gt_x;
+    } else if (s_landscape) {
+        final_x = gt_y;
+        final_y = epd_rotated_display_height() - 1 - gt_x;
+    } else if (s_invert_xy) {
         final_x = epd_rotated_display_width()  - 1 - gt_x;
         final_y = epd_rotated_display_height() - 1 - gt_y;
     }
@@ -273,6 +277,11 @@ bool current_finger(int* x, int* y) {
 }
 
 void set_inverted(bool inverted) {
+    set_rotation(false, inverted);
+}
+
+void set_rotation(bool landscape, bool inverted) {
+    s_landscape = landscape;
     s_invert_xy = inverted;
 }
 
