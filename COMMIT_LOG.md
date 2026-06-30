@@ -4,6 +4,35 @@ Branch: `codex/aggressive-papers3-idf-overhaul`
 
 ## Commits
 
+- `339d811` — fix embedded badge rendering (P0 QA stabilization pass)
+
+  **Badge root cause and fix**
+  - Root cause: `PNG_MAX_BUFFERED_PIXELS` in PNGdec.h was `(320*4+1)*2 = 2562`. The guard
+    in `png.inl` rejects any image where `iPitch >= PNG_MAX_BUFFERED_PIXELS/2 = 1281`.
+    The 540-wide badge PNG has `iPitch = 540*3 = 1620 > 1281` → `PNG_TOO_BIG` returned.
+  - Fix: `components/PNGdec/src/PNGdec.h` limit raised to `4400`. Supports up to 540-wide
+    RGBA (iPitch=2160 < 2200=4400/2); decode buffer covers two rows + alignment (needs ~4352B,
+    have 4400B). Both the guard check and the internal two-row buffer now fit.
+  - Improved badge fallback: on decode failure, shows styled name/title card instead of
+    bare "Embedded badge image unavailable." text.
+  - Added ESP_LOGI diagnostics at each decode path so future failures are visible in serial.
+
+  **Navigation fixes (random jump mitigation)**
+  - `handle_manga_error`: add `ps3::touch::drain()` after `render_manga_library()` to drop
+    phantom taps buffered during the slow GC16Full panel refresh.
+  - `handle_reader_error`: same drain after `render_reader_library()`.
+  - `handle_manga_reading` (header tap → back): drain after GC16Full library render.
+  - Prevents queued taps from the previous screen triggering spurious library row opens
+    on the newly rendered screen.
+
+  **render_current completeness**
+  - Added missing `Screen::JapaneseFont` case; wake-from-sleep while on font picker now
+    restores the font screen instead of falling through to `default: render_home`.
+
+  Build: SUCCESS — Flash 11.5% (1,329,993 bytes / 11,534,336 bytes), RAM 7.3%
+  Flash: PENDING — device in deep sleep at commit time; wake device and run:
+    `pio run -t upload --upload-port /dev/cu.usbmodem1101`
+
 - `6d5ca18` — restore badge, interview, manga guard, reader guard (staged recovery pass)
 
   **Stage 1 — Embedded Badge (no SD required)**
