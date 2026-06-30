@@ -1073,6 +1073,18 @@ void cycle_refresh_profile() {
     ESP_LOGI(TAG, "refresh profile: %s", refresh_profile_name());
 }
 
+void cycle_full_refresh_pages() {
+    auto& s = ps3::settings::state();
+    switch (s.full_refresh_pages) {
+        case 1: s.full_refresh_pages = 5; break;
+        case 5: s.full_refresh_pages = 10; break;
+        case 10: s.full_refresh_pages = 15; break;
+        case 15: s.full_refresh_pages = 20; break;
+        default: s.full_refresh_pages = 1; break;
+    }
+    ps3::settings::save();
+}
+
 void cycle_manga_fit_mode() {
     switch (g_manga_fit_mode) {
         case MangaFitMode::FitPage: g_manga_fit_mode = MangaFitMode::FitWidth; break;
@@ -2599,6 +2611,7 @@ void render_settings(ps3::display::RefreshMode mode) {
             labels[count++] = "Sleep timeout: " + std::to_string(g_sleep_minutes) + "m";
         } else if (g_settings_page == 5) {
             labels[count++] = std::string("Profile: ") + refresh_profile_name();
+            labels[count++] = "Clean every: " + std::to_string(ps3::settings::state().full_refresh_pages);
             labels[count++] = "Clean refresh";
         }
         labels[count++] = "Back";
@@ -2618,7 +2631,7 @@ bool settings_back_button(int idx) {
     else if (g_settings_page == 2) back_idx = 1;
     else if (g_settings_page == 3) back_idx = 2;
     else if (g_settings_page == 4) back_idx = 3;
-    else if (g_settings_page == 5) back_idx = 2;
+    else if (g_settings_page == 5) back_idx = 3;
     return idx == back_idx;
 }
 
@@ -2691,6 +2704,9 @@ void handle_settings(int x, int y) {
                 cycle_refresh_profile();
                 render_settings(ps3::display::RefreshMode::GC16Full);
             } else if (i == 1) {
+                cycle_full_refresh_pages();
+                render_settings(ps3::display::RefreshMode::GL16);
+            } else if (i == 2) {
                 ps3::display::flush(ps3::display::RefreshMode::GC16Full);
             }
         }
@@ -3246,8 +3262,8 @@ void handle_manga_reading(int x, int y) {
     update_manga_progress();
     ++g_pages_since_full;
     const int cadence = std::max(1, ps3::settings::state().full_refresh_pages);
-    const bool clean = ps3::settings::state().refresh_profile == 2 ||
-                       g_pages_since_full >= cadence;
+    const int profile = ps3::settings::state().refresh_profile;
+    const bool clean = profile == 2 || (profile == 1 && g_pages_since_full >= cadence);
     if (clean) g_pages_since_full = 0;
     render_manga_page(clean ? ps3::display::RefreshMode::GC16Full : refresh_page_turn_mode());
 }
