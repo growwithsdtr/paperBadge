@@ -7,6 +7,12 @@
 
 namespace ps3::comic {
 
+enum class ImageFit {
+    Page,
+    Width,
+    Height,
+};
+
 // Decode a JPEG image from memory and blit it onto a 4 bpp packed
 // framebuffer in panel-native orientation (epd_width()/epd_height()).
 // Image is scaled to fit and centered in the screen logical
@@ -33,6 +39,14 @@ bool display_jpeg(const uint8_t* data, size_t size,
                   uint8_t* dest_fb = nullptr,
                   ps3::settings::ContrastContext ctx
                       = ps3::settings::ContrastContext::Off);
+
+bool display_jpeg_view(const uint8_t* data, size_t size,
+                       ImageFit fit,
+                       int slice_index,
+                       int* out_slice_count,
+                       uint8_t* dest_fb = nullptr,
+                       ps3::settings::ContrastContext ctx
+                           = ps3::settings::ContrastContext::Off);
 
 // PNG counterpart of display_jpeg(). Same blit conventions: writes
 // directly into the 4 bpp packed framebuffer in panel-native

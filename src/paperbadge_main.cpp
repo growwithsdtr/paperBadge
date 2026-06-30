@@ -200,6 +200,7 @@ Screen g_manga_error_return = Screen::MangaLibrary;
 MangaFitMode g_manga_fit_mode = MangaFitMode::FitPage;
 bool g_manga_landscape = false;
 int g_manga_slice = 0;
+int g_manga_slice_count = 1;
 
 // ── Badge globals ─────────────────────────────────────────────────────
 bool g_badge_japanese = false;
@@ -904,6 +905,15 @@ const char* manga_fit_name() {
     return "fit page";
 }
 
+ps3::comic::ImageFit manga_image_fit() {
+    switch (g_manga_fit_mode) {
+        case MangaFitMode::FitWidth: return ps3::comic::ImageFit::Width;
+        case MangaFitMode::FitHeight: return ps3::comic::ImageFit::Height;
+        case MangaFitMode::FitPage:
+        default: return ps3::comic::ImageFit::Page;
+    }
+}
+
 const char* reader_size_name() {
     switch (g_reader_font_level) {
         case 0: return "S";
@@ -1031,6 +1041,18 @@ void cycle_manga_fit_mode() {
         case MangaFitMode::FitPage: g_manga_fit_mode = MangaFitMode::FitWidth; break;
         case MangaFitMode::FitWidth: g_manga_fit_mode = MangaFitMode::FitHeight; break;
         case MangaFitMode::FitHeight: g_manga_fit_mode = MangaFitMode::FitPage; break;
+    }
+    ps3::comic::page_loader::invalidate();
+}
+
+void toggle_manga_orientation() {
+    g_manga_landscape = !g_manga_landscape;
+    g_manga_slice = 0;
+    g_manga_slice_count = 1;
+    if (g_manga_landscape && g_manga_fit_mode == MangaFitMode::FitPage) {
+        g_manga_fit_mode = MangaFitMode::FitWidth;
+    } else if (!g_manga_landscape && g_manga_fit_mode == MangaFitMode::FitWidth) {
+        g_manga_fit_mode = MangaFitMode::FitPage;
     }
     ps3::comic::page_loader::invalidate();
 }
@@ -1938,19 +1960,24 @@ void render_manga_page(ps3::display::RefreshMode mode) {
         render_manga_library(ps3::display::RefreshMode::GC16);
         return;
     }
+    ps3::comic::page_loader::set_view(manga_image_fit(), g_manga_slice);
     const size_t fb_size = static_cast<size_t>(epd_width()) * epd_height() / 2;
     bool ok = ps3::comic::page_loader::try_consume(g_manga_page, ps3::display::framebuffer(), fb_size);
     if (!ok) {
         ok = ps3::comic::page_loader::fetch_and_consume(g_manga_page, ps3::display::framebuffer(), fb_size);
     }
+    g_manga_slice_count = ps3::comic::page_loader::current_slice_count();
+    if (g_manga_slice_count < 1) g_manga_slice_count = 1;
+    if (g_manga_slice >= g_manga_slice_count) g_manga_slice = g_manga_slice_count - 1;
     if (!ok) {
         ps3::display::clear();
         draw_header("Manga error");
         draw_wrapped(34, 130, ps3::display::width() - 68, "Failed to decode this page.");
     } else {
-        ESP_LOGI(TAG, "manga page %d/%d mode=%s orientation=%s slice=%d",
+        ESP_LOGI(TAG, "manga page %d/%d mode=%s orientation=%s slice=%d/%d",
                  g_manga_page + 1, g_manga_book.page_count(), manga_fit_name(),
-                 g_manga_landscape ? "landscape" : "portrait", g_manga_slice);
+                 g_manga_landscape ? "landscape" : "portrait",
+                 g_manga_slice + 1, g_manga_slice_count);
     }
     ps3::display::flush(mode);
     ps3::comic::page_loader::request(g_manga_page);
@@ -2605,9 +2632,7 @@ void handle_settings(int x, int y) {
                 cycle_manga_fit_mode();
                 render_settings(ps3::display::RefreshMode::GL16);
             } else if (i == 1) {
-                g_manga_landscape = !g_manga_landscape;
-                g_manga_slice = 0;
-                ps3::comic::page_loader::invalidate();
+                toggle_manga_orientation();
                 render_settings(ps3::display::RefreshMode::GL16);
             }
         } else if (g_settings_page == 4) {
@@ -3148,9 +3173,7 @@ void handle_manga_reading(int x, int y) {
             cycle_manga_fit_mode();
             ESP_LOGI(TAG, "manga fit mode: %s", manga_fit_name());
         } else {
-            g_manga_landscape = !g_manga_landscape;
-            g_manga_slice = 0;
-            ps3::comic::page_loader::invalidate();
+            toggle_manga_orientation();
             ESP_LOGI(TAG, "manga orientation mode: %s",
                      g_manga_landscape ? "landscape slices" : "portrait");
         }
@@ -3160,12 +3183,22 @@ void handle_manga_reading(int x, int y) {
     }
     const bool right_binding = ps3::settings::state().right_binding;
     const bool advance = right_binding ? x < ps3::display::width() / 2 : x >= ps3::display::width() / 2;
-    if (advance && g_manga_page + 1 < g_manga_book.page_count()) {
-        ++g_manga_page;
-        g_manga_slice = 0;
-    } else if (!advance && g_manga_page > 0) {
+    if (advance) {
+        if (g_manga_slice + 1 < g_manga_slice_count) {
+            ++g_manga_slice;
+        } else if (g_manga_page + 1 < g_manga_book.page_count()) {
+            ++g_manga_page;
+            g_manga_slice = 0;
+            g_manga_slice_count = 1;
+        } else {
+            return;
+        }
+    } else if (g_manga_slice > 0) {
+        --g_manga_slice;
+    } else if (g_manga_page > 0) {
         --g_manga_page;
-        g_manga_slice = 0;
+        g_manga_slice = 999;
+        g_manga_slice_count = 1;
     } else {
         return;
     }

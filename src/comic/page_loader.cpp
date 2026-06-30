@@ -75,6 +75,7 @@ struct Slot {
     int        page;
     SlotStatus status;
     uint8_t*   fb;     // PSRAM, panel-sized 4 bpp packed
+    int        slice_count;
 };
 
 struct ByteSlot {
@@ -101,6 +102,9 @@ volatile bool      s_stop             = false;
 
 int s_current_page    = -1;
 int s_foreground_page = -1;
+ImageFit s_fit = ImageFit::Page;
+int s_slice_index = 0;
+int s_current_slice_count = 1;
 
 // --- Mutex-protected helpers ---
 
@@ -409,14 +413,17 @@ void decode_task(void*) {
 
             const int64_t t0 = esp_timer_get_time();
             std::memset(s_slots[slot].fb, 0xFF, s_fb_size);
-            const bool ok = display_jpeg(jpg, jpg_size, s_slots[slot].fb,
-                                         ps3::settings::ContrastContext::Reading);
+            int slice_count = 1;
+            const bool ok = display_jpeg_view(jpg, jpg_size, s_fit, s_slice_index,
+                                              &slice_count, s_slots[slot].fb,
+                                              ps3::settings::ContrastContext::Reading);
             std::free(jpg);
             const int64_t t1 = esp_timer_get_time();
 
             xSemaphoreTake(s_mutex, portMAX_DELAY);
             const bool still_useful = ok
                 && (target == s_foreground_page || page_in_window(target));
+            s_slots[slot].slice_count = slice_count;
             s_slots[slot].status = still_useful ? SLOT_READY : SLOT_EMPTY;
             xSemaphoreGive(s_mutex);
 
@@ -459,6 +466,7 @@ bool start(CbzBook* book) {
         }
         s_slots[i].page   = -1;
         s_slots[i].status = SLOT_EMPTY;
+        s_slots[i].slice_count = 1;
         ++decode_allocated;
     }
     for (int i = 0; i < BYTE_SLOTS; ++i) {
@@ -483,6 +491,9 @@ bool start(CbzBook* book) {
 
     s_current_page    = -1;
     s_foreground_page = -1;
+    s_fit = ImageFit::Page;
+    s_slice_index = 0;
+    s_current_slice_count = 1;
     s_stop = false;
 
     if (xTaskCreatePinnedToCore(
@@ -539,6 +550,7 @@ void stop() {
         s.fb     = nullptr;
         s.page   = -1;
         s.status = SLOT_EMPTY;
+        s.slice_count = 1;
     }
     for (auto& b : s_bytes) {
         if (b.data) std::free(b.data);
@@ -581,6 +593,7 @@ void invalidate() {
         b.status = BYTES_EMPTY;
     }
     s_foreground_page = -1;
+    s_current_slice_count = 1;
     xSemaphoreGive(s_mutex);
     // Wake both workers so they refill the window for s_current_page
     // immediately rather than waiting for the next request().
@@ -596,6 +609,7 @@ bool try_consume(int page, uint8_t* dest_fb, size_t dest_size) {
     for (auto& s : s_slots) {
         if (s.status == SLOT_READY && s.page == page) {
             std::memcpy(dest_fb, s.fb, s_fb_size);
+            s_current_slice_count = s.slice_count > 0 ? s.slice_count : 1;
             // Slot stays READY (was: SLOT_EMPTY) so the just-consumed
             // page is still cached. After we update s_current_page
             // below, this slot represents "current's own slot" and
@@ -655,6 +669,23 @@ bool fetch_and_consume(int page, uint8_t* dest_fb, size_t dest_size) {
             return false;
         }
     }
+}
+
+void set_view(ImageFit fit, int slice_index) {
+    if (slice_index < 0) slice_index = 0;
+    bool changed = false;
+    if (s_mutex) xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (s_fit != fit || s_slice_index != slice_index) {
+        s_fit = fit;
+        s_slice_index = slice_index;
+        changed = true;
+    }
+    if (s_mutex) xSemaphoreGive(s_mutex);
+    if (changed) invalidate();
+}
+
+int current_slice_count() {
+    return s_current_slice_count > 0 ? s_current_slice_count : 1;
 }
 
 }  // namespace ps3::comic::page_loader

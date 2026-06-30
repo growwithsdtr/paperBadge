@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "image_display.hpp"
+
 namespace ps3::comic {
 
 class CbzBook;
@@ -26,6 +28,9 @@ class CbzBook;
 // preload window, so the page the user is waiting for jumps the
 // queue and is decoded next.
 namespace page_loader {
+
+void set_view(ImageFit fit, int slice_index);
+int current_slice_count();
 
 // Allocate the decode-cache slots (PSRAM) and start both workers.
 // `book` must outlive the loader (until stop()).

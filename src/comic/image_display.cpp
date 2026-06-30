@@ -4,6 +4,7 @@
 #include "../system/settings.hpp"
 
 #include <cstdlib>
+#include <algorithm>
 
 #include <esp_heap_caps.h>
 #include <esp_log.h>
@@ -66,6 +67,11 @@ int s_png_src_w = 0;
 int s_png_src_h = 0;
 int s_png_dst_w = 0;
 int s_png_dst_h = 0;
+bool s_jpeg_scaled = false;
+int s_jpeg_dec_w = 0;
+int s_jpeg_dec_h = 0;
+int s_jpeg_dst_w = 0;
+int s_jpeg_dst_h = 0;
 
 bool logical_to_native(int lx, int ly, int* nx_out, int* ny_out) {
     if (lx < 0 || ly < 0 || lx >= s_logical_w || ly >= s_logical_h) return false;
@@ -122,19 +128,39 @@ int draw_callback_grayscale(JPEGDRAW* p) {
 
     for (int row = 0; row < p->iHeight; ++row) {
         const int ly = s_offset_y + p->y + row;
-        if (ly < 0 || ly >= s_logical_h) continue;
+        if (!s_jpeg_scaled && (ly < 0 || ly >= s_logical_h)) continue;
 
         // Clip the row to in-bounds cols (lx in [0, s_logical_w)).
-        int col_min = -(s_offset_x + p->x);
-        if (col_min < 0) col_min = 0;
-        int col_max = s_logical_w - (s_offset_x + p->x);
-        if (col_max > p->iWidth) col_max = p->iWidth;
+        int col_min = 0;
+        int col_max = p->iWidth;
+        if (!s_jpeg_scaled) {
+            col_min = -(s_offset_x + p->x);
+            if (col_min < 0) col_min = 0;
+            col_max = s_logical_w - (s_offset_x + p->x);
+            if (col_max > p->iWidth) col_max = p->iWidth;
+        }
         if (col_min >= col_max) continue;
 
         const uint8_t* src = px + row * p->iWidth + col_min;
         const int n = col_max - col_min;
         for (int i = 0; i < n; ++i) {
-            put_luma_logical(s_offset_x + p->x + col_min + i, ly, src[i]);
+            const int sx = p->x + col_min + i;
+            if (s_jpeg_scaled && s_jpeg_dec_w > 0 && s_jpeg_dec_h > 0) {
+                const int sy = p->y + row;
+                int dx0 = s_offset_x + (sx * s_jpeg_dst_w) / s_jpeg_dec_w;
+                int dx1 = s_offset_x + ((sx + 1) * s_jpeg_dst_w + s_jpeg_dec_w - 1) / s_jpeg_dec_w;
+                int dy0 = s_offset_y + (sy * s_jpeg_dst_h) / s_jpeg_dec_h;
+                int dy1 = s_offset_y + ((sy + 1) * s_jpeg_dst_h + s_jpeg_dec_h - 1) / s_jpeg_dec_h;
+                if (dx1 <= dx0) dx1 = dx0 + 1;
+                if (dy1 <= dy0) dy1 = dy0 + 1;
+                for (int dy = dy0; dy < dy1; ++dy) {
+                    for (int dx = dx0; dx < dx1; ++dx) {
+                        put_luma_logical(dx, dy, src[i]);
+                    }
+                }
+            } else {
+                put_luma_logical(s_offset_x + sx, ly, src[i]);
+            }
         }
     }
     s_callback_total_us += esp_timer_get_time() - t0;
@@ -157,19 +183,39 @@ int draw_callback_dithered(JPEGDRAW* p) {
 
     for (int row = 0; row < p->iHeight; ++row) {
         const int ly = s_offset_y + p->y + row;
-        if (ly < 0 || ly >= s_logical_h) continue;
+        if (!s_jpeg_scaled && (ly < 0 || ly >= s_logical_h)) continue;
 
-        int col_min = -(s_offset_x + p->x);
-        if (col_min < 0) col_min = 0;
-        int col_max = s_logical_w - (s_offset_x + p->x);
-        if (col_max > p->iWidth) col_max = p->iWidth;
+        int col_min = 0;
+        int col_max = p->iWidth;
+        if (!s_jpeg_scaled) {
+            col_min = -(s_offset_x + p->x);
+            if (col_min < 0) col_min = 0;
+            col_max = s_logical_w - (s_offset_x + p->x);
+            if (col_max > p->iWidth) col_max = p->iWidth;
+        }
         if (col_min >= col_max) continue;
 
         const uint8_t* src_row = px + row * src_pitch;
         for (int col = col_min; col < col_max; ++col) {
             const uint8_t pair = src_row[col >> 1];
             const uint8_t g = (col & 1) ? (pair & 0x0F) : (pair >> 4);
-            put_gray4_logical(s_offset_x + p->x + col, ly, g);
+            const int sx = p->x + col;
+            if (s_jpeg_scaled && s_jpeg_dec_w > 0 && s_jpeg_dec_h > 0) {
+                const int sy = p->y + row;
+                int dx0 = s_offset_x + (sx * s_jpeg_dst_w) / s_jpeg_dec_w;
+                int dx1 = s_offset_x + ((sx + 1) * s_jpeg_dst_w + s_jpeg_dec_w - 1) / s_jpeg_dec_w;
+                int dy0 = s_offset_y + (sy * s_jpeg_dst_h) / s_jpeg_dec_h;
+                int dy1 = s_offset_y + ((sy + 1) * s_jpeg_dst_h + s_jpeg_dec_h - 1) / s_jpeg_dec_h;
+                if (dx1 <= dx0) dx1 = dx0 + 1;
+                if (dy1 <= dy0) dy1 = dy0 + 1;
+                for (int dy = dy0; dy < dy1; ++dy) {
+                    for (int dx = dx0; dx < dx1; ++dx) {
+                        put_gray4_logical(dx, dy, g);
+                    }
+                }
+            } else {
+                put_gray4_logical(s_offset_x + sx, ly, g);
+            }
         }
     }
     return 1;
@@ -177,8 +223,12 @@ int draw_callback_dithered(JPEGDRAW* p) {
 
 }  // namespace
 
-bool display_jpeg(const uint8_t* data, size_t size, uint8_t* dest_fb,
-                  ps3::settings::ContrastContext ctx) {
+bool display_jpeg_view(const uint8_t* data, size_t size,
+                       ImageFit fit,
+                       int slice_index,
+                       int* out_slice_count,
+                       uint8_t* dest_fb,
+                       ps3::settings::ContrastContext ctx) {
     JPEGDEC jpeg;
 
     JPEG_DRAW_CALLBACK* cb = kUseDither ? draw_callback_dithered
@@ -194,31 +244,66 @@ bool display_jpeg(const uint8_t* data, size_t size, uint8_t* dest_fb,
     const int screen_w = ps3::display::width();
     const int screen_h = ps3::display::height();
 
-    // JPEGDEC supports 1/1, 1/2, 1/4, 1/8 scale. Pick the smallest
-    // divisor (largest output) that still fits inside the screen.
-    int scale = 8;
-    int scale_flag = JPEG_SCALE_EIGHTH;
-    if (src_w / 4 <= screen_w && src_h / 4 <= screen_h) {
+    int dst_w = screen_w;
+    int dst_h = screen_h;
+    if (fit == ImageFit::Width) {
+        dst_w = screen_w;
+        dst_h = std::max(1, (src_h * screen_w) / std::max(1, src_w));
+    } else if (fit == ImageFit::Height) {
+        dst_h = screen_h;
+        dst_w = std::max(1, (src_w * screen_h) / std::max(1, src_h));
+    } else {
+        if (src_w <= screen_w && src_h <= screen_h) {
+            dst_w = src_w;
+            dst_h = src_h;
+        } else if (static_cast<int64_t>(src_w) * screen_h >
+                   static_cast<int64_t>(src_h) * screen_w) {
+            dst_w = screen_w;
+            dst_h = std::max(1, (src_h * screen_w) / std::max(1, src_w));
+        } else {
+            dst_h = screen_h;
+            dst_w = std::max(1, (src_w * screen_h) / std::max(1, src_h));
+        }
+    }
+
+    int slice_count = dst_h > screen_h ? (dst_h + screen_h - 1) / screen_h : 1;
+    if (slice_count < 1) slice_count = 1;
+    if (out_slice_count) *out_slice_count = slice_count;
+    if (slice_index < 0) slice_index = 0;
+    if (slice_index >= slice_count) slice_index = slice_count - 1;
+    int slice_y = 0;
+    if (slice_count > 1) {
+        slice_y = slice_index * screen_h;
+        const int max_slice_y = std::max(0, dst_h - screen_h);
+        if (slice_y > max_slice_y) slice_y = max_slice_y;
+    }
+
+    int scale = 1;
+    int scale_flag = 0;
+    if (src_w / 8 >= dst_w && src_h / 8 >= dst_h) {
+        scale = 8; scale_flag = JPEG_SCALE_EIGHTH;
+    } else if (src_w / 4 >= dst_w && src_h / 4 >= dst_h) {
         scale = 4; scale_flag = JPEG_SCALE_QUARTER;
-    }
-    if (src_w / 2 <= screen_w && src_h / 2 <= screen_h) {
+    } else if (src_w / 2 >= dst_w && src_h / 2 >= dst_h) {
         scale = 2; scale_flag = JPEG_SCALE_HALF;
-    }
-    if (src_w <= screen_w && src_h <= screen_h) {
-        scale = 1; scale_flag = 0;
     }
 
     const int out_w = src_w / scale;
     const int out_h = src_h / scale;
 
-    s_offset_x = (screen_w - out_w) / 2;
-    s_offset_y = (screen_h - out_h) / 2;
+    s_offset_x = (screen_w - dst_w) / 2;
+    s_offset_y = (dst_h <= screen_h) ? (screen_h - dst_h) / 2 : -slice_y;
     s_logical_w = screen_w;
     s_logical_h = screen_h;
     s_native_w = epd_width();
     s_native_h = epd_height();
     s_fb = dest_fb ? dest_fb : ps3::display::framebuffer();
     s_rotation = ps3::display::rotation();
+    s_jpeg_scaled = true;
+    s_jpeg_dec_w = out_w;
+    s_jpeg_dec_h = out_h;
+    s_jpeg_dst_w = dst_w;
+    s_jpeg_dst_h = dst_h;
     ps3::settings::build_contrast_lut(s_contrast_lut, ctx);
 
     s_callback_total_us = 0;
@@ -248,6 +333,8 @@ bool display_jpeg(const uint8_t* data, size_t size, uint8_t* dest_fb,
         rc = jpeg.decode(0, 0, scale_flag);
     }
     jpeg.close();
+    s_jpeg_scaled = false;
+    s_jpeg_dec_w = s_jpeg_dec_h = s_jpeg_dst_w = s_jpeg_dst_h = 0;
 
     if (rc != 1) {
         ESP_LOGE(TAG, "decode failed rc=%d, last error %d",
@@ -257,13 +344,20 @@ bool display_jpeg(const uint8_t* data, size_t size, uint8_t* dest_fb,
 
     const int64_t t_decode_1 = esp_timer_get_time();
     ESP_LOGI(TAG,
-             "JPEG %dx%d->%dx%d (1/%d) total=%lld ms (cb=%lld ms / pure=%lld ms)%s",
-             src_w, src_h, out_w, out_h, scale,
+             "JPEG %dx%d->%dx%d decode=%dx%d (1/%d) slice=%d/%d total=%lld ms (cb=%lld ms / pure=%lld ms)%s",
+             src_w, src_h, dst_w, dst_h, out_w, out_h, scale,
+             slice_index + 1, slice_count,
              (long long)((t_decode_1 - t_decode_0) / 1000),
              (long long)(s_callback_total_us / 1000),
              (long long)((t_decode_1 - t_decode_0 - s_callback_total_us) / 1000),
              kUseDither ? " [dither]" : "");
     return true;
+}
+
+bool display_jpeg(const uint8_t* data, size_t size, uint8_t* dest_fb,
+                  ps3::settings::ContrastContext ctx) {
+    int slices = 1;
+    return display_jpeg_view(data, size, ImageFit::Page, 0, &slices, dest_fb, ctx);
 }
 
 // --- PNG path ---------------------------------------------------------
