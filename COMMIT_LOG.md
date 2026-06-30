@@ -4,6 +4,62 @@ Branch: `codex/aggressive-papers3-idf-overhaul`
 
 ## Commits
 
+- `6d5ca18` — restore badge, interview, manga guard, reader guard (staged recovery pass)
+
+  **Stage 1 — Embedded Badge (no SD required)**
+  - `src/embedded_badge.h`: ESP-IDF-compatible flash arrays for badge_en.png,
+    badge_ja.png, profile.png, qr.png (~100 KB in .rodata)
+  - `render_badge()` decodes embedded PNG via `display_png()`;
+    SD asset file (`/paperBadge/assets/badge_en.png`) is optional fallback only
+  - `draw_english_badge_final_frame()`: draws badge as final e-ink frame before
+    light sleep, deep sleep, and power-off so screen persists as badge
+  - No SD card required for Badge
+
+  **Stage 2 — Embedded Interview (no SD required)**
+  - `src/embedded_interview_deck.h`: ESP-IDF port of `embedded_papercoach_deck.h`
+    (removes `#include <Arduino.h>` / `PROGMEM`); 71 cards, 149 drills, 44 glossary terms
+  - Interview now opens a real submenu: Practice, Drills, Exam, Glossary, Results
+  - Practice: flip-card view (title → Reveal → spoken answer), tracks session card count
+  - Drills: scrolls through all MCQ drills (optionCount > 0), option selection + feedback screen
+  - Exam: 10-question shuffled subset (LCG shuffle), score tracked per session
+  - Glossary: scrollable term/definition/example browser (44 terms)
+  - Results: session drill correct/total + last exam score + Reset
+  - No SD card required
+
+  **Stage 3 — Manga archive guard**
+  - CBR/RAR tapped: immediate clear error screen with conversion advice
+  - File size guard: archives >50 MB shown ZIP64 diagnostic before attempting open
+    (miniz cannot parse ZIP64 central directories)
+  - Diagnostic includes: file name, size (MB), ZIP64 risk rating, remediation steps
+  - open_manga_book() failure: structured error with likely causes + serial log hint
+  - Missing SD (library dir unreadable): graceful "No SD" screen
+  - New `Screen::MangaError` dismisses on any tap → library
+  - Small CBZ with JPEG pages continues to open normally
+
+  **Stage 4 — Reader/EPUB guard**
+  - File size guard: files >4 MB blocked before text extraction attempt
+  - EPUB entry guard: individual HTML entries >2 MB uncompressed skipped to avoid heap OOM
+  - EPUB open failure: structured error (corrupted, encrypted, no HTML, OOM, suggest TXT)
+  - Non-EPUB open failure: clear message
+  - Missing SD: detects `/sdcard` unavailability, shows message
+  - New `Screen::ReaderError` dismisses on any tap → library
+  - Good TXT/MD/small EPUB continue to open normally
+
+  **Stage 5 — Japanese / font baseline preserved**
+  - BIZ UDGothic remains default; IPAex Gothic remains selectable via Font page
+  - Japanese practice (3 embedded questions), feedback, multi-page flow: unchanged
+  - No Japanese routes through ASCII sanitizer
+
+  **Stage 6 — Sleep / power preserved**
+  - Badge final frame before every sleep/power-off path
+  - Auto sleep timeout still functional (configurable in Settings)
+  - light sleep → badge frame → block on touch → wake → render_current()
+  - deep sleep → badge frame → epd_poweroff → esp_deep_sleep_start()
+
+  Build: SUCCESS — Flash 11.5% (1,329,273 bytes / 11,534,336 bytes), RAM 7.3%
+  Flash: SKIPPED — device in deep sleep, physical button press required to wake
+  Port detected: `/dev/cu.usbmodemHA0E246012845` (present, not responding to auto-reset)
+
 - `2a3b2af` — overhaul: migrate PaperS3 firmware to ESP-IDF manga shell
   - Switched PlatformIO from Arduino/M5Unified to ESP-IDF 5.5 via `espressif32@6.12.0`
   - Added 16 MB Paper S3 partition layout with 0xB00000 app slot (<12 MB cap)
