@@ -26,4 +26,4 @@ extern const uint8_t  kBuiltinIpaGothicGlyphs[kBuiltinUiFontGlyphCount
 
 }  // namespace ps3::font
 
-// fingerprint: a86a698bacb6e219
+// fingerprint: 496879de95b44282
