@@ -1,3 +1,41 @@
+# Heavy PaperBadge Sprint
+
+Branch: `heavy-paperbadge-sprint`
+Base: `d76e86c` (`codex/aggressive-papers3-idf-overhaul`)
+
+## Commits
+
+- `7fa5773` — fix transactional reader epub
+- `4383712` — fix badge interactions final frame
+- `b543c56` — add header navigation stack
+- `c97ca45` — isolate screen orientation
+- `beee96a` — restore rich interview flows
+- `30ec7a1` — expand japanese study scaffold
+- `a203f9a` — improve manga reader layout formats
+- `3e06af4` — improve reader typography settings
+- `0cb18fa` — restore refresh profiles
+- `0300efe` — add font lab font settings
+- `3ae477f` — expand settings pages
+- `6eedaec` — add manga preprocessor
+- `e4844ff` — add manga ocr sidecar schema
+- `a2dd916` — add japanese data schema index scaffold
+
+## Summary
+
+- Reader EPUB open is transactional and OPF/spine-based, with bounds-safe HTML entity stripping and explicit ReaderError Back/Home routing.
+- Badge is footer-free, supports manual EN/JA toggle, QR zoom, and English-only 180-degree final sleep/power frame without leaking orientation.
+- Header navigation fallback is top-left Back, top-right Home, with a small stack and deterministic Reader/Manga error targets.
+- Interview/PaperCoach has richer practice menu/list, paged answers from embedded deck fields, distinct no-feedback Exam, and glossary categories.
+- Japanese has Source -> Week/Unit -> Day/Lesson -> Practice scaffold, no-feedback Mock Test, Reference, Results, and SD registry detection.
+- Manga is fullscreen while reading, keeps CBZ/JPEG stable, has explicit CBR/RAR/PNG/WebP/ZIP64 guidance, and host preprocessing for large archives.
+- Font Lab was expanded and a host font candidate/subset helper was added.
+- Refresh profiles Fast/Balanced/Clean are persisted and wired into page turns/reveal transitions.
+- Settings now has Fonts, Reader, Manga, Power, and Refresh pages.
+- Schema/docs added for manga OCR sidecars and Japanese cross-reference/progress data.
+
+Build: SUCCESS — latest checked firmware flash 1,402,561 bytes / 11,534,336 bytes, RAM 24,344 bytes / 327,680 bytes.
+Flash: NOT RUN for this sprint by explicit request. Use `pio run -t upload --upload-port /dev/cu.usbmodem1101` when ready.
+
 # Aggressive Paper S3 ESP-IDF / Manga Shell
 
 Branch: `codex/aggressive-papers3-idf-overhaul`

@@ -25,6 +25,15 @@ UPLOAD=0 bash .claude/skills/run-paperbadge/smoke.sh
 
 Default upload and monitor port: `/dev/cu.usbmodem1101` (macOS — use `cu.` prefix).
 
+Current ESP-IDF sprint branch: `heavy-paperbadge-sprint`.
+
+Useful host tools:
+
+```bash
+tools/manga_preprocess.py --help
+tools/font_candidates.py --help
+```
+
 ## Current SD Paths
 
 - `/paperbadge/badge.json`: optional badge config.
