@@ -2,6 +2,7 @@
 
 #include "cbz_book.hpp"
 #include "image_display.hpp"
+#include "../hal/display.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -83,6 +84,7 @@ struct ByteSlot {
     ByteStatus status;
     uint8_t*   data;   // PSRAM, allocated by extract via miniz, freed by decode
     size_t     size;
+    PageImageFormat format;
 };
 
 CbzBook*           s_book          = nullptr;
@@ -283,6 +285,7 @@ void evict_outside_window() {
             if (b.data) std::free(b.data);
             b.data = nullptr;
             b.size = 0;
+            b.format = PageImageFormat::Jpeg;
             b.status = BYTES_EMPTY;
             b.page = -1;
         }
@@ -312,6 +315,7 @@ void extract_task(void*) {
                     }
                     s_bytes[slot].page   = target;
                     s_bytes[slot].size   = 0;
+                    s_bytes[slot].format = PageImageFormat::Jpeg;
                     s_bytes[slot].status = BYTES_FILLING;
                 } else {
                     target = -1;
@@ -324,8 +328,9 @@ void extract_task(void*) {
             const int64_t t0 = esp_timer_get_time();
             uint8_t* jpg = nullptr;
             size_t   jpg_size = 0;
+            PageImageFormat fmt = PageImageFormat::Jpeg;
             const bool ok = s_book
-                && s_book->extract(target, &jpg, &jpg_size, nullptr, 0);
+                && s_book->extract(target, &jpg, &jpg_size, nullptr, 0, &fmt);
             const int64_t t1 = esp_timer_get_time();
 
             xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -334,11 +339,13 @@ void extract_task(void*) {
             if (still_useful) {
                 s_bytes[slot].data   = jpg;
                 s_bytes[slot].size   = jpg_size;
+                s_bytes[slot].format = fmt;
                 s_bytes[slot].status = BYTES_READY;
             } else {
                 s_bytes[slot].data   = nullptr;
                 s_bytes[slot].size   = 0;
                 s_bytes[slot].page   = -1;
+                s_bytes[slot].format = PageImageFormat::Jpeg;
                 s_bytes[slot].status = BYTES_EMPTY;
                 if (jpg) std::free(jpg);
             }
@@ -374,6 +381,7 @@ void decode_task(void*) {
             int slot      = -1;
             uint8_t* jpg  = nullptr;
             size_t  jpg_size = 0;
+            PageImageFormat fmt = PageImageFormat::Jpeg;
 
             xSemaphoreTake(s_mutex, portMAX_DELAY);
             byte_slot = pick_decode_byte_slot();
@@ -381,12 +389,14 @@ void decode_task(void*) {
                 target   = s_bytes[byte_slot].page;
                 jpg      = s_bytes[byte_slot].data;
                 jpg_size = s_bytes[byte_slot].size;
+                fmt      = s_bytes[byte_slot].format;
                 // Take ownership of the bytes — clear the byte slot
                 // immediately so extract can refill it during our
                 // (longer) decode pass.
                 s_bytes[byte_slot].data   = nullptr;
                 s_bytes[byte_slot].size   = 0;
                 s_bytes[byte_slot].page   = -1;
+                s_bytes[byte_slot].format = PageImageFormat::Jpeg;
                 s_bytes[byte_slot].status = BYTES_EMPTY;
 
                 const bool is_fg = (target == s_foreground_page);
@@ -414,9 +424,17 @@ void decode_task(void*) {
             const int64_t t0 = esp_timer_get_time();
             std::memset(s_slots[slot].fb, 0xFF, s_fb_size);
             int slice_count = 1;
-            const bool ok = display_jpeg_view(jpg, jpg_size, s_fit, s_slice_index,
-                                              &slice_count, s_slots[slot].fb,
-                                              ps3::settings::ContrastContext::Reading);
+            bool ok = false;
+            if (fmt == PageImageFormat::Png) {
+                ok = display_png_fit(jpg, jpg_size, ps3::display::width(), ps3::display::height(),
+                                     s_slots[slot].fb,
+                                     ps3::settings::ContrastContext::Reading);
+                slice_count = 1;
+            } else {
+                ok = display_jpeg_view(jpg, jpg_size, s_fit, s_slice_index,
+                                       &slice_count, s_slots[slot].fb,
+                                       ps3::settings::ContrastContext::Reading);
+            }
             std::free(jpg);
             const int64_t t1 = esp_timer_get_time();
 
@@ -473,6 +491,7 @@ bool start(CbzBook* book) {
         s_bytes[i].data   = nullptr;
         s_bytes[i].size   = 0;
         s_bytes[i].page   = -1;
+        s_bytes[i].format = PageImageFormat::Jpeg;
         s_bytes[i].status = BYTES_EMPTY;
     }
 
@@ -557,6 +576,7 @@ void stop() {
         b.data   = nullptr;
         b.size   = 0;
         b.page   = -1;
+        b.format = PageImageFormat::Jpeg;
         b.status = BYTES_EMPTY;
     }
     s_fb_size = 0;
@@ -590,6 +610,7 @@ void invalidate() {
         b.data   = nullptr;
         b.size   = 0;
         b.page   = -1;
+        b.format = PageImageFormat::Jpeg;
         b.status = BYTES_EMPTY;
     }
     s_foreground_page = -1;

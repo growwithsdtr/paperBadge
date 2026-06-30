@@ -278,6 +278,36 @@ bool has_suffix_icase(const std::string& s, const char* suffix) {
     return true;
 }
 
+bool archive_has_zip64_markers(const char* path) {
+    FILE* fp = std::fopen(path, "rb");
+    if (!fp) return false;
+    if (std::fseek(fp, 0, SEEK_END) != 0) {
+        std::fclose(fp);
+        return false;
+    }
+    const long size = std::ftell(fp);
+    if (size <= 0) {
+        std::fclose(fp);
+        return false;
+    }
+    const long window = std::min<long>(size, 128 * 1024);
+    if (std::fseek(fp, size - window, SEEK_SET) != 0) {
+        std::fclose(fp);
+        return false;
+    }
+    std::vector<uint8_t> tail(static_cast<size_t>(window));
+    const size_t n = std::fread(tail.data(), 1, tail.size(), fp);
+    std::fclose(fp);
+    for (size_t i = 0; i + 3 < n; ++i) {
+        const uint32_t sig = static_cast<uint32_t>(tail[i]) |
+                             (static_cast<uint32_t>(tail[i + 1]) << 8) |
+                             (static_cast<uint32_t>(tail[i + 2]) << 16) |
+                             (static_cast<uint32_t>(tail[i + 3]) << 24);
+        if (sig == 0x06064B50u || sig == 0x07064B50u) return true;
+    }
+    return false;
+}
+
 void mkdir_if_missing(const char* path) {
     mkdir(path, 0755);
 }
@@ -3103,23 +3133,21 @@ void handle_manga_library(int x, int y) {
             return;
         }
 
-        // File size guard — miniz cannot parse ZIP64 central directories.
-        // Files >50 MB are very likely ZIP64 and will fail.
         struct stat st{};
         long long file_size = 0;
         if (stat(path, &st) == 0) file_size = static_cast<long long>(st.st_size);
-        if (file_size > 50LL * 1024 * 1024) {
+        const bool zip64_markers = archive_has_zip64_markers(path);
+        if (zip64_markers) {
             char buf[512];
             const long long mb = file_size / (1024LL * 1024LL);
             std::snprintf(buf, sizeof(buf),
-                "Archive too large (%lld MB).\n\n"
-                "Miniz cannot parse ZIP64 central directories. Archives\n"
-                "over ~50 MB likely use ZIP64 and will fail.\n\n"
+                "ZIP64 archive not supported (%lld MB).\n\n"
+                "This file contains ZIP64 central-directory markers.\n"
+                "Firmware miniz cannot parse ZIP64 safely.\n\n"
                 "Diagnostics:\n"
                 "  File size:   %lld MB\n"
-                "  ZIP64 risk:  high (>50 MB)\n\n"
-                "Split into volumes under 50 MB or re-archive\n"
-                "without ZIP64 (zip -0 or use a non-ZIP64 tool).",
+                "  ZIP64:       yes\n\n"
+                "Re-archive without ZIP64 or split with tools/manga_preprocess.py.",
                 mb, mb);
             g_manga_error_msg = buf;
             g_manga_error_return = Screen::MangaLibrary;
@@ -3141,9 +3169,10 @@ void handle_manga_library(int x, int y) {
                 std::snprintf(sz, sizeof(sz), "  Size: %lld KB\n", file_size / 1024LL);
                 diag += sz;
             }
+            diag += std::string("  ZIP64 markers: ") + (zip64_markers ? "yes\n" : "not found\n");
             diag +=
                 "\nPossible causes:\n"
-                "  - Archive contains only PNG/WebP (JPEG required)\n"
+                "  - Archive contains only WebP or unsupported images\n"
                 "  - Corrupted or truncated archive\n"
                 "  - Unsupported compression method (requires Deflate)\n"
                 "  - Insufficient PSRAM for page index\n"

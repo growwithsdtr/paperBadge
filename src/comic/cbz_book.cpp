@@ -36,12 +36,19 @@ bool has_jpeg_extension(const char* name, size_t len) {
     return false;
 }
 
+bool has_png_extension(const char* name, size_t len) {
+    if (!name || len < 4) return false;
+    const char* ext = name + len - 4;
+    return (ext[0] == '.') &&
+           (ext[1] == 'p' || ext[1] == 'P') &&
+           (ext[2] == 'n' || ext[2] == 'N') &&
+           (ext[3] == 'g' || ext[3] == 'G');
+}
+
 namespace {
 constexpr const char* TAG = "cbz";
 
-// The decode worker in page_loader only handles JPEG (display_jpeg),
-// so a CBZ whose pages are all PNG / WebP / etc. is unviewable on
-// this firmware. Filter by extension at open time and surface the
+// Filter by displayable page extensions at open time and surface the
 // "no usable pages" condition as an open() failure, instead of
 // silently building a page list whose first decode would just fail.
 //
@@ -54,7 +61,8 @@ bool entry_looks_like_file(const mz_zip_archive_file_stat& st) {
     const size_t len = std::strlen(st.m_filename);
     if (len == 0) return false;
     if (st.m_filename[len - 1] == '/') return false;
-    if (!has_jpeg_extension(st.m_filename, len)) return false;
+    if (!has_jpeg_extension(st.m_filename, len) &&
+        !has_png_extension(st.m_filename, len)) return false;
     return true;
 }
 
@@ -102,7 +110,7 @@ bool CbzBook::open(const char* path) {
     }
 
     if (count == 0) {
-        ESP_LOGE(TAG, "no displayable (jpg/jpeg) entries in %s (had %d files)",
+        ESP_LOGE(TAG, "no displayable (jpg/jpeg/png) entries in %s (had %d files)",
                  path, n);
         std::free(tmp);
         mz_zip_reader_end(zip);
@@ -152,7 +160,8 @@ void CbzBook::close() {
 
 bool CbzBook::extract(int idx,
                       uint8_t** out_data, size_t* out_size,
-                      char* name_buf, size_t name_buf_size) {
+                      char* name_buf, size_t name_buf_size,
+                      PageImageFormat* out_format) {
     if (!zip_ || idx < 0 || idx >= page_count_) return false;
 
     const int entry = page_indices_[idx];
@@ -177,6 +186,11 @@ bool CbzBook::extract(int idx,
     if (name_buf && name_buf_size > 0) {
         std::strncpy(name_buf, st.m_filename, name_buf_size - 1);
         name_buf[name_buf_size - 1] = '\0';
+    }
+    if (out_format) {
+        const size_t len = std::strlen(st.m_filename);
+        *out_format = has_png_extension(st.m_filename, len) ? PageImageFormat::Png
+                                                            : PageImageFormat::Jpeg;
     }
     return true;
 }

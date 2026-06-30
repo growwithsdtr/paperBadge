@@ -53,8 +53,8 @@ uint8_t s_contrast_lut[256];
 // path, but the PNGdec API delivers a full image row per callback
 // (rather than an MCU block), so the row-RGB565 buffer below stays
 // alive only for the duration of one decode pass. Sized for the
-// widest sane PNG we'd expect on this 540×960 panel.
-constexpr int  PNG_ROW_BUF_PIXELS = 540;
+// widest sane PNG we'd expect in a CBZ after host preprocessing.
+constexpr int  PNG_ROW_BUF_PIXELS = 2048;
 uint16_t s_png_row[PNG_ROW_BUF_PIXELS];
 PNG*     s_png_obj = nullptr;
 

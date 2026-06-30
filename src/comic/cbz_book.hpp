@@ -5,6 +5,11 @@
 
 namespace ps3::comic {
 
+enum class PageImageFormat : uint8_t {
+    Jpeg,
+    Png,
+};
+
 // True if `name` ends in `.jpg` or `.jpeg` (case-insensitive).
 // Used both when filtering CBZ entries on open() and when picking
 // the cover candidate for thumbnail generation — keep the two
@@ -12,6 +17,7 @@ namespace ps3::comic {
 // successfully (because there is at least one JPEG inside) can
 // also produce a thumbnail.
 bool has_jpeg_extension(const char* name, std::size_t len);
+bool has_png_extension(const char* name, std::size_t len);
 
 
 // An open CBZ archive on the SD card. Holds the miniz handle for the
@@ -41,7 +47,8 @@ class CbzBook {
     // bytes otherwise).
     bool extract(int idx,
                  uint8_t** out_data, size_t* out_size,
-                 char* name_buf, size_t name_buf_size);
+                 char* name_buf, size_t name_buf_size,
+                 PageImageFormat* out_format = nullptr);
 
  private:
     void* zip_;            // mz_zip_archive* (PIMPL via void*)
