@@ -216,6 +216,7 @@ int g_reader_font_level = 1;  // 0=S, 1=M, 2=L, 3=XL line density
 int g_interview_font_level = 1;
 int g_japanese_font_level = 1;
 int g_font_lab_page = 0;
+int g_settings_page = 0;  // 0 main, 1 fonts, 2 reader, 3 manga, 4 power, 5 refresh
 
 // ── Japanese globals ──────────────────────────────────────────────────
 int g_jp_index = 0;
@@ -1102,6 +1103,8 @@ void render_japanese_font(ps3::display::RefreshMode mode = ps3::display::Refresh
 void render_settings(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void save_reader_state();
 void update_manga_progress();
+void enter_light_sleep(const char* trigger);
+void enter_deep_sleep();
 
 void close_manga_book_if_open() {
     if (!g_manga_open) return;
@@ -2307,25 +2310,137 @@ void render_settings(ps3::display::RefreshMode mode) {
     restore_app_orientation();
     g_screen = Screen::Settings;
     ps3::display::clear();
-    draw_header("Settings", "Power");
+    const char* page_title = "Settings";
+    if (g_settings_page == 1) page_title = "Fonts";
+    else if (g_settings_page == 2) page_title = "Reader";
+    else if (g_settings_page == 3) page_title = "Manga";
+    else if (g_settings_page == 4) page_title = "Power";
+    else if (g_settings_page == 5) page_title = "Refresh";
+    draw_header(page_title, g_settings_page == 0 ? "Menu" : "Settings");
     const int mv = ps3::battery::voltage_mv();
     const int pct = ps3::battery::level_pct();
-    draw_wrapped(30, 92, ps3::display::width() - 60,
-                 "Battery: " + std::to_string(mv) + " mV  " + std::to_string(pct) + "%  " +
-                     (ps3::battery::is_charging() ? "charging" : "battery"));
-    const char* labels[] = {"JP font", "Sleep now", "Power off", "Sleep timeout", "Refresh profile", "Clean refresh"};
-    for (int i = 0; i < 6; ++i) {
-        g_settings_buttons[i] = {34, 170 + i * 78, ps3::display::width() - 68, 64};
-        std::string label = labels[i];
-        if (i == 0) label += std::string(": ") + font_face_name();
-        if (i == 3) label += ": " + std::to_string(g_sleep_minutes) + "m";
-        if (i == 4) label += std::string(": ") + refresh_profile_name();
-        draw_button(g_settings_buttons[i], label);
+    for (int i = 0; i < 6; ++i) g_settings_buttons[i] = {};
+    int y = 88;
+    if (g_settings_page == 0) {
+        draw_wrapped(30, y, ps3::display::width() - 60,
+                     "Battery: " + std::to_string(mv) + " mV  " + std::to_string(pct) + "%  " +
+                         (ps3::battery::is_charging() ? "charging" : "battery"), 2);
+        y = 160;
+        const char* labels[] = {"Fonts", "Reader", "Manga", "Power", "Refresh"};
+        for (int i = 0; i < 5; ++i) {
+            g_settings_buttons[i] = {34, y + i * 86, ps3::display::width() - 68, 68};
+            draw_button(g_settings_buttons[i], labels[i]);
+        }
+    } else {
+        std::string labels[6];
+        int count = 0;
+        if (g_settings_page == 1) {
+            labels[count++] = "Font Lab";
+            labels[count++] = std::string("JP font: ") + font_face_name();
+            labels[count++] = "Interview size: " + std::to_string(g_interview_font_level + 1);
+            labels[count++] = "Japanese size: " + std::to_string(g_japanese_font_level + 1);
+        } else if (g_settings_page == 2) {
+            labels[count++] = std::string("Reader size: ") + reader_size_name();
+        } else if (g_settings_page == 3) {
+            labels[count++] = std::string("Fit: ") + manga_fit_name();
+            labels[count++] = std::string("Orientation: ") + (g_manga_landscape ? "Landscape" : "Portrait");
+        } else if (g_settings_page == 4) {
+            labels[count++] = "Sleep now";
+            labels[count++] = "Power off";
+            labels[count++] = "Sleep timeout: " + std::to_string(g_sleep_minutes) + "m";
+        } else if (g_settings_page == 5) {
+            labels[count++] = std::string("Profile: ") + refresh_profile_name();
+            labels[count++] = "Clean refresh";
+        }
+        labels[count++] = "Back";
+        for (int i = 0; i < count && i < 6; ++i) {
+            g_settings_buttons[i] = {34, y + i * 84, ps3::display::width() - 68, 66};
+            draw_button(g_settings_buttons[i], labels[i]);
+        }
     }
     draw_footer("Home", nullptr, nullptr);
     ps3::display::flush(mode);
 }
 
+bool settings_back_button(int idx) {
+    if (g_settings_page == 0) return false;
+    int back_idx = 0;
+    if (g_settings_page == 1) back_idx = 4;
+    else if (g_settings_page == 2) back_idx = 1;
+    else if (g_settings_page == 3) back_idx = 2;
+    else if (g_settings_page == 4) back_idx = 3;
+    else if (g_settings_page == 5) back_idx = 2;
+    return idx == back_idx;
+}
+
+void handle_settings(int x, int y) {
+    if (g_footer_left.contains(x, y)) {
+        g_settings_page = 0;
+        navigate_home();
+        return;
+    }
+    for (int i = 0; i < 6; ++i) {
+        if (!g_settings_buttons[i].contains(x, y)) continue;
+        if (settings_back_button(i)) {
+            g_settings_page = 0;
+            render_settings(ps3::display::RefreshMode::GC16Full);
+            return;
+        }
+        if (g_settings_page == 0) {
+            g_settings_page = i + 1;
+            render_settings(ps3::display::RefreshMode::GC16Full);
+            return;
+        }
+        if (g_settings_page == 1) {
+            if (i == 0) {
+                nav_push(Screen::Settings);
+                render_japanese_font();
+            } else if (i == 1) {
+                select_japanese_font(g_jp_font == JapaneseFontFace::BizUdGothic ? JapaneseFontFace::IpaCurrent : JapaneseFontFace::BizUdGothic);
+                render_settings(ps3::display::RefreshMode::GC16Full);
+            } else if (i == 2) {
+                g_interview_font_level = (g_interview_font_level + 1) % 4;
+                render_settings(ps3::display::RefreshMode::GL16);
+            } else if (i == 3) {
+                g_japanese_font_level = (g_japanese_font_level + 1) % 4;
+                render_settings(ps3::display::RefreshMode::GL16);
+            }
+        } else if (g_settings_page == 2) {
+            if (i == 0) {
+                g_reader_font_level = (g_reader_font_level + 1) % 4;
+                reflow_reader_pages_preserving_line();
+                render_settings(ps3::display::RefreshMode::GL16);
+            }
+        } else if (g_settings_page == 3) {
+            if (i == 0) {
+                cycle_manga_fit_mode();
+                render_settings(ps3::display::RefreshMode::GL16);
+            } else if (i == 1) {
+                g_manga_landscape = !g_manga_landscape;
+                g_manga_slice = 0;
+                ps3::comic::page_loader::invalidate();
+                render_settings(ps3::display::RefreshMode::GL16);
+            }
+        } else if (g_settings_page == 4) {
+            if (i == 0) {
+                enter_light_sleep("settings");
+            } else if (i == 1) {
+                enter_deep_sleep();
+            } else if (i == 2) {
+                g_sleep_minutes = g_sleep_minutes == 0 ? 5 : (g_sleep_minutes == 5 ? 10 : (g_sleep_minutes == 10 ? 15 : 0));
+                render_settings(ps3::display::RefreshMode::GL16);
+            }
+        } else if (g_settings_page == 5) {
+            if (i == 0) {
+                cycle_refresh_profile();
+                render_settings(ps3::display::RefreshMode::GC16Full);
+            } else if (i == 1) {
+                ps3::display::flush(ps3::display::RefreshMode::GC16Full);
+            }
+        }
+        return;
+    }
+}
 // ── Sleep / power ─────────────────────────────────────────────────────
 void enter_deep_sleep() {
     save_session();
@@ -3111,29 +3226,6 @@ void handle_japanese_font(int x, int y) {
     } else if (g_footer_right.contains(x, y)) {
         g_font_lab_page = (g_font_lab_page + 1) % 5;
         render_japanese_font(ps3::display::RefreshMode::GL16);
-    }
-}
-
-void handle_settings(int x, int y) {
-    if (g_footer_left.contains(x, y)) {
-        render_home();
-        return;
-    }
-    if (g_settings_buttons[0].contains(x, y)) {
-        nav_push(Screen::Settings);
-        render_japanese_font();
-    } else if (g_settings_buttons[1].contains(x, y)) {
-        enter_light_sleep("settings");
-    } else if (g_settings_buttons[2].contains(x, y)) {
-        enter_deep_sleep();
-    } else if (g_settings_buttons[3].contains(x, y)) {
-        g_sleep_minutes = g_sleep_minutes == 0 ? 5 : (g_sleep_minutes == 5 ? 10 : (g_sleep_minutes == 10 ? 15 : 0));
-        render_settings(ps3::display::RefreshMode::GL16);
-    } else if (g_settings_buttons[4].contains(x, y)) {
-        cycle_refresh_profile();
-        render_settings(ps3::display::RefreshMode::GC16Full);
-    } else if (g_settings_buttons[5].contains(x, y)) {
-        ps3::display::flush(ps3::display::RefreshMode::GC16Full);
     }
 }
 
