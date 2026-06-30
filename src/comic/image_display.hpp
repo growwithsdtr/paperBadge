@@ -71,4 +71,13 @@ bool display_png_at(const uint8_t* data, size_t size,
                     ps3::settings::ContrastContext ctx
                         = ps3::settings::ContrastContext::Off);
 
+// Decode a PNG and scale it to fit within max_w × max_h using
+// nearest-neighbour sampling. Intended for QR/detail zooms where
+// preserving hard edges matters more than smoothing.
+bool display_png_fit(const uint8_t* data, size_t size,
+                     int max_w, int max_h,
+                     uint8_t* dest_fb = nullptr,
+                     ps3::settings::ContrastContext ctx
+                         = ps3::settings::ContrastContext::Off);
+
 }  // namespace ps3::comic

@@ -152,6 +152,7 @@ Rect g_footer_right;
 Rect g_list_rows[10];
 Rect g_jp_choices[4];
 Rect g_settings_buttons[5];
+Rect g_badge_qr_rect;
 
 // Interview menu / sub-screen rects
 Rect g_iv_menu_buttons[5];   // Practice, Drills, Exam, Glossary, Results
@@ -166,6 +167,10 @@ bool g_manga_open = false;
 char g_manga_path[ps3::library::MAX_PATH_LEN] = {};
 int g_manga_page = 0;
 std::string g_manga_error_msg;
+
+// ── Badge globals ─────────────────────────────────────────────────────
+bool g_badge_japanese = false;
+bool g_badge_qr_zoom = false;
 
 // ── Reader globals ────────────────────────────────────────────────────
 std::vector<BookFile> g_reader_books;
@@ -852,6 +857,8 @@ void render_current(ps3::display::RefreshMode mode = ps3::display::RefreshMode::
 
 // ── Badge final-frame (persists on e-ink during sleep / power-off) ────
 void draw_english_badge_final_frame() {
+    const bool previous_orientation = ps3::display::is_inverted();
+    ps3::display::set_inverted(true);  // strap/lanyard final frame: 180°
     ps3::display::clear();
     ESP_LOGI(TAG, "badge final frame: PNG %u bytes", (unsigned)embedded_badge::kBadgeEnSize);
     const bool shown = ps3::comic::display_png(
@@ -862,6 +869,8 @@ void draw_english_badge_final_frame() {
                      "Daniel Jimenez\nSenior Technical PM | AI Products");
     }
     ps3::display::flush(ps3::display::RefreshMode::GC16Full);
+    ps3::display::set_inverted(previous_orientation);
+    ps3::touch::set_inverted(previous_orientation);
 }
 
 // ── Home ───────────────────────────────────────────────────────────────
@@ -886,17 +895,38 @@ void render_home(ps3::display::RefreshMode mode) {
 }
 
 // ── Badge ─────────────────────────────────────────────────────────────
-void render_badge() {
+void render_badge_qr_zoom() {
     g_screen = Screen::Badge;
     ps3::display::clear();
-    // Try embedded PNG
-    ESP_LOGI(TAG, "badge: embedded PNG %u bytes", (unsigned)embedded_badge::kBadgeEnSize);
+    const bool shown = ps3::comic::display_png_fit(
+        embedded_badge::kQrPng, embedded_badge::kQrSize, 500, 500);
+    if (!shown) {
+        draw_header("QR");
+        draw_wrapped(34, 130, ps3::display::width() - 68,
+                     "QR image could not be decoded.\nTap to return to badge.");
+    }
+    ps3::display::flush(ps3::display::RefreshMode::GC16Full);
+}
+
+void render_badge() {
+    g_screen = Screen::Badge;
+    g_badge_qr_rect = {111, 600, 318, 318};
+    if (g_badge_qr_zoom) {
+        render_badge_qr_zoom();
+        return;
+    }
+    ps3::display::clear();
+    const uint8_t* badge_png = g_badge_japanese ? embedded_badge::kBadgeJaPng : embedded_badge::kBadgeEnPng;
+    const size_t badge_size = g_badge_japanese ? embedded_badge::kBadgeJaSize : embedded_badge::kBadgeEnSize;
+    const char* badge_file = g_badge_japanese ? "badge_ja.png" : "badge_en.png";
+    ESP_LOGI(TAG, "badge: embedded %s PNG %u bytes", g_badge_japanese ? "JA" : "EN",
+             (unsigned)badge_size);
     bool shown = ps3::comic::display_png(
-        embedded_badge::kBadgeEnPng, embedded_badge::kBadgeEnSize);
+        badge_png, badge_size);
     ESP_LOGI(TAG, "badge: embedded decode %s", shown ? "OK" : "FAILED");
     // Fallback: SD asset file
     if (!shown) {
-        const std::string png = std::string(kAssetsRoot) + "/badge_en.png";
+        const std::string png = std::string(kAssetsRoot) + "/" + badge_file;
         const auto bytes = read_file_bytes(png.c_str(), 2 * 1024 * 1024);
         if (!bytes.empty()) {
             ESP_LOGI(TAG, "badge: trying SD fallback %u bytes", (unsigned)bytes.size());
@@ -909,15 +939,19 @@ void render_badge() {
         draw_header("Daniel Jimenez");
         int y = kToolbarH + 24;
         y = draw_wrapped(34, y, ps3::display::width() - 68,
-                         "Senior Technical PM | AI Products", 2) + 16;
+                         g_badge_japanese
+                             ? "プロダクトマネージャー (AI)"
+                             : "Senior Technical PM | AI Products",
+                         2) + 16;
         draw_hline(20, y, ps3::display::width() - 40);
         y += 16;
         draw_wrapped(34, y, ps3::display::width() - 68,
-                     "Platform Teams  •  Embedded & AI\n"
+                     "Platform Teams  |  Embedded & AI\n"
                      "M5PaperS3 PaperBadge", 4);
+        ps3::comic::display_png_at(embedded_badge::kQrPng, embedded_badge::kQrSize,
+                                   (ps3::display::width() - 320) / 2, 600);
         ESP_LOGW(TAG, "badge: all decode paths failed — showing text fallback");
     }
-    draw_footer("Home", nullptr, nullptr);
     ps3::display::flush(ps3::display::RefreshMode::GC16Full);
 }
 
@@ -1579,6 +1613,29 @@ void handle_home(int x, int y) {
     else if (g_home_buttons[5].contains(x, y)) render_settings();
 }
 
+void handle_badge(int x, int y) {
+    if (g_badge_qr_zoom) {
+        g_badge_qr_zoom = false;
+        render_badge();
+        ps3::touch::drain();
+        return;
+    }
+    if (y < kToolbarH + 20) {
+        render_home();
+        ps3::touch::drain();
+        return;
+    }
+    if (g_badge_qr_rect.contains(x, y)) {
+        g_badge_qr_zoom = true;
+        render_badge();
+        ps3::touch::drain();
+        return;
+    }
+    g_badge_japanese = !g_badge_japanese;
+    render_badge();
+    ps3::touch::drain();
+}
+
 void handle_interview_menu(int x, int y) {
     if (g_footer_left.contains(x, y)) {
         render_home();
@@ -1999,7 +2056,7 @@ void handle_tap(int x, int y) {
     mark_activity();
     switch (g_screen) {
         case Screen::Home:              handle_home(x, y); break;
-        case Screen::Badge:             render_home(); break;
+        case Screen::Badge:             handle_badge(x, y); break;
         case Screen::Interview:         handle_interview_menu(x, y); break;
         case Screen::InterviewPractice: handle_interview_practice(x, y); break;
         case Screen::InterviewDrillQ:   handle_interview_drill_q(x, y); break;

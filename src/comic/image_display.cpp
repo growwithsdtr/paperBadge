@@ -63,6 +63,11 @@ PNG*     s_png_obj = nullptr;
 // the current decode. Reset by display_jpeg() before invoking decode,
 // read after.
 int64_t s_callback_total_us = 0;
+bool s_png_scaled = false;
+int s_png_src_w = 0;
+int s_png_src_h = 0;
+int s_png_dst_w = 0;
+int s_png_dst_h = 0;
 
 // Per-pixel logical→native transforms (epdiy.c: _rotate).
 //
@@ -297,10 +302,52 @@ bool display_jpeg(const uint8_t* data, size_t size, uint8_t* dest_fb,
 
 namespace {
 
+void put_png_luma_pixel(int lx, int ly, int luma) {
+    if (lx < 0 || ly < 0 || lx >= s_logical_w || ly >= s_logical_h) return;
+
+    const bool inv = s_inverted_rotation;
+    const int native_w_bytes = s_native_w / 2;
+    const int max_native_x = s_native_w - 1;
+    const int max_native_y = s_native_h - 1;
+    const int nx = inv ? (max_native_x - ly) : ly;
+    const int ny = inv ? lx : (max_native_y - lx);
+    uint8_t* fb_byte = s_fb + ny * native_w_bytes + (nx >> 1);
+    const uint8_t corrected = s_contrast_lut[luma & 0xFF];
+    if (nx & 1) {
+        *fb_byte = (*fb_byte & 0x0F) | (corrected & 0xF0);
+    } else {
+        *fb_byte = (*fb_byte & 0xF0) | (corrected >> 4);
+    }
+}
+
+int rgb565_luma(uint16_t rgb) {
+    const int R = (rgb >> 11)         << 3;  // 5→8
+    const int G = ((rgb >> 5) & 0x3F) << 2;  // 6→8
+    const int B = (rgb & 0x1F)        << 3;  // 5→8
+    return (R * 77 + G * 150 + B * 29) >> 8;  // BT.601
+}
+
 int draw_callback_png(PNGDRAW* p) {
     if (!s_png_obj) return 0;
     s_png_obj->getLineAsRGB565(p, s_png_row, PNG_RGB565_LITTLE_ENDIAN,
                                0xFFFFFFFFu);  // white background
+
+    if (s_png_scaled) {
+        if (p->iWidth > PNG_ROW_BUF_PIXELS || s_png_src_w <= 0 || s_png_src_h <= 0 ||
+            s_png_dst_w <= 0 || s_png_dst_h <= 0) {
+            return 1;
+        }
+        const int dst_y0 = s_offset_y + (p->y * s_png_dst_h) / s_png_src_h;
+        int dst_y1 = s_offset_y + ((p->y + 1) * s_png_dst_h) / s_png_src_h;
+        if (dst_y1 <= dst_y0) dst_y1 = dst_y0 + 1;
+        for (int dy = dst_y0; dy < dst_y1; ++dy) {
+            for (int dx = 0; dx < s_png_dst_w; ++dx) {
+                const int sx = (dx * s_png_src_w) / s_png_dst_w;
+                put_png_luma_pixel(s_offset_x + dx, dy, rgb565_luma(s_png_row[sx]));
+            }
+        }
+        return 1;
+    }
 
     const int ly = s_offset_y + p->y;
     if (ly < 0 || ly >= s_logical_h) return 1;
@@ -326,11 +373,7 @@ int draw_callback_png(PNGDRAW* p) {
     if (nx & 1) {
         // Odd nx → high nibble.
         for (int col = col_min; col < col_max; ++col) {
-            const uint16_t rgb = s_png_row[col];
-            const int R = (rgb >> 11)        << 3;   // 5→8
-            const int G = ((rgb >> 5) & 0x3F) << 2;  // 6→8
-            const int B = (rgb & 0x1F)       << 3;   // 5→8
-            const int luma = (R * 77 + G * 150 + B * 29) >> 8;  // BT.601
+            const int luma = rgb565_luma(s_png_row[col]);
             const uint8_t g = s_contrast_lut[luma] & 0xF0;
             *fb_byte = (*fb_byte & 0x0F) | g;
             fb_byte += step;
@@ -338,11 +381,7 @@ int draw_callback_png(PNGDRAW* p) {
     } else {
         // Even nx → low nibble.
         for (int col = col_min; col < col_max; ++col) {
-            const uint16_t rgb = s_png_row[col];
-            const int R = (rgb >> 11)        << 3;
-            const int G = ((rgb >> 5) & 0x3F) << 2;
-            const int B = (rgb & 0x1F)       << 3;
-            const int luma = (R * 77 + G * 150 + B * 29) >> 8;
+            const int luma = rgb565_luma(s_png_row[col]);
             const uint8_t g = s_contrast_lut[luma] >> 4;
             *fb_byte = (*fb_byte & 0xF0) | g;
             fb_byte += step;
@@ -453,6 +492,39 @@ bool display_png_at(const uint8_t* data, size_t size,
                     int dst_x, int dst_y, uint8_t* dest_fb,
                     ps3::settings::ContrastContext ctx) {
     return display_png_impl(data, size, dst_x, dst_y, dest_fb, ctx);
+}
+
+bool display_png_fit(const uint8_t* data, size_t size,
+                     int max_w, int max_h, uint8_t* dest_fb,
+                     ps3::settings::ContrastContext ctx) {
+    int src_w = 0, src_h = 0;
+    if (!png_size(data, size, &src_w, &src_h)) return false;
+    if (src_w <= 0 || src_h <= 0 || max_w <= 0 || max_h <= 0) return false;
+    if (src_w > PNG_ROW_BUF_PIXELS) {
+        ESP_LOGE(TAG, "PNG fit source width %d exceeds row buffer %d",
+                 src_w, PNG_ROW_BUF_PIXELS);
+        return false;
+    }
+
+    int dst_w = max_w;
+    int dst_h = (src_h * max_w) / src_w;
+    if (dst_h > max_h) {
+        dst_h = max_h;
+        dst_w = (src_w * max_h) / src_h;
+    }
+    if (dst_w <= 0 || dst_h <= 0) return false;
+
+    s_png_scaled = true;
+    s_png_src_w = src_w;
+    s_png_src_h = src_h;
+    s_png_dst_w = dst_w;
+    s_png_dst_h = dst_h;
+    const int dst_x = (ps3::display::width() - dst_w) / 2;
+    const int dst_y = (ps3::display::height() - dst_h) / 2;
+    const bool ok = display_png_impl(data, size, dst_x, dst_y, dest_fb, ctx);
+    s_png_scaled = false;
+    s_png_src_w = s_png_src_h = s_png_dst_w = s_png_dst_h = 0;
+    return ok;
 }
 
 // --- BMP path ---------------------------------------------------------
