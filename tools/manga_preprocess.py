@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Prepare manga archives for PaperBadge firmware.
 
-Outputs small non-ZIP64 CBZ chunks plus an extracted optimized folder with
-manifest and page-index sidecars. OCR is intentionally optional and disabled by
-default; Stage 13 sidecar tooling can consume this manifest.
+Outputs non-ZIP64 CBZ chunks plus an extracted optimized folder with manifest
+and page-index sidecars. OCR is optional and disabled by default.
 """
 
 from __future__ import annotations
@@ -101,15 +100,15 @@ def process_page(src: Path, dest_dir: Path, args, page_index: int) -> list[PageR
         if args.grayscale16:
             image = quantize_gray16(image)
         if args.downscale == "portrait":
-            image.thumbnail((540, 960), Image.Resampling.LANCZOS)
+            image.thumbnail((args.portrait_width, args.portrait_height), Image.Resampling.LANCZOS)
             dest = dest_dir / f"{page_index:05d}.jpg"
             image.save(dest, "JPEG", quality=88, optimize=True)
             records.append(PageRecord(page_index, src.as_posix(), dest.name, original_size, image.size))
         elif args.downscale == "landscape-slices":
-            width = 540
+            width = args.landscape_width
             height = max(1, int(image.height * (width / image.width)))
             resized = image.resize((width, height), Image.Resampling.LANCZOS)
-            slice_h = max(1, min(960, (height + args.slices - 1) // args.slices))
+            slice_h = max(1, min(args.landscape_height, (height + args.slices - 1) // args.slices))
             for slice_idx, y0 in enumerate(range(0, height, slice_h)):
                 crop = resized.crop((0, y0, width, min(height, y0 + slice_h)))
                 dest = dest_dir / f"{page_index:05d}_s{slice_idx:02d}.jpg"
@@ -167,14 +166,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="input .cbz, .zip, optionally .cbr/.rar")
     parser.add_argument("--out", type=Path, default=Path("paperbadge_manga_out"))
-    parser.add_argument("--max-mb", type=int, default=45)
+    parser.add_argument("--max-mb", type=int, default=150)
     parser.add_argument("--zip64", choices=["never", "auto", "always"], default="never")
     parser.add_argument("--downscale", choices=["preserve", "portrait", "landscape-slices"], default="preserve")
     parser.add_argument("--grayscale16", action="store_true")
     parser.add_argument("--keep-originals", action="store_true")
     parser.add_argument("--slices", type=int, default=4)
+    parser.add_argument("--portrait-width", type=int, default=540)
+    parser.add_argument("--portrait-height", type=int, default=960)
+    parser.add_argument("--landscape-width", type=int, default=960)
+    parser.add_argument("--landscape-height", type=int, default=540)
     parser.add_argument("--ocr", choices=["none", "gemini"], default="none")
     parser.add_argument("--ocr-model", default="gemini-1.5-flash")
+    parser.add_argument("--ocr-translate", action="store_true", help="ask OCR provider for English translation and study hints")
     args = parser.parse_args()
 
     source = args.input.expanduser().resolve()
@@ -223,7 +227,9 @@ def main() -> int:
         "firmware_compatibility": {
             "target_max_mb": args.max_mb,
             "zip64": args.zip64,
-            "recommended": "CBZ chunks under 45 MB, JPEG pages, no ZIP64",
+            "recommended": "CBZ chunks under 150 MB, JPEG or PNG pages, no ZIP64",
+            "landscape_viewport": {"width": args.landscape_width, "height": args.landscape_height, "slices": args.slices},
+            "portrait_viewport": {"width": args.portrait_width, "height": args.portrait_height},
         },
     }
     (args.out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
@@ -250,22 +256,36 @@ def run_ocr(args, image_dir: Path, records: list[PageRecord], out_dir: Path) -> 
         regions = []
         for rec in records:
             image_path = image_dir / rec.optimized_name
+            mime = {
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".png": "image/png",
+                ".webp": "image/webp",
+            }.get(image_path.suffix.lower(), "image/jpeg")
             prompt = (
                 "Extract Japanese text from this manga page or slice. Return compact JSON with "
-                "page, text, optional english_translation, regions, vocabulary_candidates, "
-                "kanji_candidates, grammar_candidates, and confidence. Use page-level text if "
-                "region structure is uncertain."
+                "raw_japanese_text, english_translation, page_number, slice_or_region, "
+                "vocabulary_candidates, grammar_candidates, kanji_candidates, confidence, and notes. "
+                "Use page-level text if region structure is uncertain."
             )
-            response = model.generate_content([prompt, {"mime_type": "image/jpeg", "data": image_path.read_bytes()}])
+            if not args.ocr_translate:
+                prompt += " Keep english_translation brief or empty if translation is uncertain."
+            response = model.generate_content([prompt, {"mime_type": mime, "data": image_path.read_bytes()}])
             text = getattr(response, "text", "") or ""
             regions.append(
                 {
                     "@type": "OCRRegion",
                     "page_index": rec.index,
+                    "source_name": rec.source_name,
                     "asset": rec.optimized_name,
+                    "slice": rec.slice,
                     "provider": "gemini",
                     "model": args.ocr_model,
                     "raw": text,
+                    "metadata": {
+                        "book": args.input.name,
+                        "ocr_translate": bool(args.ocr_translate),
+                    },
                 }
             )
         payload = {"@context": "https://paperbadge.local/schema/manga_ocr.jsonld", "regions": regions}
