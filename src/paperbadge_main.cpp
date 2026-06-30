@@ -78,8 +78,16 @@ enum class Screen {
     InterviewGlossaryList,
     InterviewGlossary,
     InterviewResults,
+    JapaneseMenu,
+    JapaneseSource,
+    JapaneseUnit,
+    JapaneseLesson,
     Japanese,
     JapaneseFeedback,
+    JapaneseMock,
+    JapaneseMockResults,
+    JapaneseReference,
+    JapaneseResults,
     JapaneseFont,
     MangaLibrary,
     MangaReading,
@@ -162,6 +170,7 @@ Rect g_footer_mid;
 Rect g_footer_right;
 Rect g_list_rows[10];
 Rect g_jp_choices[4];
+Rect g_jp_menu_buttons[4];
 Rect g_settings_buttons[5];
 Rect g_badge_qr_rect;
 
@@ -200,6 +209,12 @@ int g_jp_index = 0;
 int g_jp_selected = -1;
 int g_jp_feedback_page = 0;
 bool g_jp_feedback_single = true;
+int g_jp_source_idx = 0;
+int g_jp_unit_idx = 0;
+int g_jp_lesson_idx = 0;
+int g_jp_mock_index = 0;
+int g_jp_mock_selected = -1;
+int g_jp_mock_answers[sizeof(kJapaneseItems) / sizeof(kJapaneseItems[0])] = {};
 
 // ── Interview state ───────────────────────────────────────────────────
 int g_iv_card_idx = 0;
@@ -974,8 +989,16 @@ void render_manga_error(ps3::display::RefreshMode mode = ps3::display::RefreshMo
 void render_reader_library(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_reader_page(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GL16);
 void render_reader_error(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_japanese_menu(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_japanese_source(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_japanese_unit(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_japanese_lesson(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_japanese(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_japanese_feedback(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_japanese_mock(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_japanese_mock_results(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_japanese_reference(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_japanese_results(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_japanese_font(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_settings(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void save_reader_state();
@@ -1009,6 +1032,7 @@ Screen fallback_back_target(Screen screen) {
         case Screen::Badge:
         case Screen::Interview:
         case Screen::Japanese:
+        case Screen::JapaneseMenu:
         case Screen::MangaLibrary:
         case Screen::ReaderLibrary:
         case Screen::Settings:
@@ -1024,6 +1048,17 @@ Screen fallback_back_target(Screen screen) {
             return Screen::Interview;
         case Screen::JapaneseFeedback:
             return Screen::Japanese;
+        case Screen::JapaneseSource:
+        case Screen::JapaneseReference:
+        case Screen::JapaneseResults:
+            return Screen::JapaneseMenu;
+        case Screen::JapaneseUnit:
+            return Screen::JapaneseSource;
+        case Screen::JapaneseLesson:
+            return Screen::JapaneseUnit;
+        case Screen::JapaneseMock:
+        case Screen::JapaneseMockResults:
+            return Screen::JapaneseMenu;
         case Screen::JapaneseFont:
             return g_nav_depth > 0 ? g_nav_stack[g_nav_depth - 1] : Screen::Japanese;
         case Screen::MangaReading:
@@ -1067,8 +1102,16 @@ void render_screen(Screen screen, ps3::display::RefreshMode mode = ps3::display:
         case Screen::ReaderLibrary:      render_reader_library(mode); break;
         case Screen::ReaderReading:      render_reader_page(mode); break;
         case Screen::ReaderError:        render_reader_error(mode); break;
+        case Screen::JapaneseMenu:       render_japanese_menu(mode); break;
+        case Screen::JapaneseSource:     render_japanese_source(mode); break;
+        case Screen::JapaneseUnit:       render_japanese_unit(mode); break;
+        case Screen::JapaneseLesson:     render_japanese_lesson(mode); break;
         case Screen::Japanese:           render_japanese(mode); break;
         case Screen::JapaneseFeedback:   render_japanese_feedback(mode); break;
+        case Screen::JapaneseMock:       render_japanese_mock(mode); break;
+        case Screen::JapaneseMockResults: render_japanese_mock_results(mode); break;
+        case Screen::JapaneseReference:  render_japanese_reference(mode); break;
+        case Screen::JapaneseResults:    render_japanese_results(mode); break;
         case Screen::JapaneseFont:       render_japanese_font(mode); break;
         case Screen::Settings:           render_settings(mode); break;
         default:                         render_home(mode); break;
@@ -1891,6 +1934,67 @@ void show_reader_error(const std::string& message, Screen return_target = Screen
 }
 
 // ── Japanese ──────────────────────────────────────────────────────────
+int japanese_item_count() {
+    return static_cast<int>(sizeof(kJapaneseItems) / sizeof(kJapaneseItems[0]));
+}
+
+void reset_japanese_mock() {
+    for (int i = 0; i < japanese_item_count(); ++i) g_jp_mock_answers[i] = -1;
+    g_jp_mock_index = 0;
+    g_jp_mock_selected = -1;
+}
+
+void render_japanese_menu(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
+    g_screen = Screen::JapaneseMenu;
+    ps3::display::clear();
+    draw_header("日本語", "Study");
+    const char* labels[] = {"Practice", "Mock Test", "Reference", "Results"};
+    for (int i = 0; i < 4; ++i) {
+        g_jp_menu_buttons[i] = {34, 112 + i * 100, ps3::display::width() - 68, 78};
+        draw_button(g_jp_menu_buttons[i], labels[i]);
+    }
+    draw_wrapped(34, 540, ps3::display::width() - 68,
+                 "Embedded sample source is active. SD JSON-LD sources can be added later without new proprietary content.");
+    draw_footer("Home", nullptr, nullptr);
+    ps3::display::flush(mode);
+}
+
+void render_japanese_source(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
+    g_screen = Screen::JapaneseSource;
+    ps3::display::clear();
+    draw_header("Source Select", "1 source");
+    g_jp_menu_buttons[0] = {34, 130, ps3::display::width() - 68, 88};
+    draw_button(g_jp_menu_buttons[0], "Embedded N3 Samples");
+    draw_wrapped(34, 250, ps3::display::width() - 68,
+                 "Future external sources will be loaded from SD registry sidecars.");
+    draw_footer("Back", nullptr, nullptr);
+    ps3::display::flush(mode);
+}
+
+void render_japanese_unit(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
+    g_screen = Screen::JapaneseUnit;
+    ps3::display::clear();
+    draw_header("Week / Unit", "Embedded");
+    g_jp_menu_buttons[0] = {34, 130, ps3::display::width() - 68, 88};
+    draw_button(g_jp_menu_buttons[0], "N3 Sample - Week 1");
+    draw_footer("Back", nullptr, nullptr);
+    ps3::display::flush(mode);
+}
+
+void render_japanese_lesson(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
+    g_screen = Screen::JapaneseLesson;
+    ps3::display::clear();
+    draw_header("Day / Lesson", "W1");
+    g_jp_menu_buttons[0] = {34, 130, ps3::display::width() - 68, 88};
+    draw_button(g_jp_menu_buttons[0], "Day 1 - Mixed Practice");
+    draw_footer("Back", nullptr, nullptr);
+    ps3::display::flush(mode);
+}
+
 void render_japanese(ps3::display::RefreshMode mode) {
     restore_app_orientation();
     g_screen = Screen::Japanese;
@@ -1951,6 +2055,90 @@ void render_japanese_feedback(ps3::display::RefreshMode mode) {
     draw_footer(g_jp_index > 0 ? "Prev" : "Back", nullptr,
                 g_jp_feedback_single ? (g_jp_index + 1 < static_cast<int>(sizeof(kJapaneseItems) / sizeof(kJapaneseItems[0])) ? "Next" : nullptr)
                                      : (g_jp_feedback_page == 0 ? "More" : "Next"));
+    ps3::display::flush(mode);
+}
+
+void render_japanese_mock(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
+    g_screen = Screen::JapaneseMock;
+    const auto& item = kJapaneseItems[g_jp_mock_index];
+    ps3::display::clear();
+    draw_header("Mock Test",
+                std::to_string(g_jp_mock_index + 1) + "/" + std::to_string(japanese_item_count()));
+    int y = 92;
+    y = draw_wrapped(30, y, ps3::display::width() - 60, item.prompt, 5) + 10;
+    for (int i = 0; i < 4; ++i) {
+        g_jp_choices[i] = {30, y, ps3::display::width() - 60, 78};
+        std::string label;
+        label.push_back(static_cast<char>('A' + i));
+        label += ". ";
+        label += item.choices[i];
+        draw_button(g_jp_choices[i], label, g_jp_mock_selected == i);
+        y += 90;
+    }
+    draw_footer(g_jp_mock_index > 0 ? "Prev" : "Back", nullptr,
+                g_jp_mock_selected >= 0 ? (g_jp_mock_index + 1 < japanese_item_count() ? "Next" : "Score") : nullptr);
+    ps3::display::flush(mode);
+}
+
+void render_japanese_mock_results(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
+    g_screen = Screen::JapaneseMockResults;
+    int score = 0;
+    for (int i = 0; i < japanese_item_count(); ++i) {
+        if (g_jp_mock_answers[i] == kJapaneseItems[i].correct) ++score;
+    }
+    ps3::display::clear();
+    draw_header("Mock Results", std::to_string(score) + "/" + std::to_string(japanese_item_count()));
+    int y = 100;
+    y = draw_wrapped(34, y, ps3::display::width() - 68,
+                     "Score: " + std::to_string(score) + "/" + std::to_string(japanese_item_count()), 2) + 16;
+    for (int i = 0; i < japanese_item_count(); ++i) {
+        std::string row = std::string("Q") + std::to_string(i + 1) + ": ";
+        row += (g_jp_mock_answers[i] == kJapaneseItems[i].correct) ? "Correct" : "Review";
+        y = draw_wrapped(34, y, ps3::display::width() - 68, row, 1) + 4;
+    }
+    draw_footer("Menu", "Review", nullptr);
+    ps3::display::flush(mode);
+}
+
+void render_japanese_reference(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
+    g_screen = Screen::JapaneseReference;
+    ps3::display::clear();
+    draw_header("Reference", "Embedded");
+    const char* rows[] = {
+        "Grammar: ものだ - nostalgic past habit / memory",
+        "Vocabulary: 郵便局, 荷物",
+        "Kanji: 郵, 便, 局, 荷, 物",
+        "Reading: sample questions link concepts to practice items",
+    };
+    int y = 96;
+    for (const char* row : rows) {
+        y = draw_wrapped(34, y, ps3::display::width() - 68, row, 3) + 16;
+    }
+    draw_footer("Back", nullptr, nullptr);
+    ps3::display::flush(mode);
+}
+
+void render_japanese_results(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
+    g_screen = Screen::JapaneseResults;
+    ps3::display::clear();
+    draw_header("日本語 Results", "Session");
+    int answered = 0;
+    int correct = 0;
+    for (int i = 0; i < japanese_item_count(); ++i) {
+        if (g_jp_mock_answers[i] >= 0) {
+            ++answered;
+            if (g_jp_mock_answers[i] == kJapaneseItems[i].correct) ++correct;
+        }
+    }
+    draw_wrapped(34, 104, ps3::display::width() - 68,
+                 std::string("Mock answers: ") + std::to_string(answered) + "\n" +
+                 "Mock correct: " + std::to_string(correct) + "\n\n" +
+                 "Progress model: source/item/concept review events are scaffolded for SD NDJSON in the schema docs.");
+    draw_footer("Back", nullptr, nullptr);
     ps3::display::flush(mode);
 }
 
@@ -2047,7 +2235,7 @@ void handle_home(int x, int y) {
         nav_push(Screen::Home);
         g_jp_index = 0;
         g_jp_selected = -1;
-        render_japanese();
+        render_japanese_menu();
     } else if (g_home_buttons[3].contains(x, y)) {
         nav_push(Screen::Home);
         render_manga_library();
@@ -2597,6 +2785,108 @@ void handle_reader_error(int x, int y) {
     }
 }
 
+void handle_japanese_menu(int x, int y) {
+    if (g_footer_left.contains(x, y)) {
+        navigate_home();
+        return;
+    }
+    if (g_jp_menu_buttons[0].contains(x, y)) {
+        nav_push(Screen::JapaneseMenu);
+        render_japanese_source();
+    } else if (g_jp_menu_buttons[1].contains(x, y)) {
+        reset_japanese_mock();
+        nav_push(Screen::JapaneseMenu);
+        render_japanese_mock();
+    } else if (g_jp_menu_buttons[2].contains(x, y)) {
+        nav_push(Screen::JapaneseMenu);
+        render_japanese_reference();
+    } else if (g_jp_menu_buttons[3].contains(x, y)) {
+        nav_push(Screen::JapaneseMenu);
+        render_japanese_results();
+    }
+}
+
+void handle_japanese_source(int x, int y) {
+    if (g_footer_left.contains(x, y)) {
+        navigate_back();
+    } else if (g_jp_menu_buttons[0].contains(x, y)) {
+        g_jp_source_idx = 0;
+        nav_push(Screen::JapaneseSource);
+        render_japanese_unit();
+    }
+}
+
+void handle_japanese_unit(int x, int y) {
+    if (g_footer_left.contains(x, y)) {
+        navigate_back();
+    } else if (g_jp_menu_buttons[0].contains(x, y)) {
+        g_jp_unit_idx = 0;
+        nav_push(Screen::JapaneseUnit);
+        render_japanese_lesson();
+    }
+}
+
+void handle_japanese_lesson(int x, int y) {
+    if (g_footer_left.contains(x, y)) {
+        navigate_back();
+    } else if (g_jp_menu_buttons[0].contains(x, y)) {
+        g_jp_lesson_idx = 0;
+        g_jp_index = 0;
+        g_jp_selected = -1;
+        g_jp_feedback_page = 0;
+        nav_push(Screen::JapaneseLesson);
+        render_japanese();
+    }
+}
+
+void handle_japanese_mock(int x, int y) {
+    if (g_footer_left.contains(x, y)) {
+        if (g_jp_mock_index > 0) {
+            g_jp_mock_answers[g_jp_mock_index] = g_jp_mock_selected;
+            --g_jp_mock_index;
+            g_jp_mock_selected = g_jp_mock_answers[g_jp_mock_index];
+            render_japanese_mock(ps3::display::RefreshMode::GL16);
+        } else {
+            navigate_back();
+        }
+        return;
+    }
+    if (g_footer_right.contains(x, y) && g_jp_mock_selected >= 0) {
+        g_jp_mock_answers[g_jp_mock_index] = g_jp_mock_selected;
+        if (g_jp_mock_index + 1 < japanese_item_count()) {
+            ++g_jp_mock_index;
+            g_jp_mock_selected = g_jp_mock_answers[g_jp_mock_index];
+            render_japanese_mock(ps3::display::RefreshMode::GL16);
+        } else {
+            render_japanese_mock_results();
+        }
+        return;
+    }
+    for (int i = 0; i < 4; ++i) {
+        if (g_jp_choices[i].contains(x, y)) {
+            g_jp_mock_selected = i;
+            render_japanese_mock(ps3::display::RefreshMode::GL16);
+            return;
+        }
+    }
+}
+
+void handle_japanese_mock_results(int x, int y) {
+    if (g_footer_left.contains(x, y)) {
+        render_japanese_menu();
+    } else if (g_footer_mid.contains(x, y)) {
+        g_jp_index = 0;
+        g_jp_selected = g_jp_mock_answers[0];
+        g_jp_feedback_page = 0;
+        nav_push(Screen::JapaneseMockResults);
+        render_japanese_feedback();
+    }
+}
+
+void handle_japanese_reference_or_results(int x, int y) {
+    if (g_footer_left.contains(x, y)) navigate_back();
+}
+
 void handle_japanese(int x, int y) {
     if (g_footer_left.contains(x, y)) {
         if (g_jp_index > 0) {
@@ -2604,7 +2894,7 @@ void handle_japanese(int x, int y) {
             g_jp_selected = -1;
             render_japanese();
         } else {
-            render_home();
+            navigate_back();
         }
         return;
     }
@@ -2633,7 +2923,7 @@ void handle_japanese_feedback(int x, int y) {
             g_jp_feedback_page = 0;
             render_japanese();
         } else {
-            render_home();
+            navigate_back();
         }
     } else if (g_footer_mid.contains(x, y)) {
         render_home();
@@ -2700,8 +2990,16 @@ void handle_tap(int x, int y) {
         case Screen::ReaderLibrary:     handle_reader_library(x, y); break;
         case Screen::ReaderReading:     handle_reader_reading(x, y); break;
         case Screen::ReaderError:       handle_reader_error(x, y); break;
+        case Screen::JapaneseMenu:      handle_japanese_menu(x, y); break;
+        case Screen::JapaneseSource:    handle_japanese_source(x, y); break;
+        case Screen::JapaneseUnit:      handle_japanese_unit(x, y); break;
+        case Screen::JapaneseLesson:    handle_japanese_lesson(x, y); break;
         case Screen::Japanese:          handle_japanese(x, y); break;
         case Screen::JapaneseFeedback:  handle_japanese_feedback(x, y); break;
+        case Screen::JapaneseMock:      handle_japanese_mock(x, y); break;
+        case Screen::JapaneseMockResults: handle_japanese_mock_results(x, y); break;
+        case Screen::JapaneseReference: handle_japanese_reference_or_results(x, y); break;
+        case Screen::JapaneseResults:   handle_japanese_reference_or_results(x, y); break;
         case Screen::JapaneseFont:      handle_japanese_font(x, y); break;
         case Screen::Settings:          handle_settings(x, y); break;
         default:                        render_home(); break;
@@ -2750,6 +3048,7 @@ extern "C" void app_main(void) {
         return;
     }
     select_japanese_font(JapaneseFontFace::BizUdGothic);
+    reset_japanese_mock();
     ps3::battery::init();
     ps3::touch::init();
     ps3::sd::mount();
