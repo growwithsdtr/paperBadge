@@ -5,8 +5,10 @@
 #include <cstring>
 #include <ctime>
 #include <dirent.h>
+#include <cerrno>
 #include <string>
 #include <sys/stat.h>
+#include <utility>
 #include <vector>
 
 #include <esp_heap_caps.h>
@@ -173,6 +175,7 @@ std::string g_reader_title;
 int g_reader_page = 0;
 int g_reader_lines_per_page = 24;
 std::string g_reader_error_msg;
+Screen g_reader_error_return = Screen::ReaderLibrary;
 
 // ── Japanese globals ──────────────────────────────────────────────────
 int g_jp_index = 0;
@@ -374,6 +377,62 @@ std::string read_text_file(const char* path, size_t max_bytes = 512 * 1024) {
     return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
 }
 
+void append_utf8(std::string& out, uint32_t cp) {
+    if (cp == 0) return;
+    if (cp <= 0x7F) {
+        out.push_back(static_cast<char>(cp));
+    } else if (cp <= 0x7FF) {
+        out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else if (cp <= 0xFFFF) {
+        out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else if (cp <= 0x10FFFF) {
+        out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
+}
+
+bool starts_with_at(const char* data, size_t size, size_t pos, const char* needle) {
+    const size_t n = std::strlen(needle);
+    return pos + n <= size && std::memcmp(data + pos, needle, n) == 0;
+}
+
+bool decode_numeric_entity(const char* data, size_t size, size_t pos,
+                           size_t* consumed, uint32_t* cp_out) {
+    if (!starts_with_at(data, size, pos, "&#")) return false;
+    size_t p = pos + 2;
+    int base = 10;
+    if (p < size && (data[p] == 'x' || data[p] == 'X')) {
+        base = 16;
+        ++p;
+    }
+    if (p >= size) return false;
+    uint32_t value = 0;
+    int digits = 0;
+    for (; p < size && digits < 8; ++p) {
+        const unsigned char ch = static_cast<unsigned char>(data[p]);
+        int digit = -1;
+        if (base == 10 && std::isdigit(ch)) {
+            digit = ch - '0';
+        } else if (base == 16 && std::isxdigit(ch)) {
+            digit = std::isdigit(ch) ? ch - '0' : (std::tolower(ch) - 'a' + 10);
+        } else {
+            break;
+        }
+        value = value * static_cast<uint32_t>(base) + static_cast<uint32_t>(digit);
+        ++digits;
+    }
+    if (digits == 0 || p >= size || data[p] != ';') return false;
+    if (value > 0x10FFFF) return false;
+    *consumed = p - pos + 1;
+    *cp_out = value;
+    return true;
+}
+
 std::string strip_html(const char* data, size_t size) {
     std::string out;
     out.reserve(size / 2);
@@ -395,18 +454,28 @@ std::string strip_html(const char* data, size_t size) {
         }
         if (in_tag) continue;
         if (c == '&') {
-            if (std::strncmp(data + i, "&nbsp;", 6) == 0) {
+            size_t consumed = 0;
+            uint32_t cp = 0;
+            if (starts_with_at(data, size, i, "&nbsp;")) {
                 out.push_back(' ');
                 i += 5;
-            } else if (std::strncmp(data + i, "&amp;", 5) == 0) {
+            } else if (starts_with_at(data, size, i, "&amp;")) {
                 out.push_back('&');
                 i += 4;
-            } else if (std::strncmp(data + i, "&lt;", 4) == 0) {
+            } else if (starts_with_at(data, size, i, "&lt;")) {
                 out.push_back('<');
                 i += 3;
-            } else if (std::strncmp(data + i, "&gt;", 4) == 0) {
+            } else if (starts_with_at(data, size, i, "&gt;")) {
                 out.push_back('>');
                 i += 3;
+            } else if (starts_with_at(data, size, i, "&quot;")) {
+                out.push_back('"');
+                i += 5;
+            } else if (decode_numeric_entity(data, size, i, &consumed, &cp)) {
+                append_utf8(out, cp);
+                i += consumed - 1;
+            } else {
+                out.push_back('&');
             }
             last_space = false;
             continue;
@@ -423,29 +492,264 @@ std::string strip_html(const char* data, size_t size) {
     return out;
 }
 
-std::string read_epub_text(const char* path) {
-    mz_zip_archive zip{};
-    if (!mz_zip_reader_init_file(&zip, path, 0)) return {};
-    std::string out;
-    const int n = static_cast<int>(mz_zip_reader_get_num_files(&zip));
-    for (int i = 0; i < n && out.size() < 512 * 1024; ++i) {
-        mz_zip_archive_file_stat st{};
-        if (!mz_zip_reader_file_stat(&zip, i, &st)) continue;
-        std::string name = st.m_filename;
-        if (!(has_suffix_icase(name, ".xhtml") || has_suffix_icase(name, ".html") || has_suffix_icase(name, ".htm"))) {
+struct EpubReadResult {
+    bool ok = false;
+    std::string text;
+    std::string error;
+};
+
+std::string xml_attr_unescape(const std::string& value) {
+    return strip_html(value.c_str(), value.size());
+}
+
+bool xml_attr_value(const std::string& xml, size_t tag_pos,
+                    const char* attr, std::string* out) {
+    const size_t tag_end = xml.find('>', tag_pos);
+    if (tag_end == std::string::npos) return false;
+    const size_t attr_len = std::strlen(attr);
+    size_t p = tag_pos;
+    while ((p = xml.find(attr, p)) != std::string::npos && p < tag_end) {
+        const bool left_ok = p == 0 || std::isspace(static_cast<unsigned char>(xml[p - 1])) || xml[p - 1] == '<';
+        if (!left_ok) {
+            p += attr_len;
             continue;
         }
-        // Skip oversized entries to avoid heap OOM
-        if (st.m_uncomp_size > 2 * 1024 * 1024) continue;
-        size_t sz = 0;
-        void* data = mz_zip_reader_extract_to_heap(&zip, i, &sz, 0);
-        if (!data) continue;
-        out += strip_html(static_cast<const char*>(data), sz);
-        out += "\n\n";
-        std::free(data);
+        size_t q = p + attr_len;
+        while (q < tag_end && std::isspace(static_cast<unsigned char>(xml[q]))) ++q;
+        if (q >= tag_end || xml[q] != '=') {
+            p += attr_len;
+            continue;
+        }
+        ++q;
+        while (q < tag_end && std::isspace(static_cast<unsigned char>(xml[q]))) ++q;
+        if (q >= tag_end || (xml[q] != '"' && xml[q] != '\'')) return false;
+        const char quote = xml[q++];
+        const size_t v0 = q;
+        while (q < tag_end && xml[q] != quote) ++q;
+        if (q >= tag_end) return false;
+        *out = xml_attr_unescape(xml.substr(v0, q - v0));
+        return true;
     }
-    mz_zip_reader_end(&zip);
+    return false;
+}
+
+bool zip_entry_text(mz_zip_archive* zip, const std::string& name,
+                    size_t max_bytes, std::string* out, std::string* err) {
+    int idx = mz_zip_reader_locate_file(zip, name.c_str(), nullptr,
+                                        MZ_ZIP_FLAG_CASE_SENSITIVE);
+    if (idx < 0) idx = mz_zip_reader_locate_file(zip, name.c_str(), nullptr, 0);
+    if (idx < 0) {
+        if (err) *err = "Missing EPUB entry: " + name;
+        return false;
+    }
+    mz_zip_archive_file_stat st{};
+    if (!mz_zip_reader_file_stat(zip, idx, &st)) {
+        if (err) *err = "Could not stat EPUB entry: " + name;
+        return false;
+    }
+    if (st.m_uncomp_size > max_bytes) {
+        if (err) {
+            *err = "EPUB entry too large: " + name + " (" +
+                   std::to_string(static_cast<unsigned long long>(st.m_uncomp_size / 1024)) + " KB)";
+        }
+        return false;
+    }
+    size_t sz = 0;
+    void* data = mz_zip_reader_extract_to_heap(zip, idx, &sz, 0);
+    if (!data) {
+        if (err) *err = "Could not extract EPUB entry: " + name;
+        return false;
+    }
+    out->assign(static_cast<const char*>(data), sz);
+    std::free(data);
+    return true;
+}
+
+std::string dirname_of_zip_path(const std::string& path) {
+    const size_t slash = path.find_last_of('/');
+    return slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
+}
+
+std::string normalize_zip_path(const std::string& raw) {
+    std::vector<std::string> parts;
+    size_t p = 0;
+    while (p <= raw.size()) {
+        const size_t slash = raw.find('/', p);
+        std::string part = raw.substr(p, slash == std::string::npos ? std::string::npos : slash - p);
+        if (part.empty() || part == ".") {
+            // skip
+        } else if (part == "..") {
+            if (!parts.empty()) parts.pop_back();
+        } else {
+            parts.push_back(part);
+        }
+        if (slash == std::string::npos) break;
+        p = slash + 1;
+    }
+    std::string out;
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i) out.push_back('/');
+        out += parts[i];
+    }
     return out;
+}
+
+std::string resolve_zip_href(const std::string& base, const std::string& href) {
+    std::string clean = href;
+    const size_t frag = clean.find('#');
+    if (frag != std::string::npos) clean.resize(frag);
+    for (size_t i = 0; i + 2 < clean.size(); ++i) {
+        if (clean[i] == '%' && clean[i + 1] == '2' &&
+            clean[i + 2] == '0') {
+            clean.replace(i, 3, " ");
+        }
+    }
+    if (!clean.empty() && clean[0] == '/') clean.erase(0, 1);
+    return normalize_zip_path(base + clean);
+}
+
+struct OpfManifestItem {
+    std::string id;
+    std::string href;
+    std::string media_type;
+};
+
+const OpfManifestItem* find_manifest_item(const std::vector<OpfManifestItem>& items,
+                                          const std::string& id) {
+    for (const auto& item : items) {
+        if (item.id == id) return &item;
+    }
+    return nullptr;
+}
+
+bool media_type_is_html(const std::string& media_type, const std::string& href) {
+    return media_type == "application/xhtml+xml" ||
+           media_type == "text/html" ||
+           has_suffix_icase(href, ".xhtml") ||
+           has_suffix_icase(href, ".html") ||
+           has_suffix_icase(href, ".htm");
+}
+
+EpubReadResult read_epub_text(const char* path) {
+    constexpr size_t kMaxXmlBytes = 256 * 1024;
+    constexpr size_t kMaxHtmlEntryBytes = 1024 * 1024;
+    constexpr size_t kMaxExtractedTextBytes = 768 * 1024;
+
+    EpubReadResult result;
+    mz_zip_archive zip{};
+    if (!mz_zip_reader_init_file(&zip, path, 0)) {
+        result.error = "Could not open EPUB ZIP container.";
+        return result;
+    }
+
+    std::string err;
+    std::string encrypted;
+    if (zip_entry_text(&zip, "META-INF/encryption.xml", 64 * 1024, &encrypted, nullptr)) {
+        result.error = "Encrypted EPUB files are not supported.";
+        mz_zip_reader_end(&zip);
+        return result;
+    }
+
+    std::string container;
+    if (!zip_entry_text(&zip, "META-INF/container.xml", kMaxXmlBytes, &container, &err)) {
+        result.error = err.empty() ? "EPUB is missing META-INF/container.xml." : err;
+        mz_zip_reader_end(&zip);
+        return result;
+    }
+
+    size_t root_pos = container.find("<rootfile");
+    std::string opf_path;
+    while (root_pos != std::string::npos) {
+        if (xml_attr_value(container, root_pos, "full-path", &opf_path) && !opf_path.empty()) break;
+        root_pos = container.find("<rootfile", root_pos + 9);
+    }
+    if (opf_path.empty()) {
+        result.error = "EPUB container.xml has no OPF rootfile.";
+        mz_zip_reader_end(&zip);
+        return result;
+    }
+    opf_path = normalize_zip_path(opf_path);
+
+    std::string opf;
+    if (!zip_entry_text(&zip, opf_path, kMaxXmlBytes, &opf, &err)) {
+        result.error = err.empty() ? "Could not read EPUB OPF package." : err;
+        mz_zip_reader_end(&zip);
+        return result;
+    }
+
+    std::vector<OpfManifestItem> manifest;
+    size_t item_pos = 0;
+    while ((item_pos = opf.find("<item", item_pos)) != std::string::npos) {
+        OpfManifestItem item;
+        xml_attr_value(opf, item_pos, "id", &item.id);
+        xml_attr_value(opf, item_pos, "href", &item.href);
+        xml_attr_value(opf, item_pos, "media-type", &item.media_type);
+        if (!item.id.empty() && !item.href.empty()) manifest.push_back(item);
+        item_pos += 5;
+    }
+    if (manifest.empty()) {
+        result.error = "EPUB OPF manifest is empty or unsupported.";
+        mz_zip_reader_end(&zip);
+        return result;
+    }
+
+    const std::string opf_base = dirname_of_zip_path(opf_path);
+    std::vector<std::string> spine_entries;
+    size_t spine_pos = opf.find("<spine");
+    if (spine_pos != std::string::npos) {
+        const size_t spine_end = opf.find("</spine>", spine_pos);
+        size_t itemref_pos = spine_pos;
+        while ((itemref_pos = opf.find("<itemref", itemref_pos)) != std::string::npos &&
+               (spine_end == std::string::npos || itemref_pos < spine_end)) {
+            std::string idref;
+            if (xml_attr_value(opf, itemref_pos, "idref", &idref)) {
+                if (const OpfManifestItem* item = find_manifest_item(manifest, idref)) {
+                    if (media_type_is_html(item->media_type, item->href)) {
+                        spine_entries.push_back(resolve_zip_href(opf_base, item->href));
+                    }
+                }
+            }
+            itemref_pos += 8;
+        }
+    }
+
+    if (spine_entries.empty()) {
+        for (const auto& item : manifest) {
+            if (media_type_is_html(item.media_type, item.href)) {
+                spine_entries.push_back(resolve_zip_href(opf_base, item.href));
+            }
+        }
+        std::sort(spine_entries.begin(), spine_entries.end());
+    }
+
+    if (spine_entries.empty()) {
+        result.error = "EPUB has no readable HTML/XHTML spine entries.";
+        mz_zip_reader_end(&zip);
+        return result;
+    }
+
+    for (const auto& entry : spine_entries) {
+        if (result.text.size() >= kMaxExtractedTextBytes) break;
+        std::string html;
+        if (!zip_entry_text(&zip, entry, kMaxHtmlEntryBytes, &html, &err)) {
+            ESP_LOGW(TAG, "EPUB skip entry %s: %s", entry.c_str(), err.c_str());
+            continue;
+        }
+        std::string stripped = strip_html(html.c_str(), html.size());
+        if (stripped.empty()) continue;
+        const size_t room = kMaxExtractedTextBytes - result.text.size();
+        if (stripped.size() > room) stripped.resize(room);
+        result.text += stripped;
+        result.text += "\n\n";
+    }
+
+    mz_zip_reader_end(&zip);
+    if (result.text.empty()) {
+        result.error = "EPUB parsed, but no readable text was extracted.";
+        return result;
+    }
+    result.ok = true;
+    return result;
 }
 
 void save_session() {
@@ -955,36 +1259,102 @@ void save_reader_state() {
     std::fclose(fp);
 }
 
-void load_reader_state_for(const std::string& path) {
+int load_reader_page_for(const std::string& path) {
     FILE* fp = std::fopen(kReaderStatePath, "r");
-    if (!fp) return;
+    if (!fp) return 0;
+    int page = 0;
     char line[1200] = {};
     if (std::fgets(line, sizeof(line), fp)) {
         char* tab = std::strchr(line, '\t');
         if (tab) {
             *tab = '\0';
-            if (path == line) g_reader_page = std::atoi(tab + 1);
+            if (path == line) page = std::atoi(tab + 1);
         }
     }
     std::fclose(fp);
+    return page;
 }
 
-bool open_reader_book(const std::string& path) {
-    std::string text = has_suffix_icase(path, ".epub") ? read_epub_text(path.c_str()) : read_text_file(path.c_str());
-    if (text.empty()) return false;
+bool open_reader_book(const BookFile& book, std::string* error_out) {
+    const std::string& path = book.path;
+    if (path.empty()) {
+        if (error_out) *error_out = "Reader selection is empty.";
+        return false;
+    }
+    if (!(has_suffix_icase(path, ".txt") || has_suffix_icase(path, ".md") || has_suffix_icase(path, ".epub"))) {
+        if (error_out) {
+            *error_out = "Unsupported reader format: " + book.name + "\n\n"
+                         "Supported formats: TXT, MD, EPUB (basic text extraction).";
+        }
+        return false;
+    }
+
+    struct stat st{};
+    if (stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
+        if (error_out) {
+            *error_out = "Could not stat reader file: " + book.name + "\n\n"
+                         "The SD card entry may have changed. Rescan the library.";
+        }
+        return false;
+    }
+    if (st.st_size <= 0) {
+        if (error_out) *error_out = "File is empty: " + book.name;
+        return false;
+    }
+    if (st.st_size > 4LL * 1024 * 1024) {
+        if (error_out) {
+            *error_out = "File too large to open (" +
+                         std::to_string(static_cast<long long>(st.st_size / 1024LL)) + " KB).\n\n"
+                         "Maximum supported size: 4 MB.\n\n"
+                         "For EPUB files, convert to TXT and trim to under 4 MB.";
+        }
+        return false;
+    }
+
+    std::string text;
+    if (has_suffix_icase(path, ".epub")) {
+        EpubReadResult epub = read_epub_text(path.c_str());
+        if (!epub.ok) {
+            if (error_out) {
+                *error_out = "Could not open EPUB: " + book.name + "\n\n" +
+                             (epub.error.empty()
+                                  ? "Unsupported, encrypted, corrupt, or too complex for the basic EPUB parser."
+                                  : epub.error) +
+                             "\n\nTry converting to TXT format.";
+            }
+            return false;
+        }
+        text = std::move(epub.text);
+    } else {
+        text = read_text_file(path.c_str());
+        if (text.empty()) {
+            if (error_out) {
+                *error_out = "Could not open: " + book.name + "\n\n"
+                             "The file may be empty, unreadable, or over the text extraction limit.";
+            }
+            return false;
+        }
+    }
+
+    std::vector<std::string> next_lines;
+    for (const auto& para : wrap_text(text, ps3::display::width() - 56)) {
+        next_lines.push_back(para);
+    }
+    if (next_lines.empty()) next_lines.push_back("(empty)");
+    const int next_lines_per_page = std::max(
+        1, (ps3::display::height() - kToolbarH - kFooterH - 28) /
+               (active_font().height() + 8));
+    int next_page = load_reader_page_for(path);
+    const int next_max_page = std::max(
+        0, static_cast<int>((next_lines.size() + next_lines_per_page - 1) /
+                            next_lines_per_page) - 1);
+    next_page = std::max(0, std::min(next_page, next_max_page));
+
     g_reader_path = path;
     g_reader_title = basename_of(path);
-    g_reader_lines.clear();
-    for (const auto& para : wrap_text(text, ps3::display::width() - 56)) {
-        g_reader_lines.push_back(para);
-    }
-    if (g_reader_lines.empty()) g_reader_lines.push_back("(empty)");
-    g_reader_lines_per_page = std::max(1, (ps3::display::height() - kToolbarH - kFooterH - 28) / (active_font().height() + 8));
-    g_reader_page = 0;
-    load_reader_state_for(path);
-    const int max_page = std::max(0, static_cast<int>((g_reader_lines.size() + g_reader_lines_per_page - 1) /
-                                                     g_reader_lines_per_page) - 1);
-    g_reader_page = std::max(0, std::min(g_reader_page, max_page));
+    g_reader_lines = std::move(next_lines);
+    g_reader_lines_per_page = next_lines_per_page;
+    g_reader_page = next_page;
     return true;
 }
 
@@ -1044,8 +1414,16 @@ void render_reader_error(ps3::display::RefreshMode mode) {
     ps3::display::clear();
     draw_header("Reader - Cannot Open");
     draw_wrapped(34, 90, ps3::display::width() - 68, g_reader_error_msg);
-    draw_footer("Back", nullptr, nullptr);
+    draw_footer("Back", nullptr, "Home");
     ps3::display::flush(mode);
+}
+
+void show_reader_error(const std::string& message, Screen return_target = Screen::ReaderLibrary) {
+    g_reader_error_msg = message;
+    g_reader_error_return = return_target;
+    ps3::touch::drain();
+    render_reader_error();
+    ps3::touch::drain();
 }
 
 // ── Japanese ──────────────────────────────────────────────────────────
@@ -1494,40 +1872,14 @@ void handle_reader_library(int x, int y) {
         if (!g_list_rows[i].contains(x, y)) continue;
         const auto& book = g_reader_books[i];
 
-        // File size guard — large files may OOM during text extraction
-        struct stat st{};
-        long long fsize = 0;
-        if (stat(book.path.c_str(), &st) == 0) fsize = static_cast<long long>(st.st_size);
-        if (fsize > 4LL * 1024 * 1024) {
-            char buf[256];
-            std::snprintf(buf, sizeof(buf),
-                "File too large to open (%lld KB).\n\n"
-                "Maximum supported size: 4 MB.\n\n"
-                "For EPUB files, convert to TXT and trim to under 4 MB.",
-                fsize / 1024LL);
-            g_reader_error_msg = buf;
-            render_reader_error();
-            return;
-        }
-
-        if (!open_reader_book(book.path)) {
-            if (has_suffix_icase(book.path, ".epub")) {
-                g_reader_error_msg =
-                    "Could not open EPUB: " + book.name + "\n\n"
-                    "Possible causes:\n"
-                    "  - Corrupted or encrypted archive\n"
-                    "  - No readable HTML/XHTML content found\n"
-                    "  - All HTML entries exceed 2 MB uncompressed\n"
-                    "  - Insufficient heap memory\n\n"
-                    "Try converting to TXT format.";
-            } else {
-                g_reader_error_msg =
-                    "Could not open: " + book.name + "\n\n"
-                    "The file may be empty or unreadable.";
-            }
-            render_reader_error();
+        std::string error;
+        ps3::touch::drain();
+        if (!open_reader_book(book, &error)) {
+            show_reader_error(error.empty() ? "Could not open reader file." : error,
+                              Screen::ReaderLibrary);
         } else {
             render_reader_page(ps3::display::RefreshMode::GC16);
+            ps3::touch::drain();
         }
         return;
     }
@@ -1550,9 +1902,18 @@ void handle_reader_reading(int x, int y) {
     }
 }
 
-void handle_reader_error(int /*x*/, int /*y*/) {
-    render_reader_library();
-    ps3::touch::drain();  // drop taps buffered during render to prevent phantom navigation
+void handle_reader_error(int x, int y) {
+    if (g_footer_left.contains(x, y)) {
+        if (g_reader_error_return == Screen::Home) {
+            render_home();
+        } else {
+            render_reader_library();
+        }
+        ps3::touch::drain();
+    } else if (g_footer_right.contains(x, y)) {
+        render_home();
+        ps3::touch::drain();
+    }
 }
 
 void handle_japanese(int x, int y) {
