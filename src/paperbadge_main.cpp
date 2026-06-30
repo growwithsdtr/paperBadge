@@ -651,6 +651,7 @@ struct EpubReadResult {
     bool ok = false;
     std::string text;
     std::string error;
+    bool truncated = false;
 };
 
 std::string xml_attr_unescape(const std::string& value) {
@@ -786,9 +787,9 @@ bool media_type_is_html(const std::string& media_type, const std::string& href) 
 }
 
 EpubReadResult read_epub_text(const char* path) {
-    constexpr size_t kMaxXmlBytes = 256 * 1024;
-    constexpr size_t kMaxHtmlEntryBytes = 1024 * 1024;
-    constexpr size_t kMaxExtractedTextBytes = 768 * 1024;
+    constexpr size_t kMaxXmlBytes = 512 * 1024;
+    constexpr size_t kMaxHtmlEntryBytes = 2 * 1024 * 1024;
+    constexpr size_t kMaxExtractedTextBytes = 2 * 1024 * 1024;
 
     EpubReadResult result;
     mz_zip_archive zip{};
@@ -893,7 +894,10 @@ EpubReadResult read_epub_text(const char* path) {
         std::string stripped = strip_html(html.c_str(), html.size());
         if (stripped.empty()) continue;
         const size_t room = kMaxExtractedTextBytes - result.text.size();
-        if (stripped.size() > room) stripped.resize(room);
+        if (stripped.size() > room) {
+            stripped.resize(room);
+            result.truncated = true;
+        }
         result.text += stripped;
         result.text += "\n\n";
     }
@@ -902,6 +906,9 @@ EpubReadResult read_epub_text(const char* path) {
     if (result.text.empty()) {
         result.error = "EPUB parsed, but no readable text was extracted.";
         return result;
+    }
+    if (result.truncated) {
+        result.text += "\n[Partial EPUB: firmware reached the safe text extraction cap.]\n";
     }
     result.ok = true;
     return result;
@@ -2101,18 +2108,23 @@ bool open_reader_book(const BookFile& book, std::string* error_out) {
         if (error_out) *error_out = "File is empty: " + book.name;
         return false;
     }
-    if (st.st_size > 4LL * 1024 * 1024) {
+    const bool is_epub = has_suffix_icase(path, ".epub");
+    const long long max_reader_bytes = is_epub ? 16LL * 1024 * 1024
+                                               : 4LL * 1024 * 1024;
+    if (st.st_size > max_reader_bytes) {
         if (error_out) {
             *error_out = "File too large to open (" +
                          std::to_string(static_cast<long long>(st.st_size / 1024LL)) + " KB).\n\n"
-                         "Maximum supported size: 4 MB.\n\n"
-                         "For EPUB files, convert to TXT and trim to under 4 MB.";
+                         "Maximum supported size: " +
+                         std::to_string(static_cast<long long>(max_reader_bytes / (1024LL * 1024LL))) +
+                         " MB.\n\n"
+                         "For oversized EPUB files, remove image-heavy sections or convert selected chapters to TXT.";
         }
         return false;
     }
 
     std::string text;
-    if (has_suffix_icase(path, ".epub")) {
+    if (is_epub) {
         EpubReadResult epub = read_epub_text(path.c_str());
         if (!epub.ok) {
             if (error_out) {
