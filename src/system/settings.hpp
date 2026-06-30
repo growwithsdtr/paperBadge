@@ -45,6 +45,11 @@ struct State {
     // 0 = Fast, 1 = Balanced, 2 = Clean. Higher quality profiles
     // trade speed for lower ghosting on reveal/error/page transitions.
     int  refresh_profile     = 1;
+    int  reader_font_level   = 1;  // 0=S, 1=M, 2=L, 3=XL
+    int  interview_font_level = 1;
+    int  japanese_font_level = 1;
+    int  japanese_font_face  = 1;  // 0=IPAex Gothic, 1=BIZ UDGothic
+    int  western_font_profile = 0; // 0=firmware UI sans, FontLab candidates are preview-only
     // Page-flip direction in Reading mode.
     //   false = 左綴じ (Western / current default): MiddleRight tap
     //           advances to the next page, MiddleLeft goes back.

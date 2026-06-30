@@ -430,6 +430,16 @@ int draw_wrapped(int x, int y, int max_w, const std::string& text, int max_lines
     return y;
 }
 
+int draw_wrapped_gap(int x, int y, int max_w, const std::string& text,
+                     int max_lines, int gap) {
+    const auto lines = wrap_text(text, max_w, max_lines);
+    for (const auto& line : lines) {
+        draw_text(x, y, line);
+        y += active_font().height() + gap;
+    }
+    return y;
+}
+
 void draw_button(const Rect& r, const std::string& label, bool selected = false) {
     fill_rect(r, 15);
     if (selected) {
@@ -904,6 +914,20 @@ const char* reader_size_name() {
     return "M";
 }
 
+const char* size_level_name(int level) {
+    switch (level) {
+        case 0: return "S";
+        case 1: return "M";
+        case 2: return "L";
+        case 3: return "XL";
+    }
+    return "M";
+}
+
+const char* western_profile_name() {
+    return ps3::settings::state().western_font_profile == 1 ? "FontLab Inter preview" : "Firmware sans";
+}
+
 int reader_line_gap() {
     switch (g_reader_font_level) {
         case 0: return 4;
@@ -912,6 +936,26 @@ int reader_line_gap() {
         case 3: return 20;
     }
     return 8;
+}
+
+int japanese_line_gap() {
+    switch (g_japanese_font_level) {
+        case 0: return 4;
+        case 1: return 8;
+        case 2: return 14;
+        case 3: return 20;
+    }
+    return 8;
+}
+
+int japanese_choice_height() {
+    switch (g_japanese_font_level) {
+        case 0: return 68;
+        case 1: return 78;
+        case 2: return 90;
+        case 3: return 104;
+    }
+    return 78;
 }
 
 int reader_lines_per_page() {
@@ -926,6 +970,26 @@ void reflow_reader_pages_preserving_line() {
     const int max_page = std::max(0, static_cast<int>((g_reader_lines.size() + g_reader_lines_per_page - 1) /
                                                      g_reader_lines_per_page) - 1);
     g_reader_page = std::max(0, std::min(g_reader_page, max_page));
+}
+
+void persist_font_settings() {
+    auto& s = ps3::settings::state();
+    s.reader_font_level = std::max(0, std::min(g_reader_font_level, 3));
+    s.interview_font_level = std::max(0, std::min(g_interview_font_level, 3));
+    s.japanese_font_level = std::max(0, std::min(g_japanese_font_level, 3));
+    s.japanese_font_face = (g_jp_font == JapaneseFontFace::BizUdGothic) ? 1 : 0;
+    ps3::settings::save();
+}
+
+void select_japanese_font(JapaneseFontFace face);
+
+void apply_persisted_font_settings() {
+    auto& s = ps3::settings::state();
+    g_reader_font_level = std::max(0, std::min(s.reader_font_level, 3));
+    g_interview_font_level = std::max(0, std::min(s.interview_font_level, 3));
+    g_japanese_font_level = std::max(0, std::min(s.japanese_font_level, 3));
+    select_japanese_font(s.japanese_font_face == 0 ? JapaneseFontFace::IpaCurrent
+                                                   : JapaneseFontFace::BizUdGothic);
 }
 
 const char* refresh_profile_name() {
@@ -2168,17 +2232,20 @@ void render_japanese(ps3::display::RefreshMode mode) {
     g_screen = Screen::Japanese;
     const auto& item = kJapaneseItems[g_jp_index];
     ps3::display::clear();
-    draw_header("日本語", std::string("Q") + std::to_string(g_jp_index + 1) + "/" + std::to_string(sizeof(kJapaneseItems) / sizeof(kJapaneseItems[0])));
+    draw_header("日本語", std::string("Q") + std::to_string(g_jp_index + 1) + "/" +
+                         std::to_string(sizeof(kJapaneseItems) / sizeof(kJapaneseItems[0])) +
+                         " " + size_level_name(g_japanese_font_level));
     int y = 92;
-    y = draw_wrapped(30, y, ps3::display::width() - 60, item.prompt, 5) + 10;
+    y = draw_wrapped_gap(30, y, ps3::display::width() - 60, item.prompt, 5, japanese_line_gap()) + 10;
+    const int choice_h = japanese_choice_height();
     for (int i = 0; i < 4; ++i) {
-        g_jp_choices[i] = {30, y, ps3::display::width() - 60, 78};
+        g_jp_choices[i] = {30, y, ps3::display::width() - 60, choice_h};
         std::string label;
         label.push_back(static_cast<char>('A' + i));
         label += ". ";
         label += item.choices[i];
         draw_button(g_jp_choices[i], label);
-        y += 90;
+        y += choice_h + 12;
     }
     draw_footer(g_jp_index > 0 ? "Prev" : "Back", "Font", nullptr);
     ps3::display::flush(mode);
@@ -2187,9 +2254,10 @@ void render_japanese(ps3::display::RefreshMode mode) {
 bool japanese_feedback_single_page(const JapaneseItem& item) {
     const int available = ps3::display::height() - kToolbarH - kFooterH - 40;
     int h = active_font().height() + 18;
-    h += static_cast<int>(wrap_text(item.answer, ps3::display::width() - 60).size()) * (active_font().height() + 8) + 14;
-    h += static_cast<int>(wrap_text(item.explanation, ps3::display::width() - 60).size()) * (active_font().height() + 8) + 14;
-    h += static_cast<int>(wrap_text(item.english, ps3::display::width() - 60).size()) * (active_font().height() + 8) + 14;
+    const int gap = japanese_line_gap();
+    h += static_cast<int>(wrap_text(item.answer, ps3::display::width() - 60).size()) * (active_font().height() + gap) + 14;
+    h += static_cast<int>(wrap_text(item.explanation, ps3::display::width() - 60).size()) * (active_font().height() + gap) + 14;
+    h += static_cast<int>(wrap_text(item.english, ps3::display::width() - 60).size()) * (active_font().height() + gap) + 14;
     return h <= available;
 }
 
@@ -2200,25 +2268,26 @@ void render_japanese_feedback(ps3::display::RefreshMode mode) {
     g_jp_feedback_single = japanese_feedback_single_page(item);
     if (g_jp_feedback_single && g_jp_feedback_page > 0) g_jp_feedback_page = 0;
     ps3::display::clear();
-    draw_header("日本語 feedback", font_face_name());
+    draw_header("日本語 feedback", std::string(font_face_name()) + " " + size_level_name(g_japanese_font_level));
     int y = 92;
     const bool correct = g_jp_selected == item.correct;
     draw_text(30, y, correct ? "Correct" : "Wrong");
-    y += active_font().height() + 18;
+    y += active_font().height() + japanese_line_gap() + 10;
     std::string answer = "Answer: ";
     answer.push_back(static_cast<char>('A' + item.correct));
     answer += ". ";
     answer += item.choices[item.correct];
-    y = draw_wrapped(30, y, ps3::display::width() - 60, answer, 3) + 12;
+    y = draw_wrapped_gap(30, y, ps3::display::width() - 60, answer, 3, japanese_line_gap()) + 12;
     if (g_jp_feedback_page == 0) {
-        y = draw_wrapped(30, y, ps3::display::width() - 60, item.answer, 4) + 12;
-        y = draw_wrapped(30, y, ps3::display::width() - 60, item.explanation, g_jp_feedback_single ? 8 : 4) + 12;
+        y = draw_wrapped_gap(30, y, ps3::display::width() - 60, item.answer, 4, japanese_line_gap()) + 12;
+        y = draw_wrapped_gap(30, y, ps3::display::width() - 60, item.explanation,
+                             g_jp_feedback_single ? 8 : 4, japanese_line_gap()) + 12;
         if (g_jp_feedback_single) {
-            draw_wrapped(30, y, ps3::display::width() - 60, item.english, 4);
+            draw_wrapped_gap(30, y, ps3::display::width() - 60, item.english, 4, japanese_line_gap());
         }
     } else {
-        y = draw_wrapped(30, y, ps3::display::width() - 60, item.explanation, 8) + 12;
-        draw_wrapped(30, y, ps3::display::width() - 60, item.english, 8);
+        y = draw_wrapped_gap(30, y, ps3::display::width() - 60, item.explanation, 8, japanese_line_gap()) + 12;
+        draw_wrapped_gap(30, y, ps3::display::width() - 60, item.english, 8, japanese_line_gap());
     }
     draw_footer(g_jp_index > 0 ? "Prev" : "Back", nullptr,
                 g_jp_feedback_single ? (g_jp_index + 1 < static_cast<int>(sizeof(kJapaneseItems) / sizeof(kJapaneseItems[0])) ? "Next" : nullptr)
@@ -2232,17 +2301,20 @@ void render_japanese_mock(ps3::display::RefreshMode mode) {
     const auto& item = kJapaneseItems[g_jp_mock_index];
     ps3::display::clear();
     draw_header("Mock Test",
-                std::to_string(g_jp_mock_index + 1) + "/" + std::to_string(japanese_item_count()));
+                std::to_string(g_jp_mock_index + 1) + "/" +
+                std::to_string(japanese_item_count()) + " " +
+                size_level_name(g_japanese_font_level));
     int y = 92;
-    y = draw_wrapped(30, y, ps3::display::width() - 60, item.prompt, 5) + 10;
+    y = draw_wrapped_gap(30, y, ps3::display::width() - 60, item.prompt, 5, japanese_line_gap()) + 10;
+    const int choice_h = japanese_choice_height();
     for (int i = 0; i < 4; ++i) {
-        g_jp_choices[i] = {30, y, ps3::display::width() - 60, 78};
+        g_jp_choices[i] = {30, y, ps3::display::width() - 60, choice_h};
         std::string label;
         label.push_back(static_cast<char>('A' + i));
         label += ". ";
         label += item.choices[i];
         draw_button(g_jp_choices[i], label, g_jp_mock_selected == i);
-        y += 90;
+        y += choice_h + 12;
     }
     draw_footer(g_jp_mock_index > 0 ? "Prev" : "Back", nullptr,
                 g_jp_mock_selected >= 0 ? (g_jp_mock_index + 1 < japanese_item_count() ? "Next" : "Score") : nullptr);
@@ -2429,9 +2501,10 @@ void render_settings(ps3::display::RefreshMode mode) {
         int count = 0;
         if (g_settings_page == 1) {
             labels[count++] = "Font Lab";
+            labels[count++] = std::string("Western: ") + western_profile_name();
             labels[count++] = std::string("JP font: ") + font_face_name();
-            labels[count++] = "Interview size: " + std::to_string(g_interview_font_level + 1);
-            labels[count++] = "Japanese size: " + std::to_string(g_japanese_font_level + 1);
+            labels[count++] = std::string("Interview size: ") + size_level_name(g_interview_font_level);
+            labels[count++] = std::string("Japanese size: ") + size_level_name(g_japanese_font_level);
         } else if (g_settings_page == 2) {
             labels[count++] = std::string("Reader size: ") + reader_size_name();
         } else if (g_settings_page == 3) {
@@ -2458,7 +2531,7 @@ void render_settings(ps3::display::RefreshMode mode) {
 bool settings_back_button(int idx) {
     if (g_settings_page == 0) return false;
     int back_idx = 0;
-    if (g_settings_page == 1) back_idx = 4;
+    if (g_settings_page == 1) back_idx = 5;
     else if (g_settings_page == 2) back_idx = 1;
     else if (g_settings_page == 3) back_idx = 2;
     else if (g_settings_page == 4) back_idx = 3;
@@ -2489,19 +2562,28 @@ void handle_settings(int x, int y) {
                 nav_push(Screen::Settings);
                 render_japanese_font();
             } else if (i == 1) {
-                select_japanese_font(g_jp_font == JapaneseFontFace::BizUdGothic ? JapaneseFontFace::IpaCurrent : JapaneseFontFace::BizUdGothic);
-                render_settings(ps3::display::RefreshMode::GC16Full);
-            } else if (i == 2) {
-                g_interview_font_level = (g_interview_font_level + 1) % 4;
+                auto& s = ps3::settings::state();
+                s.western_font_profile = (s.western_font_profile + 1) % 2;
+                ps3::settings::save();
                 render_settings(ps3::display::RefreshMode::GL16);
+            } else if (i == 2) {
+                select_japanese_font(g_jp_font == JapaneseFontFace::BizUdGothic ? JapaneseFontFace::IpaCurrent : JapaneseFontFace::BizUdGothic);
+                persist_font_settings();
+                render_settings(ps3::display::RefreshMode::GC16Full);
             } else if (i == 3) {
+                g_interview_font_level = (g_interview_font_level + 1) % 4;
+                persist_font_settings();
+                render_settings(ps3::display::RefreshMode::GL16);
+            } else if (i == 4) {
                 g_japanese_font_level = (g_japanese_font_level + 1) % 4;
+                persist_font_settings();
                 render_settings(ps3::display::RefreshMode::GL16);
             }
         } else if (g_settings_page == 2) {
             if (i == 0) {
                 g_reader_font_level = (g_reader_font_level + 1) % 4;
                 reflow_reader_pages_preserving_line();
+                persist_font_settings();
                 render_settings(ps3::display::RefreshMode::GL16);
             }
         } else if (g_settings_page == 3) {
@@ -3128,6 +3210,7 @@ void handle_reader_reading(int x, int y) {
     } else if (g_footer_mid.contains(x, y)) {
         g_reader_font_level = (g_reader_font_level + 1) % 4;
         reflow_reader_pages_preserving_line();
+        persist_font_settings();
         save_reader_state();
         render_reader_page(ps3::display::RefreshMode::GC16Full);
     } else if (x < ps3::display::width() / 3 && g_reader_page > 0) {
@@ -3315,6 +3398,7 @@ void handle_japanese_font(int x, int y) {
         navigate_back();
     } else if (g_footer_mid.contains(x, y)) {
         select_japanese_font(g_jp_font == JapaneseFontFace::BizUdGothic ? JapaneseFontFace::IpaCurrent : JapaneseFontFace::BizUdGothic);
+        persist_font_settings();
         render_japanese_font(ps3::display::RefreshMode::GL16);
     } else if (g_footer_right.contains(x, y)) {
         g_font_lab_page = (g_font_lab_page + 1) % font_lab_page_count();
@@ -3407,6 +3491,9 @@ extern "C" void app_main(void) {
     ps3::sd::mount();
     ensure_dirs();
     ps3::settings::load();
+    g_sleep_minutes = ps3::settings::state().sleep_minutes;
+    g_power_off_minutes = ps3::settings::state().power_off_minutes;
+    apply_persisted_font_settings();
     ps3::display::set_inverted(ps3::settings::state().rotation_inverted);
     ps3::touch::set_inverted(ps3::settings::state().rotation_inverted);
     log_boot_battery();
