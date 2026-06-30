@@ -212,6 +212,7 @@ int g_reader_page = 0;
 int g_reader_lines_per_page = 24;
 std::string g_reader_error_msg;
 Screen g_reader_error_return = Screen::ReaderLibrary;
+int g_reader_font_level = 1;  // 0=S, 1=M, 2=L, 3=XL line density
 
 // ── Japanese globals ──────────────────────────────────────────────────
 int g_jp_index = 0;
@@ -829,6 +830,40 @@ const char* manga_fit_name() {
         case MangaFitMode::FitHeight: return "fit height";
     }
     return "fit page";
+}
+
+const char* reader_size_name() {
+    switch (g_reader_font_level) {
+        case 0: return "S";
+        case 1: return "M";
+        case 2: return "L";
+        case 3: return "XL";
+    }
+    return "M";
+}
+
+int reader_line_gap() {
+    switch (g_reader_font_level) {
+        case 0: return 4;
+        case 1: return 8;
+        case 2: return 14;
+        case 3: return 20;
+    }
+    return 8;
+}
+
+int reader_lines_per_page() {
+    return std::max(1, (ps3::display::height() - kToolbarH - kFooterH - 28) /
+                           (active_font().height() + reader_line_gap()));
+}
+
+void reflow_reader_pages_preserving_line() {
+    const int first_line = std::max(0, g_reader_page * std::max(1, g_reader_lines_per_page));
+    g_reader_lines_per_page = reader_lines_per_page();
+    g_reader_page = first_line / std::max(1, g_reader_lines_per_page);
+    const int max_page = std::max(0, static_cast<int>((g_reader_lines.size() + g_reader_lines_per_page - 1) /
+                                                     g_reader_lines_per_page) - 1);
+    g_reader_page = std::max(0, std::min(g_reader_page, max_page));
 }
 
 void cycle_manga_fit_mode() {
@@ -1873,9 +1908,7 @@ bool open_reader_book(const BookFile& book, std::string* error_out) {
         next_lines.push_back(para);
     }
     if (next_lines.empty()) next_lines.push_back("(empty)");
-    const int next_lines_per_page = std::max(
-        1, (ps3::display::height() - kToolbarH - kFooterH - 28) /
-               (active_font().height() + 8));
+    const int next_lines_per_page = reader_lines_per_page();
     int next_page = load_reader_page_for(path);
     const int next_max_page = std::max(
         0, static_cast<int>((next_lines.size() + next_lines_per_page - 1) /
@@ -1932,14 +1965,15 @@ void render_reader_page(ps3::display::RefreshMode mode) {
     ps3::display::clear();
     const int total_pages = std::max(1, static_cast<int>((g_reader_lines.size() + g_reader_lines_per_page - 1) /
                                                         g_reader_lines_per_page));
-    draw_header(g_reader_title, std::to_string(g_reader_page + 1) + "/" + std::to_string(total_pages));
+    draw_header(g_reader_title, std::to_string(g_reader_page + 1) + "/" +
+                                std::to_string(total_pages) + " " + reader_size_name());
     int y = kToolbarH + 18;
     const int first = g_reader_page * g_reader_lines_per_page;
     for (int i = 0; i < g_reader_lines_per_page && first + i < static_cast<int>(g_reader_lines.size()); ++i) {
         draw_text(28, y, g_reader_lines[first + i]);
-        y += active_font().height() + 8;
+        y += active_font().height() + reader_line_gap();
     }
-    draw_footer("Library", "Prev", "Next");
+    draw_footer("Library", "Size", "Next");
     ps3::display::flush(mode);
 }
 
@@ -2801,7 +2835,12 @@ void handle_reader_reading(int x, int y) {
     if (g_footer_left.contains(x, y)) {
         save_reader_state();
         navigate_back();
-    } else if ((g_footer_mid.contains(x, y) || x < ps3::display::width() / 3) && g_reader_page > 0) {
+    } else if (g_footer_mid.contains(x, y)) {
+        g_reader_font_level = (g_reader_font_level + 1) % 4;
+        reflow_reader_pages_preserving_line();
+        save_reader_state();
+        render_reader_page(ps3::display::RefreshMode::GC16Full);
+    } else if (x < ps3::display::width() / 3 && g_reader_page > 0) {
         --g_reader_page;
         save_reader_state();
         render_reader_page(ps3::display::RefreshMode::GL16);
