@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -172,6 +173,8 @@ def main() -> int:
     parser.add_argument("--grayscale16", action="store_true")
     parser.add_argument("--keep-originals", action="store_true")
     parser.add_argument("--slices", type=int, default=4)
+    parser.add_argument("--ocr", choices=["none", "gemini"], default="none")
+    parser.add_argument("--ocr-model", default="gemini-1.5-flash")
     args = parser.parse_args()
 
     source = args.input.expanduser().resolve()
@@ -196,6 +199,8 @@ def main() -> int:
 
     max_bytes = args.max_mb * 1024 * 1024
     chunks = write_cbz_chunks(records, image_dir, args.out, source.stem, max_bytes, args.zip64)
+    if args.ocr != "none":
+        run_ocr(args, image_dir, records, args.out)
 
     page_index = [
         {
@@ -225,6 +230,48 @@ def main() -> int:
     (args.out / "page_index.json").write_text(json.dumps(page_index, ensure_ascii=False, indent=2) + "\n")
     print(args.out / "manifest.json")
     return 0
+
+
+def run_ocr(args, image_dir: Path, records: list[PageRecord], out_dir: Path) -> None:
+    if args.ocr == "gemini":
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            raise SystemExit("--ocr gemini requires GEMINI_API_KEY or GOOGLE_API_KEY in the environment.")
+        try:
+            import google.generativeai as genai  # type: ignore
+        except ImportError as exc:
+            raise SystemExit(
+                "Gemini OCR requires the optional SDK: python3 -m pip install google-generativeai"
+            ) from exc
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(args.ocr_model)
+        ocr_dir = out_dir / "ocr"
+        ocr_dir.mkdir(exist_ok=True)
+        regions = []
+        for rec in records:
+            image_path = image_dir / rec.optimized_name
+            prompt = (
+                "Extract Japanese text from this manga page or slice. Return compact JSON with "
+                "page, text, optional english_translation, regions, vocabulary_candidates, "
+                "kanji_candidates, grammar_candidates, and confidence. Use page-level text if "
+                "region structure is uncertain."
+            )
+            response = model.generate_content([prompt, {"mime_type": "image/jpeg", "data": image_path.read_bytes()}])
+            text = getattr(response, "text", "") or ""
+            regions.append(
+                {
+                    "@type": "OCRRegion",
+                    "page_index": rec.index,
+                    "asset": rec.optimized_name,
+                    "provider": "gemini",
+                    "model": args.ocr_model,
+                    "raw": text,
+                }
+            )
+        payload = {"@context": "https://paperbadge.local/schema/manga_ocr.jsonld", "regions": regions}
+        (ocr_dir / "text.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+        for name in ["vocab.json", "concepts.json", "page_map.json"]:
+            (ocr_dir / name).write_text(json.dumps({"items": []}, ensure_ascii=False, indent=2) + "\n")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperbadge.local/schema/manga_ocr_region.schema.json",
+  "title": "PaperBadge Manga OCR Region",
+  "type": "object",
+  "required": ["@type", "page_index", "asset", "provider"],
+  "properties": {
+    "@type": { "const": "OCRRegion" },
+    "page_index": { "type": "integer", "minimum": 0 },
+    "asset": { "type": "string" },
+    "slice": {
+      "type": "object",
+      "properties": {
+        "x": { "type": "integer" },
+        "y": { "type": "integer" },
+        "w": { "type": "integer" },
+        "h": { "type": "integer" }
+      }
+    },
+    "text": { "type": "string" },
+    "english_translation": { "type": "string" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "speaker": { "type": "string" },
+    "vocabulary_candidates": { "type": "array", "items": { "type": "string" } },
+    "kanji_candidates": { "type": "array", "items": { "type": "string" } },
+    "grammar_candidates": { "type": "array", "items": { "type": "string" } },
+    "notes": { "type": "string" },
+    "provider": { "type": "string" },
+    "model": { "type": "string" },
+    "raw": { "type": "string" }
+  }
+}

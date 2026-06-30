@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperbadge.local/schema/manga_sidecar.schema.json",
+  "title": "PaperBadge Manga Sidecar",
+  "type": "object",
+  "required": ["manga_id", "source_file", "output_files", "page_count", "page_order"],
+  "properties": {
+    "manga_id": { "type": "string" },
+    "source_file": { "type": "string" },
+    "output_files": { "type": "array", "items": { "type": "object" } },
+    "page_count": { "type": "integer", "minimum": 0 },
+    "asset_count": { "type": "integer", "minimum": 0 },
+    "page_order": { "type": "array", "items": { "type": "string" } },
+    "firmware_compatibility": { "type": "object" }
+  }
+}
