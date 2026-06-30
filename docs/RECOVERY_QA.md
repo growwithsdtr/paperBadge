@@ -31,8 +31,20 @@ Do not use `/dev/cu.usbmodemHA0E246012845`.
 - Japanese Practice uses Source -> Week/Unit -> Day/Lesson.
 - Japanese Mock Test scores at end and review opens explanations.
 - Manga small CBZ still opens; reading is fullscreen.
-- Manga top tap returns library; bottom-left cycles fit state; bottom-right toggles orientation state.
+- Manga top tap returns library.
+- Manga portrait opens fit-page by default.
+- Manga bottom-left cycles fit-page / fit-width / fit-height.
+- Manga bottom-right toggles portrait / landscape; landscape visually rotates to 960x540.
+- Manga landscape fit-width shows a zoomed vertical section.
+- Manga left/right body taps page through slices before changing page.
+- Manga leaving to library/settings restores portrait orientation.
+- PNG-in-CBZ opens fit-page if the page width is within PNGdec row limits.
+- Large non-ZIP64 CBZ over 50 MB is allowed to attempt open.
+- ZIP64 CBZ shows a ZIP64-specific diagnostic.
 - Settings pages open: Fonts, Reader, Manga, Power, Refresh.
 - Refresh profile cycles Fast/Balanced/Clean and persists after reboot.
+- Refresh clean cadence is visible and persists.
+- Font Lab shows BIZ UDPGothic, Noto Sans JP, M PLUS, Inter, and Source Serif candidate pages.
+- Reader EPUB around 10 MB opens when it has normal unencrypted XHTML spine content.
 
 Stop on any Interview route becoming unreachable, Badge failing to render, or small CBZ failing to open.

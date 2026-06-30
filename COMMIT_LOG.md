@@ -1,3 +1,34 @@
+# Font Manga Reader Sprint
+
+Branch: `font-manga-reader-sprint`
+Base: `18bf704` (`heavy-paperbadge-sprint`)
+
+## Commits
+
+- `ed4e23f` — embed font lab candidates
+- `6dba52c` — finish font size settings
+- `ca400e2` — implement manga orientation rotation
+- `4b16d28` — implement manga fit slice rendering
+- `f37a864` — improve manga archive support
+- `f7db450` — support larger epub reader
+- `9aae6e2` — wire manga refresh controls
+- `880a98c` — upgrade manga preprocessor
+
+## Summary
+
+- Font Lab now embeds generated sparse bitmap subsets for BIZ UDPGothic, Noto Sans JP, M PLUS 1p, M PLUS Rounded 1c, Inter, and Source Serif 4, with a host download/subset/embed pipeline.
+- Font and size settings persist through `settings.kv`; Reader and Japanese sizing now alter actual layout density.
+- Manga reading can enter true epdiy landscape rotation with remapped touch and restores app portrait orientation when leaving Manga.
+- JPEG manga rendering supports fit-page, fit-width, fit-height, and vertical slice paging through the decoder viewport path.
+- CBZ size guard now checks ZIP64 markers instead of rejecting files over 50 MB; non-ZIP64 large CBZs can attempt open.
+- PNG-in-CBZ is supported for fit-page rendering; WebP, CBR/RAR, and ZIP64 remain unsupported in firmware.
+- EPUB container limit raised for normal unencrypted XHTML EPUBs around 10 MB with safe chapter/text caps and partial extraction notice.
+- Manga refresh profile now applies as Fast/Balanced/Clean, with visible clean cadence in Settings.
+- Manga preprocessor defaults to 150 MB non-ZIP64 chunks and outputs landscape 960x540 slice assets plus richer OCR metadata.
+
+Build checkpoints: all stage `pio run` checks passed. Latest checked firmware flash 1,540,761 bytes / 11,534,336 bytes, RAM 27,496 bytes / 327,680 bytes.
+Flash: NOT RUN by explicit request. Manual command: `pio run -t upload --upload-port /dev/cu.usbmodem1101`.
+
 # Heavy PaperBadge Sprint
 
 Branch: `heavy-paperbadge-sprint`

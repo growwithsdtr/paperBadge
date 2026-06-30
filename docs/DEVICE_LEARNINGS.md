@@ -8,3 +8,9 @@
 - GT911 long-press is not available in the current tap queue; header fallback is top-left Back and top-right Home.
 - Firmware miniz path should stay conservative; large manga conversion belongs in host preprocessing.
 - Normal firmware remains well below the 12 MB app limit after this sprint.
+- Font Lab candidate faces can be embedded as small sparse bitmap subsets for physical QA without shipping full TTF/OTF render support.
+- epdiy landscape rotations work in the HAL, but every non-Manga screen must restore portrait on entry to avoid orientation leakage.
+- GT911 raw coordinates are calibrated to normal portrait; landscape touch requires a coordinate transform, not just `set_inverted`.
+- JPEG manga fit/slice rendering now maps decoder output into a viewport; cache invalidation is required when fit, orientation, or slice changes.
+- The old Arduino/M5Unified app explicitly set `cfg.internal_imu = false`; ESP-IDF auto-rotation still needs a confirmed IMU driver/config.
+- ZIP64 should be detected from central-directory markers rather than guessed from file size.
