@@ -213,6 +213,9 @@ int g_reader_lines_per_page = 24;
 std::string g_reader_error_msg;
 Screen g_reader_error_return = Screen::ReaderLibrary;
 int g_reader_font_level = 1;  // 0=S, 1=M, 2=L, 3=XL line density
+int g_interview_font_level = 1;
+int g_japanese_font_level = 1;
+int g_font_lab_page = 0;
 
 // ── Japanese globals ──────────────────────────────────────────────────
 int g_jp_index = 0;
@@ -2242,17 +2245,60 @@ void render_japanese_font(ps3::display::RefreshMode mode) {
     restore_app_orientation();
     g_screen = Screen::JapaneseFont;
     ps3::display::clear();
-    draw_header("JP Font", font_face_name());
-    draw_wrapped(34, 96, ps3::display::width() - 68,
-                 "Tap Switch to choose the Japanese face used by the practice app and reader text.");
-    draw_text(48, 188, std::string("Selected: ") + font_face_name());
-    draw_text(48, 258, "BIZ UDGothic Regular:");
-    draw_text_font(48, 304, "郵便局で荷物を送ります。", g_biz_font);
-    draw_text_font(48, 350, "日本語の読みやすさ ABC123", g_biz_font);
-    draw_text(48, 428, "IPAex Gothic:");
-    draw_text_font(48, 474, "郵便局で荷物を送ります。", g_ipa_font);
-    draw_text_font(48, 520, "日本語の読みやすさ ABC123", g_ipa_font);
-    draw_footer("Back", "Switch", nullptr);
+    g_font_lab_page = std::max(0, std::min(g_font_lab_page, 4));
+    draw_header("Font Lab", std::string("Page ") + std::to_string(g_font_lab_page + 1) + "/5");
+    int y = 86;
+    if (g_font_lab_page == 0) {
+        y = draw_wrapped(34, y, ps3::display::width() - 68,
+                         std::string("Selected JP: ") + font_face_name() +
+                         "\nEmbedded candidates: BIZ UDGothic, IPAex Gothic", 4) + 14;
+        draw_text(34, y, "BIZ UDGothic:");
+        y += active_font().height() + 8;
+        draw_text_font(50, y, "郵便局で荷物を送ります。", g_biz_font);
+        y += 48;
+        draw_text_font(50, y, "EN: Post office / JP: 郵便局", g_biz_font);
+        y += 70;
+        draw_text(34, y, "IPAex Gothic:");
+        y += active_font().height() + 8;
+        draw_text_font(50, y, "郵便局で荷物を送ります。", g_ipa_font);
+        y += 48;
+        draw_text_font(50, y, "日本語の読みやすさ ABC123", g_ipa_font);
+    } else if (g_font_lab_page == 1) {
+        const char* samples[] = {
+            "Daniel Jimenez",
+            "Senior Technical PM | AI Products",
+            "Practice 1/71",
+            "Reader body text 1234567890",
+            "The quick brown fox jumps over 12345.",
+        };
+        for (const char* sample : samples) {
+            y = draw_wrapped(34, y, ps3::display::width() - 68, sample, 2) + 12;
+        }
+    } else if (g_font_lab_page == 2) {
+        const char* samples[] = {
+            "ひらがな：ちがう・にもつ・ひっこす",
+            "カタカナ：ダニエル・ヒメネズ",
+            "漢字：郵便局 荷物 違う 引っ越す",
+            "N3 ・ W1D1 ・ 500問 ・ ぶんぽう",
+            "「郵便局」の読み方として正しいものはどれですか。",
+        };
+        for (const char* sample : samples) {
+            y = draw_wrapped(34, y, ps3::display::width() - 68, sample, 2) + 12;
+        }
+    } else if (g_font_lab_page == 3) {
+        draw_wrapped(34, y, ps3::display::width() - 68,
+                     std::string("Size profiles\n") +
+                     "Reader: " + reader_size_name() + "\n" +
+                     "Interview: " + std::to_string(g_interview_font_level + 1) + "\n"
+                     "Japanese: " + std::to_string(g_japanese_font_level + 1) + "\n\n"
+                     "Normal firmware uses embedded 24px XTEink subsets. FontLab firmware can embed generated candidates.");
+    } else {
+        draw_wrapped(34, y, ps3::display::width() - 68,
+                     "Candidate pipeline\n"
+                     "BIZ UDPGothic, Noto Sans JP, M PLUS 1p, M PLUS Rounded 1c, efontJA, western serif/sans.\n\n"
+                     "Use tools/font_candidates.py to download, subset, and generate candidate assets with license notices.");
+    }
+    draw_footer("Back", "Switch", "Next");
     ps3::display::flush(mode);
 }
 
@@ -3061,6 +3107,9 @@ void handle_japanese_font(int x, int y) {
         navigate_back();
     } else if (g_footer_mid.contains(x, y)) {
         select_japanese_font(g_jp_font == JapaneseFontFace::BizUdGothic ? JapaneseFontFace::IpaCurrent : JapaneseFontFace::BizUdGothic);
+        render_japanese_font(ps3::display::RefreshMode::GL16);
+    } else if (g_footer_right.contains(x, y)) {
+        g_font_lab_page = (g_font_lab_page + 1) % 5;
         render_japanese_font(ps3::display::RefreshMode::GL16);
     }
 }
