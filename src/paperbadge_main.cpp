@@ -35,6 +35,8 @@ extern "C" {
 #include "library/book_db.hpp"
 #include "library/library.hpp"
 #include "system/settings.hpp"
+#include "embedded_badge.h"
+#include "embedded_interview_deck.h"
 
 namespace {
 
@@ -66,13 +68,20 @@ enum class Screen {
     Home,
     Badge,
     Interview,
+    InterviewPractice,
+    InterviewDrillQ,
+    InterviewDrillFB,
+    InterviewGlossary,
+    InterviewResults,
     Japanese,
     JapaneseFeedback,
     JapaneseFont,
     MangaLibrary,
     MangaReading,
+    MangaError,
     ReaderLibrary,
     ReaderReading,
+    ReaderError,
     Settings,
 };
 
@@ -122,6 +131,7 @@ constexpr JapaneseItem kJapaneseItems[] = {
     },
 };
 
+// ── Font / display globals ────────────────────────────────────────────
 ps3::font::XTEinkFont g_biz_font(24, 24);
 ps3::font::XTEinkFont g_ipa_font(24, 24);
 ps3::font::XTEinkFont* g_font = &g_biz_font;
@@ -132,6 +142,7 @@ int g_sleep_minutes = 5;
 int g_power_off_minutes = 20;
 int g_pages_since_full = 0;
 
+// ── Hit-test rects ────────────────────────────────────────────────────
 Rect g_home_buttons[6];
 Rect g_footer_left;
 Rect g_footer_mid;
@@ -140,6 +151,11 @@ Rect g_list_rows[10];
 Rect g_jp_choices[4];
 Rect g_settings_buttons[5];
 
+// Interview menu / sub-screen rects
+Rect g_iv_menu_buttons[5];   // Practice, Drills, Exam, Glossary, Results
+Rect g_iv_choices[4];        // drill MCQ options
+
+// ── Manga globals ─────────────────────────────────────────────────────
 ps3::library::Library g_manga_library;
 ps3::library::BookDb g_manga_db;
 ps3::library::BookRecord* g_manga_record = nullptr;
@@ -147,18 +163,44 @@ ps3::comic::CbzBook g_manga_book;
 bool g_manga_open = false;
 char g_manga_path[ps3::library::MAX_PATH_LEN] = {};
 int g_manga_page = 0;
+std::string g_manga_error_msg;
 
+// ── Reader globals ────────────────────────────────────────────────────
 std::vector<BookFile> g_reader_books;
 std::vector<std::string> g_reader_lines;
 std::string g_reader_path;
 std::string g_reader_title;
 int g_reader_page = 0;
 int g_reader_lines_per_page = 24;
+std::string g_reader_error_msg;
 
+// ── Japanese globals ──────────────────────────────────────────────────
 int g_jp_index = 0;
 int g_jp_selected = -1;
 int g_jp_feedback_page = 0;
 bool g_jp_feedback_single = true;
+
+// ── Interview state ───────────────────────────────────────────────────
+int g_iv_card_idx = 0;
+bool g_iv_card_spoken = false;   // false=title view, true=spoken answer view
+
+int g_iv_drill_idx = 0;          // index into kDrills[] (MCQ only)
+int g_iv_drill_answer = -1;
+int g_iv_session_correct = 0;
+int g_iv_session_total = 0;
+int g_iv_session_practice = 0;
+
+constexpr int kExamSize = 10;
+int g_iv_exam_pool[kExamSize];
+int g_iv_exam_count = 0;
+int g_iv_exam_current = 0;
+bool g_iv_exam_answers[kExamSize];
+int g_iv_exam_score = 0;
+bool g_iv_in_exam = false;
+
+int g_iv_gloss_idx = 0;
+
+// ── Helpers ───────────────────────────────────────────────────────────
 
 std::string basename_of(const std::string& path) {
     const size_t slash = path.find_last_of('/');
@@ -393,6 +435,8 @@ std::string read_epub_text(const char* path) {
         if (!(has_suffix_icase(name, ".xhtml") || has_suffix_icase(name, ".html") || has_suffix_icase(name, ".htm"))) {
             continue;
         }
+        // Skip oversized entries to avoid heap OOM
+        if (st.m_uncomp_size > 2 * 1024 * 1024) continue;
         size_t sz = 0;
         void* data = mz_zip_reader_extract_to_heap(&zip, i, &sz, 0);
         if (!data) continue;
@@ -428,11 +472,51 @@ void select_japanese_font(JapaneseFontFace face) {
     g_font = (face == JapaneseFontFace::BizUdGothic) ? &g_biz_font : &g_ipa_font;
 }
 
+// ── Interview helpers ─────────────────────────────────────────────────
+
+// Returns true for drills that have selectable MCQ options.
+bool iv_drill_is_mcq(int idx) {
+    if (idx < 0 || idx >= static_cast<int>(embedded_papercoach::kDrillCount)) return false;
+    return embedded_papercoach::kDrills[idx].optionCount > 0;
+}
+
+// Build a pool of kExamSize MCQ drill indices, shuffled via LCG.
+void iv_build_exam() {
+    // Collect all MCQ drill indices
+    std::vector<int> pool;
+    pool.reserve(embedded_papercoach::kDrillCount);
+    for (int i = 0; i < static_cast<int>(embedded_papercoach::kDrillCount); ++i) {
+        if (iv_drill_is_mcq(i)) pool.push_back(i);
+    }
+    // Shuffle with a simple LCG
+    uint32_t seed = static_cast<uint32_t>(esp_timer_get_time() & 0xFFFFFFFF);
+    for (size_t i = pool.size() - 1; i > 0; --i) {
+        seed = seed * 1664525u + 1013904223u;
+        const size_t j = seed % (i + 1);
+        std::swap(pool[i], pool[j]);
+    }
+    g_iv_exam_count = std::min(kExamSize, static_cast<int>(pool.size()));
+    for (int i = 0; i < g_iv_exam_count; ++i) g_iv_exam_pool[i] = pool[i];
+    g_iv_exam_current = 0;
+    g_iv_exam_score = 0;
+    std::memset(g_iv_exam_answers, 0, sizeof(g_iv_exam_answers));
+}
+
+// ── Forward declarations ───────────────────────────────────────────────
 void render_home(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_badge();
+void render_interview(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_interview_practice(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_interview_drill_q(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_interview_drill_fb(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_interview_glossary(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void render_interview_results(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_manga_library(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_manga_page(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GL16);
+void render_manga_error(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_reader_library(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_reader_page(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GL16);
+void render_reader_error(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_japanese(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_japanese_feedback(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_japanese_font(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
@@ -440,18 +524,41 @@ void render_settings(ps3::display::RefreshMode mode = ps3::display::RefreshMode:
 
 void render_current(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16) {
     switch (g_screen) {
-        case Screen::Home: render_home(mode); break;
-        case Screen::MangaLibrary: render_manga_library(mode); break;
-        case Screen::MangaReading: render_manga_page(mode); break;
-        case Screen::ReaderLibrary: render_reader_library(mode); break;
-        case Screen::ReaderReading: render_reader_page(mode); break;
-        case Screen::Japanese: render_japanese(mode); break;
-        case Screen::JapaneseFeedback: render_japanese_feedback(mode); break;
-        case Screen::Settings: render_settings(mode); break;
-        default: render_home(mode); break;
+        case Screen::Home:               render_home(mode); break;
+        case Screen::Badge:              render_badge(); break;
+        case Screen::Interview:          render_interview(mode); break;
+        case Screen::InterviewPractice:  render_interview_practice(mode); break;
+        case Screen::InterviewDrillQ:    render_interview_drill_q(mode); break;
+        case Screen::InterviewDrillFB:   render_interview_drill_fb(mode); break;
+        case Screen::InterviewGlossary:  render_interview_glossary(mode); break;
+        case Screen::InterviewResults:   render_interview_results(mode); break;
+        case Screen::MangaLibrary:       render_manga_library(mode); break;
+        case Screen::MangaReading:       render_manga_page(mode); break;
+        case Screen::MangaError:         render_manga_error(mode); break;
+        case Screen::ReaderLibrary:      render_reader_library(mode); break;
+        case Screen::ReaderReading:      render_reader_page(mode); break;
+        case Screen::ReaderError:        render_reader_error(mode); break;
+        case Screen::Japanese:           render_japanese(mode); break;
+        case Screen::JapaneseFeedback:   render_japanese_feedback(mode); break;
+        case Screen::Settings:           render_settings(mode); break;
+        default:                         render_home(mode); break;
     }
 }
 
+// ── Badge final-frame (persists on e-ink during sleep / power-off) ────
+void draw_english_badge_final_frame() {
+    ps3::display::clear();
+    const bool shown = ps3::comic::display_png(
+        embedded_badge::kBadgeEnPng, embedded_badge::kBadgeEnSize);
+    if (!shown) {
+        // Minimal fallback text if PNG decode fails
+        draw_wrapped(40, 80, ps3::display::width() - 80,
+                     "Daniel Jimenez\nSenior Technical PM | AI Products");
+    }
+    ps3::display::flush(ps3::display::RefreshMode::GC16Full);
+}
+
+// ── Home ───────────────────────────────────────────────────────────────
 void render_home(ps3::display::RefreshMode mode) {
     g_screen = Screen::Home;
     ps3::display::clear();
@@ -468,37 +575,225 @@ void render_home(ps3::display::RefreshMode mode) {
         y += h + gap;
     }
     draw_wrapped(34, y + 12, ps3::display::width() - 68,
-                 "Low-level Paper S3 build: epdiy display, direct GT911 touch, ADC battery, SD manga/books.");
+                 "epdiy display  •  GT911 touch  •  ADC battery  •  SD manga/books");
     ps3::display::flush(mode);
 }
 
+// ── Badge ─────────────────────────────────────────────────────────────
 void render_badge() {
     g_screen = Screen::Badge;
     ps3::display::clear();
-    const std::string png = std::string(kAssetsRoot) + "/badge_en.png";
-    const auto bytes = read_file_bytes(png.c_str(), 2 * 1024 * 1024);
-    if (!bytes.empty() && ps3::comic::display_png(bytes.data(), bytes.size())) {
-        draw_header("Badge", "asset");
-    } else {
+    // Try embedded PNG first; fall back to SD asset file
+    bool shown = ps3::comic::display_png(
+        embedded_badge::kBadgeEnPng, embedded_badge::kBadgeEnSize);
+    if (!shown) {
+        const std::string png = std::string(kAssetsRoot) + "/badge_en.png";
+        const auto bytes = read_file_bytes(png.c_str(), 2 * 1024 * 1024);
+        shown = !bytes.empty() &&
+                ps3::comic::display_png(bytes.data(), bytes.size());
+    }
+    if (!shown) {
         draw_header("Badge");
         draw_wrapped(34, 140, ps3::display::width() - 68,
-                     "PaperBadge\n\nPlace badge_en.png in /paperBadge/assets for the full badge image.");
+                     "Daniel Jimenez\nSenior Technical PM | AI Products\n\n"
+                     "Embedded badge image unavailable.");
     }
     draw_footer("Home", nullptr, nullptr);
     ps3::display::flush(ps3::display::RefreshMode::GC16Full);
 }
 
-void render_interview() {
+// ── Interview — menu ──────────────────────────────────────────────────
+void render_interview(ps3::display::RefreshMode mode) {
     g_screen = Screen::Interview;
     ps3::display::clear();
-    draw_header("Interview", "ported shell");
-    draw_wrapped(34, 110, ps3::display::width() - 68,
-                 "Interview content is preserved in the repository and this ESP-IDF shell is ready for the full card renderer port.\n\n"
-                 "This screen is intentionally read-only in the first low-level migration so hardware, manga, reader, power, and Japanese pagination can be validated first.");
+    draw_header("Interview", std::to_string(embedded_papercoach::kCardCount) + " cards");
+    const char* labels[] = {"Practice", "Drills", "Exam", "Glossary", "Results"};
+    const int x = 34;
+    const int w = ps3::display::width() - 68;
+    const int h = 90;
+    const int gap = 10;
+    int y = 90;
+    for (int i = 0; i < 5; ++i) {
+        g_iv_menu_buttons[i] = {x, y, w, h};
+        draw_button(g_iv_menu_buttons[i], labels[i]);
+        y += h + gap;
+    }
+    draw_wrapped(34, y + 10, w,
+                 std::to_string(embedded_papercoach::kDrillCount) + " drills  |  " +
+                 std::to_string(embedded_papercoach::kGlossaryCount) + " glossary terms  |  embedded");
     draw_footer("Home", nullptr, nullptr);
-    ps3::display::flush(ps3::display::RefreshMode::GC16);
+    ps3::display::flush(mode);
 }
 
+// ── Interview — Practice ──────────────────────────────────────────────
+void render_interview_practice(ps3::display::RefreshMode mode) {
+    g_screen = Screen::InterviewPractice;
+    const auto& c = embedded_papercoach::kCards[g_iv_card_idx];
+    ps3::display::clear();
+    const std::string idx_str = std::to_string(g_iv_card_idx + 1) + "/" +
+                                 std::to_string(embedded_papercoach::kCardCount);
+    draw_header(std::string("Practice ") + idx_str,
+                c.mustMaster ? "MUST" : "");
+    int y = 80;
+    // Section + number + title
+    y = draw_wrapped(30, y, ps3::display::width() - 60,
+                     std::string(c.section) + " " + c.number, 1) + 4;
+    y = draw_wrapped(30, y, ps3::display::width() - 60, c.title, 3) + 10;
+    draw_hline(20, y, ps3::display::width() - 40);
+    y += 12;
+    if (g_iv_card_spoken) {
+        // Show the spoken answer
+        draw_wrapped(30, y, ps3::display::width() - 60, c.spoken, 14);
+    } else {
+        // Show prompt to reveal
+        draw_wrapped(30, y, ps3::display::width() - 60,
+                     "Tap REVEAL to see the answer.\n\n"
+                     "Theme: " + std::string(c.theme) + "\n"
+                     "Confidence: " + c.confidence, 6);
+    }
+    draw_footer(g_iv_card_idx > 0 ? "Prev" : "Menu",
+                g_iv_card_spoken ? "Hide" : "Reveal",
+                g_iv_card_idx + 1 < static_cast<int>(embedded_papercoach::kCardCount) ? "Next" : nullptr);
+    ps3::display::flush(mode);
+}
+
+// ── Interview — Drill Q ───────────────────────────────────────────────
+void render_interview_drill_q(ps3::display::RefreshMode mode) {
+    g_screen = Screen::InterviewDrillQ;
+    if (g_iv_in_exam) {
+        // In exam mode use the shuffled exam pool
+        if (g_iv_exam_current >= g_iv_exam_count) {
+            render_interview(mode);
+            return;
+        }
+        g_iv_drill_idx = g_iv_exam_pool[g_iv_exam_current];
+    } else {
+        // Free-drill mode: skip non-MCQ entries
+        while (g_iv_drill_idx < static_cast<int>(embedded_papercoach::kDrillCount) &&
+               !iv_drill_is_mcq(g_iv_drill_idx)) {
+            ++g_iv_drill_idx;
+        }
+        if (g_iv_drill_idx >= static_cast<int>(embedded_papercoach::kDrillCount)) {
+            render_interview(mode);
+            return;
+        }
+    }
+    const auto& d = embedded_papercoach::kDrills[g_iv_drill_idx];
+    ps3::display::clear();
+    // Count only MCQ drills for the label
+    int mcq_pos = 0;
+    for (int i = 0; i <= g_iv_drill_idx; ++i) {
+        if (iv_drill_is_mcq(i)) ++mcq_pos;
+    }
+    draw_header("Drills", std::to_string(mcq_pos));
+    int y = 80;
+    y = draw_wrapped(30, y, ps3::display::width() - 60, d.prompt, 5) + 10;
+    for (int i = 0; i < d.optionCount && i < 4; ++i) {
+        g_iv_choices[i] = {30, y, ps3::display::width() - 60, 78};
+        std::string label;
+        label.push_back(static_cast<char>('A' + i));
+        label += ". ";
+        label += d.options[i];
+        draw_button(g_iv_choices[i], label, g_iv_drill_answer == i);
+        y += 90;
+    }
+    draw_footer("Menu", nullptr, g_iv_drill_answer >= 0 ? "Submit" : nullptr);
+    ps3::display::flush(mode);
+}
+
+// ── Interview — Drill Feedback ────────────────────────────────────────
+void render_interview_drill_fb(ps3::display::RefreshMode mode) {
+    g_screen = Screen::InterviewDrillFB;
+    const int drill_idx = g_iv_in_exam
+        ? g_iv_exam_pool[g_iv_exam_current]
+        : g_iv_drill_idx;
+    const auto& d = embedded_papercoach::kDrills[drill_idx];
+    const bool correct = g_iv_drill_answer == d.correctIndex;
+    ps3::display::clear();
+    draw_header(correct ? "Correct!" : "Wrong", g_iv_in_exam ? "Exam" : "Drills");
+    int y = 80;
+    // Show correct answer
+    std::string ans = "Answer: ";
+    ans.push_back(static_cast<char>('A' + d.correctIndex));
+    if (d.correctIndex < d.optionCount) {
+        ans += ". ";
+        ans += d.options[d.correctIndex];
+    }
+    y = draw_wrapped(30, y, ps3::display::width() - 60, ans, 3) + 10;
+    draw_hline(20, y, ps3::display::width() - 40);
+    y += 12;
+    draw_wrapped(30, y, ps3::display::width() - 60, d.explanation, 10);
+    const char* right_label = nullptr;
+    if (g_iv_in_exam) {
+        right_label = (g_iv_exam_current + 1 < g_iv_exam_count) ? "Next" : "Results";
+    } else {
+        // Check if there's another MCQ drill ahead
+        bool has_next = false;
+        for (int i = g_iv_drill_idx + 1; i < static_cast<int>(embedded_papercoach::kDrillCount); ++i) {
+            if (iv_drill_is_mcq(i)) { has_next = true; break; }
+        }
+        right_label = has_next ? "Next" : nullptr;
+    }
+    draw_footer("Menu", "Home", right_label);
+    ps3::display::flush(mode);
+}
+
+// ── Interview — Glossary ──────────────────────────────────────────────
+void render_interview_glossary(ps3::display::RefreshMode mode) {
+    g_screen = Screen::InterviewGlossary;
+    const auto& g = embedded_papercoach::kGlossaryTerms[g_iv_gloss_idx];
+    ps3::display::clear();
+    const std::string idx_str = std::to_string(g_iv_gloss_idx + 1) + "/" +
+                                 std::to_string(embedded_papercoach::kGlossaryCount);
+    draw_header("Glossary " + idx_str, g.category ? g.category : "");
+    int y = 80;
+    y = draw_wrapped(30, y, ps3::display::width() - 60, g.term, 2) + 6;
+    draw_hline(20, y, ps3::display::width() - 40);
+    y += 10;
+    y = draw_wrapped(30, y, ps3::display::width() - 60, g.definition, 8) + 10;
+    if (g.example && g.example[0]) {
+        draw_wrapped(30, y, ps3::display::width() - 60,
+                     std::string("Example: ") + g.example, 5);
+    }
+    draw_footer(g_iv_gloss_idx > 0 ? "Prev" : "Menu",
+                "Menu",
+                g_iv_gloss_idx + 1 < static_cast<int>(embedded_papercoach::kGlossaryCount) ? "Next" : nullptr);
+    ps3::display::flush(mode);
+}
+
+// ── Interview — Results ───────────────────────────────────────────────
+void render_interview_results(ps3::display::RefreshMode mode) {
+    g_screen = Screen::InterviewResults;
+    ps3::display::clear();
+    draw_header("Interview Results");
+    int y = 90;
+    y = draw_wrapped(30, y, ps3::display::width() - 60,
+                     "Session summary", 1) + 10;
+    if (g_iv_session_total > 0) {
+        const int pct = g_iv_session_correct * 100 / g_iv_session_total;
+        y = draw_wrapped(30, y, ps3::display::width() - 60,
+                         "Drills:   " + std::to_string(g_iv_session_correct) + "/" +
+                         std::to_string(g_iv_session_total) + "  (" + std::to_string(pct) + "%)", 2) + 8;
+    } else {
+        y = draw_wrapped(30, y, ps3::display::width() - 60,
+                         "No drills completed this session.", 2) + 8;
+    }
+    if (g_iv_exam_count > 0 && g_iv_in_exam) {
+        y = draw_wrapped(30, y, ps3::display::width() - 60,
+                         "Last Exam: " + std::to_string(g_iv_exam_score) + "/" +
+                         std::to_string(g_iv_exam_count), 2) + 8;
+    }
+    y = draw_wrapped(30, y, ps3::display::width() - 60,
+                     "Practice cards viewed: " + std::to_string(g_iv_session_practice), 2) + 10;
+    draw_hline(20, y, ps3::display::width() - 40);
+    y += 12;
+    draw_wrapped(30, y, ps3::display::width() - 60,
+                 "Reset clears session stats for this run.\nSD progress persistence not yet implemented.", 4);
+    draw_footer("Menu", "Reset", "Home");
+    ps3::display::flush(mode);
+}
+
+// ── Manga ─────────────────────────────────────────────────────────────
 bool open_manga_library() {
     if (g_manga_library.open(kMangaRoot)) return true;
     mkdir_if_missing(kMangaRoot);
@@ -507,8 +802,16 @@ bool open_manga_library() {
 
 void render_manga_library(ps3::display::RefreshMode mode) {
     g_screen = Screen::MangaLibrary;
-    open_manga_library();
+    const bool sd_ok = open_manga_library();
     ps3::display::clear();
+    if (!sd_ok) {
+        draw_header("Manga", "No SD");
+        draw_wrapped(34, 130, ps3::display::width() - 68,
+                     "No SD card detected.\n\nInsert an SD card with CBZ files under:\n/paperBadge/content/manga");
+        draw_footer("Home", nullptr, nullptr);
+        ps3::display::flush(mode);
+        return;
+    }
     draw_header("Manga", std::to_string(g_manga_library.total_count()) + " items");
     int y = 84;
     const int row_h = 72;
@@ -524,7 +827,7 @@ void render_manga_library(ps3::display::RefreshMode mode) {
     }
     if (g_manga_library.count() == 0) {
         draw_wrapped(34, 130, ps3::display::width() - 68,
-                     "No manga found.\n\nPut CBZ or ZIP files under /paperBadge/content/manga on the SD card.");
+                     "No manga found.\n\nPut CBZ or ZIP files under:\n/paperBadge/content/manga");
     }
     draw_footer(g_manga_library.can_go_up() ? "Up" : "Home",
                 g_manga_library.can_page_prev() ? "Prev" : nullptr,
@@ -592,6 +895,16 @@ void render_manga_page(ps3::display::RefreshMode mode) {
     ps3::comic::page_loader::request(g_manga_page);
 }
 
+void render_manga_error(ps3::display::RefreshMode mode) {
+    g_screen = Screen::MangaError;
+    ps3::display::clear();
+    draw_header("Manga - Cannot Open");
+    draw_wrapped(34, 90, ps3::display::width() - 68, g_manga_error_msg);
+    draw_footer("Back", nullptr, nullptr);
+    ps3::display::flush(mode);
+}
+
+// ── Reader ────────────────────────────────────────────────────────────
 void scan_reader_dir(const std::string& dir, int depth) {
     if (depth > 4) return;
     DIR* d = opendir(dir.c_str());
@@ -664,6 +977,19 @@ void render_reader_library(ps3::display::RefreshMode mode) {
     g_screen = Screen::ReaderLibrary;
     scan_reader_books();
     ps3::display::clear();
+    if (g_reader_books.empty()) {
+        // Check if SD is likely missing
+        struct stat st{};
+        const bool sd_ok = stat("/sdcard", &st) == 0;
+        if (!sd_ok) {
+            draw_header("Reader", "No SD");
+            draw_wrapped(34, 130, ps3::display::width() - 68,
+                         "No SD card detected.\n\nInsert an SD card with TXT, MD, or EPUB files under:\n/paperBadge/content/books");
+            draw_footer("Home", nullptr, nullptr);
+            ps3::display::flush(mode);
+            return;
+        }
+    }
     draw_header("Reader", std::to_string(g_reader_books.size()) + " books");
     int y = 90;
     for (int i = 0; i < 10; ++i) g_list_rows[i] = {};
@@ -676,7 +1002,7 @@ void render_reader_library(ps3::display::RefreshMode mode) {
     }
     if (g_reader_books.empty()) {
         draw_wrapped(34, 130, ps3::display::width() - 68,
-                     "No books found.\n\nPut TXT, MD, or EPUB files under /paperBadge/content/books on the SD card.");
+                     "No books found.\n\nPut TXT, MD, or EPUB files under:\n/paperBadge/content/books");
     }
     draw_footer("Home", "Scan", nullptr);
     ps3::display::flush(mode);
@@ -698,6 +1024,16 @@ void render_reader_page(ps3::display::RefreshMode mode) {
     ps3::display::flush(mode);
 }
 
+void render_reader_error(ps3::display::RefreshMode mode) {
+    g_screen = Screen::ReaderError;
+    ps3::display::clear();
+    draw_header("Reader - Cannot Open");
+    draw_wrapped(34, 90, ps3::display::width() - 68, g_reader_error_msg);
+    draw_footer("Back", nullptr, nullptr);
+    ps3::display::flush(mode);
+}
+
+// ── Japanese ──────────────────────────────────────────────────────────
 void render_japanese(ps3::display::RefreshMode mode) {
     g_screen = Screen::Japanese;
     const auto& item = kJapaneseItems[g_jp_index];
@@ -776,6 +1112,7 @@ void render_japanese_font(ps3::display::RefreshMode mode) {
     ps3::display::flush(mode);
 }
 
+// ── Settings ──────────────────────────────────────────────────────────
 void render_settings(ps3::display::RefreshMode mode) {
     g_screen = Screen::Settings;
     ps3::display::clear();
@@ -797,13 +1134,11 @@ void render_settings(ps3::display::RefreshMode mode) {
     ps3::display::flush(mode);
 }
 
+// ── Sleep / power ─────────────────────────────────────────────────────
 void enter_deep_sleep() {
     save_session();
-    ps3::display::clear();
-    draw_header("PowerOff");
-    draw_wrapped(34, 140, ps3::display::width() - 68,
-                 "Entering deep sleep.\n\nUse the reset button to wake.");
-    ps3::display::flush(ps3::display::RefreshMode::GC16Full);
+    // Draw badge as the persistent e-ink final frame
+    draw_english_badge_final_frame();
     const int mv = ps3::battery::voltage_mv();
     ps3::battery::save_deep_entry(std::time(nullptr), mv);
     ps3::battery::log_event("deep");
@@ -820,11 +1155,8 @@ void enter_deep_sleep() {
 void enter_light_sleep(const char* trigger) {
     ESP_LOGI(TAG, "light sleep: %s", trigger);
     save_session();
-    ps3::display::clear();
-    draw_header("Sleep");
-    draw_wrapped(34, 140, ps3::display::width() - 68,
-                 "Light sleep.\n\nTouch the screen to wake.");
-    ps3::display::flush(ps3::display::RefreshMode::GC16);
+    // Draw badge as the persistent e-ink sleep frame
+    draw_english_badge_final_frame();
     ps3::battery::log_event("light");
     const std::time_t t0 = std::time(nullptr);
     uint64_t timeout_us = 0;
@@ -841,6 +1173,7 @@ void enter_light_sleep(const char* trigger) {
     render_current(ps3::display::RefreshMode::GC16Full);
 }
 
+// ── Touch handlers ────────────────────────────────────────────────────
 void handle_home(int x, int y) {
     if (g_home_buttons[0].contains(x, y)) render_badge();
     else if (g_home_buttons[1].contains(x, y)) render_interview();
@@ -851,6 +1184,164 @@ void handle_home(int x, int y) {
     } else if (g_home_buttons[3].contains(x, y)) render_manga_library();
     else if (g_home_buttons[4].contains(x, y)) render_reader_library();
     else if (g_home_buttons[5].contains(x, y)) render_settings();
+}
+
+void handle_interview_menu(int x, int y) {
+    if (g_footer_left.contains(x, y)) {
+        render_home();
+        return;
+    }
+    if (g_iv_menu_buttons[0].contains(x, y)) {
+        g_iv_card_idx = 0;
+        g_iv_card_spoken = false;
+        render_interview_practice();
+    } else if (g_iv_menu_buttons[1].contains(x, y)) {
+        g_iv_drill_idx = 0;
+        g_iv_drill_answer = -1;
+        g_iv_in_exam = false;
+        render_interview_drill_q();
+    } else if (g_iv_menu_buttons[2].contains(x, y)) {
+        // Exam mode
+        iv_build_exam();
+        g_iv_in_exam = true;
+        if (g_iv_exam_count > 0) {
+            g_iv_drill_answer = -1;
+            // Show first exam question
+            g_iv_drill_idx = g_iv_exam_pool[0]; // not used directly by drill_q in exam mode
+            render_interview_drill_q();
+        } else {
+            render_interview();
+        }
+    } else if (g_iv_menu_buttons[3].contains(x, y)) {
+        g_iv_gloss_idx = 0;
+        render_interview_glossary();
+    } else if (g_iv_menu_buttons[4].contains(x, y)) {
+        render_interview_results();
+    }
+}
+
+void handle_interview_practice(int x, int y) {
+    if (g_footer_left.contains(x, y)) {
+        if (g_iv_card_idx > 0) {
+            --g_iv_card_idx;
+            g_iv_card_spoken = false;
+            render_interview_practice(ps3::display::RefreshMode::GL16);
+        } else {
+            render_interview();
+        }
+    } else if (g_footer_mid.contains(x, y)) {
+        g_iv_card_spoken = !g_iv_card_spoken;
+        if (g_iv_card_spoken) ++g_iv_session_practice;
+        render_interview_practice(ps3::display::RefreshMode::GL16);
+    } else if (g_footer_right.contains(x, y)) {
+        if (g_iv_card_idx + 1 < static_cast<int>(embedded_papercoach::kCardCount)) {
+            ++g_iv_card_idx;
+            g_iv_card_spoken = false;
+            render_interview_practice(ps3::display::RefreshMode::GL16);
+        }
+    }
+}
+
+void handle_interview_drill_q(int x, int y) {
+    // Determine which drill we're showing
+    const int drill_idx = g_iv_in_exam ? g_iv_exam_pool[g_iv_exam_current] : g_iv_drill_idx;
+    const auto& d = embedded_papercoach::kDrills[drill_idx];
+
+    if (g_footer_left.contains(x, y)) {
+        g_iv_in_exam = false;
+        g_iv_drill_answer = -1;
+        render_interview();
+        return;
+    }
+    if (g_footer_right.contains(x, y) && g_iv_drill_answer >= 0) {
+        // Submit
+        const bool correct = g_iv_drill_answer == d.correctIndex;
+        if (g_iv_in_exam) {
+            g_iv_exam_answers[g_iv_exam_current] = correct;
+            if (correct) ++g_iv_exam_score;
+        }
+        ++g_iv_session_total;
+        if (correct) ++g_iv_session_correct;
+        render_interview_drill_fb();
+        return;
+    }
+    // Option tap
+    for (int i = 0; i < d.optionCount && i < 4; ++i) {
+        if (g_iv_choices[i].contains(x, y)) {
+            g_iv_drill_answer = i;
+            render_interview_drill_q(ps3::display::RefreshMode::GL16);
+            return;
+        }
+    }
+}
+
+void handle_interview_drill_fb(int x, int y) {
+    if (g_footer_left.contains(x, y) || g_footer_mid.contains(x, y)) {
+        g_iv_in_exam = false;
+        g_iv_drill_answer = -1;
+        render_interview();
+        return;
+    }
+    if (g_footer_right.contains(x, y)) {
+        if (g_iv_in_exam) {
+            ++g_iv_exam_current;
+            if (g_iv_exam_current >= g_iv_exam_count) {
+                g_iv_in_exam = false;
+                render_interview_results();
+            } else {
+                // Advance drill index to next exam question
+                g_iv_drill_idx = g_iv_exam_pool[g_iv_exam_current];
+                g_iv_drill_answer = -1;
+                render_interview_drill_q();
+            }
+        } else {
+            // Next MCQ drill
+            int next = g_iv_drill_idx + 1;
+            while (next < static_cast<int>(embedded_papercoach::kDrillCount) && !iv_drill_is_mcq(next)) {
+                ++next;
+            }
+            if (next < static_cast<int>(embedded_papercoach::kDrillCount)) {
+                g_iv_drill_idx = next;
+                g_iv_drill_answer = -1;
+                render_interview_drill_q();
+            } else {
+                render_interview();
+            }
+        }
+    }
+}
+
+void handle_interview_glossary(int x, int y) {
+    if (g_footer_left.contains(x, y)) {
+        if (g_iv_gloss_idx > 0) {
+            --g_iv_gloss_idx;
+            render_interview_glossary(ps3::display::RefreshMode::GL16);
+        } else {
+            render_interview();
+        }
+    } else if (g_footer_mid.contains(x, y)) {
+        render_interview();
+    } else if (g_footer_right.contains(x, y)) {
+        if (g_iv_gloss_idx + 1 < static_cast<int>(embedded_papercoach::kGlossaryCount)) {
+            ++g_iv_gloss_idx;
+            render_interview_glossary(ps3::display::RefreshMode::GL16);
+        }
+    }
+}
+
+void handle_interview_results(int x, int y) {
+    if (g_footer_left.contains(x, y)) {
+        render_interview();
+    } else if (g_footer_mid.contains(x, y)) {
+        // Reset session stats
+        g_iv_session_correct = 0;
+        g_iv_session_total = 0;
+        g_iv_session_practice = 0;
+        g_iv_exam_count = 0;
+        render_interview_results(ps3::display::RefreshMode::GL16);
+    } else if (g_footer_right.contains(x, y)) {
+        render_home();
+    }
 }
 
 void handle_manga_library(int x, int y) {
@@ -877,11 +1368,66 @@ void handle_manga_library(int x, int y) {
         if (e.kind == ps3::library::EntryKind::Folder) {
             g_manga_library.enter(i);
             render_manga_library();
-        } else {
-            char path[ps3::library::MAX_PATH_LEN] = {};
-            if (g_manga_library.full_path_of(i, path, sizeof(path)) && open_manga_book(path)) {
-                render_manga_page(ps3::display::RefreshMode::GC16Full);
+            return;
+        }
+        char path[ps3::library::MAX_PATH_LEN] = {};
+        if (!g_manga_library.full_path_of(i, path, sizeof(path))) return;
+
+        // CBR/RAR: not supported
+        if (has_suffix_icase(e.name, ".cbr") || has_suffix_icase(e.name, ".rar")) {
+            g_manga_error_msg =
+                "CBR/RAR archives are not supported.\n\n"
+                "Convert to CBZ format and copy the CBZ file to:\n/paperBadge/content/manga";
+            render_manga_error();
+            return;
+        }
+
+        // File size guard — miniz cannot parse ZIP64 central directories.
+        // Files >50 MB are very likely ZIP64 and will fail.
+        struct stat st{};
+        long long file_size = 0;
+        if (stat(path, &st) == 0) file_size = static_cast<long long>(st.st_size);
+        if (file_size > 50LL * 1024 * 1024) {
+            char buf[512];
+            const long long mb = file_size / (1024LL * 1024LL);
+            std::snprintf(buf, sizeof(buf),
+                "Archive too large (%lld MB).\n\n"
+                "Miniz cannot parse ZIP64 central directories. Archives\n"
+                "over ~50 MB likely use ZIP64 and will fail.\n\n"
+                "Diagnostics:\n"
+                "  File size:   %lld MB\n"
+                "  ZIP64 risk:  high (>50 MB)\n\n"
+                "Split into volumes under 50 MB or re-archive\n"
+                "without ZIP64 (zip -0 or use a non-ZIP64 tool).",
+                mb, mb);
+            g_manga_error_msg = buf;
+            render_manga_error();
+            return;
+        }
+
+        // Try to open
+        if (!open_manga_book(path)) {
+            // Best-effort diagnosis
+            std::string diag =
+                "Could not open this archive.\n\n"
+                "Diagnostics:\n"
+                "  File: " + std::string(e.name) + "\n";
+            if (file_size > 0) {
+                char sz[64];
+                std::snprintf(sz, sizeof(sz), "  Size: %lld KB\n", file_size / 1024LL);
+                diag += sz;
             }
+            diag +=
+                "\nPossible causes:\n"
+                "  - Archive contains only PNG/WebP (JPEG required)\n"
+                "  - Corrupted or truncated archive\n"
+                "  - Unsupported compression method (requires Deflate)\n"
+                "  - Insufficient PSRAM for page index\n"
+                "\nCheck serial log (cbz: tag) for details.";
+            g_manga_error_msg = diag;
+            render_manga_error();
+        } else {
+            render_manga_page(ps3::display::RefreshMode::GC16Full);
         }
         return;
     }
@@ -914,6 +1460,11 @@ void handle_manga_reading(int x, int y) {
     render_manga_page(clean ? ps3::display::RefreshMode::GC16Full : ps3::display::RefreshMode::GL16);
 }
 
+void handle_manga_error(int /*x*/, int /*y*/) {
+    // Any tap dismisses the error and returns to library
+    render_manga_library();
+}
+
 void handle_reader_library(int x, int y) {
     if (g_footer_left.contains(x, y)) {
         render_home();
@@ -924,10 +1475,45 @@ void handle_reader_library(int x, int y) {
         return;
     }
     for (size_t i = 0; i < g_reader_books.size() && i < 9; ++i) {
-        if (g_list_rows[i].contains(x, y) && open_reader_book(g_reader_books[i].path)) {
-            render_reader_page(ps3::display::RefreshMode::GC16);
+        if (!g_list_rows[i].contains(x, y)) continue;
+        const auto& book = g_reader_books[i];
+
+        // File size guard — large files may OOM during text extraction
+        struct stat st{};
+        long long fsize = 0;
+        if (stat(book.path.c_str(), &st) == 0) fsize = static_cast<long long>(st.st_size);
+        if (fsize > 4LL * 1024 * 1024) {
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                "File too large to open (%lld KB).\n\n"
+                "Maximum supported size: 4 MB.\n\n"
+                "For EPUB files, convert to TXT and trim to under 4 MB.",
+                fsize / 1024LL);
+            g_reader_error_msg = buf;
+            render_reader_error();
             return;
         }
+
+        if (!open_reader_book(book.path)) {
+            if (has_suffix_icase(book.path, ".epub")) {
+                g_reader_error_msg =
+                    "Could not open EPUB: " + book.name + "\n\n"
+                    "Possible causes:\n"
+                    "  - Corrupted or encrypted archive\n"
+                    "  - No readable HTML/XHTML content found\n"
+                    "  - All HTML entries exceed 2 MB uncompressed\n"
+                    "  - Insufficient heap memory\n\n"
+                    "Try converting to TXT format.";
+            } else {
+                g_reader_error_msg =
+                    "Could not open: " + book.name + "\n\n"
+                    "The file may be empty or unreadable.";
+            }
+            render_reader_error();
+        } else {
+            render_reader_page(ps3::display::RefreshMode::GC16);
+        }
+        return;
     }
 }
 
@@ -946,6 +1532,10 @@ void handle_reader_reading(int x, int y) {
         save_reader_state();
         render_reader_page(ps3::display::RefreshMode::GL16);
     }
+}
+
+void handle_reader_error(int /*x*/, int /*y*/) {
+    render_reader_library();
 }
 
 void handle_japanese(int x, int y) {
@@ -1029,16 +1619,27 @@ void handle_settings(int x, int y) {
 
 void handle_tap(int x, int y) {
     mark_activity();
-    if (g_screen == Screen::Home) handle_home(x, y);
-    else if (g_screen == Screen::Badge || g_screen == Screen::Interview) render_home();
-    else if (g_screen == Screen::MangaLibrary) handle_manga_library(x, y);
-    else if (g_screen == Screen::MangaReading) handle_manga_reading(x, y);
-    else if (g_screen == Screen::ReaderLibrary) handle_reader_library(x, y);
-    else if (g_screen == Screen::ReaderReading) handle_reader_reading(x, y);
-    else if (g_screen == Screen::Japanese) handle_japanese(x, y);
-    else if (g_screen == Screen::JapaneseFeedback) handle_japanese_feedback(x, y);
-    else if (g_screen == Screen::JapaneseFont) handle_japanese_font(x, y);
-    else if (g_screen == Screen::Settings) handle_settings(x, y);
+    switch (g_screen) {
+        case Screen::Home:              handle_home(x, y); break;
+        case Screen::Badge:             render_home(); break;
+        case Screen::Interview:         handle_interview_menu(x, y); break;
+        case Screen::InterviewPractice: handle_interview_practice(x, y); break;
+        case Screen::InterviewDrillQ:   handle_interview_drill_q(x, y); break;
+        case Screen::InterviewDrillFB:  handle_interview_drill_fb(x, y); break;
+        case Screen::InterviewGlossary: handle_interview_glossary(x, y); break;
+        case Screen::InterviewResults:  handle_interview_results(x, y); break;
+        case Screen::MangaLibrary:      handle_manga_library(x, y); break;
+        case Screen::MangaReading:      handle_manga_reading(x, y); break;
+        case Screen::MangaError:        handle_manga_error(x, y); break;
+        case Screen::ReaderLibrary:     handle_reader_library(x, y); break;
+        case Screen::ReaderReading:     handle_reader_reading(x, y); break;
+        case Screen::ReaderError:       handle_reader_error(x, y); break;
+        case Screen::Japanese:          handle_japanese(x, y); break;
+        case Screen::JapaneseFeedback:  handle_japanese_feedback(x, y); break;
+        case Screen::JapaneseFont:      handle_japanese_font(x, y); break;
+        case Screen::Settings:          handle_settings(x, y); break;
+        default:                        render_home(); break;
+    }
 }
 
 void maybe_auto_sleep() {
@@ -1066,7 +1667,7 @@ void log_boot_battery() {
 }  // namespace
 
 extern "C" void app_main(void) {
-    ESP_LOGI(TAG, "PaperBadge ESP-IDF overhaul boot");
+    ESP_LOGI(TAG, "PaperBadge boot: Badge+Interview restored, Manga/Reader guarded");
     ps3::battery::init_nvs();
     if (!ps3::display::init()) {
         ESP_LOGE(TAG, "display init failed");
