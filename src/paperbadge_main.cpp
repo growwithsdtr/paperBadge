@@ -787,6 +787,20 @@ void select_japanese_font(JapaneseFontFace face) {
     g_font = (face == JapaneseFontFace::BizUdGothic) ? &g_biz_font : &g_ipa_font;
 }
 
+void set_screen_orientation(bool inverted) {
+    if (ps3::display::is_inverted() == inverted) return;
+    ps3::display::set_inverted(inverted);
+    ps3::touch::set_inverted(inverted);
+}
+
+void restore_app_orientation() {
+    set_screen_orientation(ps3::settings::state().rotation_inverted);
+}
+
+void use_manual_badge_orientation() {
+    set_screen_orientation(false);
+}
+
 // ── Interview helpers ─────────────────────────────────────────────────
 
 // Returns true for drills that have selectable MCQ options.
@@ -976,7 +990,7 @@ void render_current(ps3::display::RefreshMode mode = ps3::display::RefreshMode::
 // ── Badge final-frame (persists on e-ink during sleep / power-off) ────
 void draw_english_badge_final_frame() {
     const bool previous_orientation = ps3::display::is_inverted();
-    ps3::display::set_inverted(true);  // strap/lanyard final frame: 180°
+    set_screen_orientation(true);  // strap/lanyard final frame: 180°
     ps3::display::clear();
     ESP_LOGI(TAG, "badge final frame: PNG %u bytes", (unsigned)embedded_badge::kBadgeEnSize);
     const bool shown = ps3::comic::display_png(
@@ -987,12 +1001,12 @@ void draw_english_badge_final_frame() {
                      "Daniel Jimenez\nSenior Technical PM | AI Products");
     }
     ps3::display::flush(ps3::display::RefreshMode::GC16Full);
-    ps3::display::set_inverted(previous_orientation);
-    ps3::touch::set_inverted(previous_orientation);
+    set_screen_orientation(previous_orientation);
 }
 
 // ── Home ───────────────────────────────────────────────────────────────
 void render_home(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::Home;
     nav_clear();
     ps3::display::clear();
@@ -1015,6 +1029,7 @@ void render_home(ps3::display::RefreshMode mode) {
 
 // ── Badge ─────────────────────────────────────────────────────────────
 void render_badge_qr_zoom() {
+    use_manual_badge_orientation();
     g_screen = Screen::Badge;
     ps3::display::clear();
     const bool shown = ps3::comic::display_png_fit(
@@ -1028,6 +1043,7 @@ void render_badge_qr_zoom() {
 }
 
 void render_badge() {
+    use_manual_badge_orientation();
     g_screen = Screen::Badge;
     g_badge_qr_rect = {111, 600, 318, 318};
     if (g_badge_qr_zoom) {
@@ -1076,6 +1092,7 @@ void render_badge() {
 
 // ── Interview — menu ──────────────────────────────────────────────────
 void render_interview(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::Interview;
     ps3::display::clear();
     draw_header("Interview", std::to_string(embedded_papercoach::kCardCount) + " cards");
@@ -1099,6 +1116,7 @@ void render_interview(ps3::display::RefreshMode mode) {
 
 // ── Interview — Practice ──────────────────────────────────────────────
 void render_interview_practice(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::InterviewPractice;
     const auto& c = embedded_papercoach::kCards[g_iv_card_idx];
     ps3::display::clear();
@@ -1131,6 +1149,7 @@ void render_interview_practice(ps3::display::RefreshMode mode) {
 
 // ── Interview — Drill Q ───────────────────────────────────────────────
 void render_interview_drill_q(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::InterviewDrillQ;
     if (g_iv_in_exam) {
         // In exam mode use the shuffled exam pool
@@ -1175,6 +1194,7 @@ void render_interview_drill_q(ps3::display::RefreshMode mode) {
 
 // ── Interview — Drill Feedback ────────────────────────────────────────
 void render_interview_drill_fb(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::InterviewDrillFB;
     const int drill_idx = g_iv_in_exam
         ? g_iv_exam_pool[g_iv_exam_current]
@@ -1212,6 +1232,7 @@ void render_interview_drill_fb(ps3::display::RefreshMode mode) {
 
 // ── Interview — Glossary ──────────────────────────────────────────────
 void render_interview_glossary(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::InterviewGlossary;
     const auto& g = embedded_papercoach::kGlossaryTerms[g_iv_gloss_idx];
     ps3::display::clear();
@@ -1235,6 +1256,7 @@ void render_interview_glossary(ps3::display::RefreshMode mode) {
 
 // ── Interview — Results ───────────────────────────────────────────────
 void render_interview_results(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::InterviewResults;
     ps3::display::clear();
     draw_header("Interview Results");
@@ -1273,6 +1295,7 @@ bool open_manga_library() {
 }
 
 void render_manga_library(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::MangaLibrary;
     const bool sd_ok = open_manga_library();
     ps3::display::clear();
@@ -1343,6 +1366,7 @@ void update_manga_progress() {
 }
 
 void render_manga_page(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::MangaReading;
     if (!g_manga_open) {
         render_manga_library(ps3::display::RefreshMode::GC16);
@@ -1368,6 +1392,7 @@ void render_manga_page(ps3::display::RefreshMode mode) {
 }
 
 void render_manga_error(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::MangaError;
     ps3::display::clear();
     draw_header("Manga - Cannot Open");
@@ -1512,6 +1537,7 @@ bool open_reader_book(const BookFile& book, std::string* error_out) {
 }
 
 void render_reader_library(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::ReaderLibrary;
     scan_reader_books();
     ps3::display::clear();
@@ -1547,6 +1573,7 @@ void render_reader_library(ps3::display::RefreshMode mode) {
 }
 
 void render_reader_page(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::ReaderReading;
     ps3::display::clear();
     const int total_pages = std::max(1, static_cast<int>((g_reader_lines.size() + g_reader_lines_per_page - 1) /
@@ -1563,6 +1590,7 @@ void render_reader_page(ps3::display::RefreshMode mode) {
 }
 
 void render_reader_error(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::ReaderError;
     ps3::display::clear();
     draw_header("Reader - Cannot Open");
@@ -1581,6 +1609,7 @@ void show_reader_error(const std::string& message, Screen return_target = Screen
 
 // ── Japanese ──────────────────────────────────────────────────────────
 void render_japanese(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::Japanese;
     const auto& item = kJapaneseItems[g_jp_index];
     ps3::display::clear();
@@ -1610,6 +1639,7 @@ bool japanese_feedback_single_page(const JapaneseItem& item) {
 }
 
 void render_japanese_feedback(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::JapaneseFeedback;
     const auto& item = kJapaneseItems[g_jp_index];
     g_jp_feedback_single = japanese_feedback_single_page(item);
@@ -1642,6 +1672,7 @@ void render_japanese_feedback(ps3::display::RefreshMode mode) {
 }
 
 void render_japanese_font(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::JapaneseFont;
     ps3::display::clear();
     draw_header("JP Font", font_face_name());
@@ -1660,6 +1691,7 @@ void render_japanese_font(ps3::display::RefreshMode mode) {
 
 // ── Settings ──────────────────────────────────────────────────────────
 void render_settings(ps3::display::RefreshMode mode) {
+    restore_app_orientation();
     g_screen = Screen::Settings;
     ps3::display::clear();
     draw_header("Settings", "Power");
