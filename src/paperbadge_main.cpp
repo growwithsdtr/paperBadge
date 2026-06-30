@@ -143,6 +143,8 @@ int64_t g_last_activity_us = 0;
 int g_sleep_minutes = 5;
 int g_power_off_minutes = 20;
 int g_pages_since_full = 0;
+Screen g_nav_stack[8];
+int g_nav_depth = 0;
 
 // ── Hit-test rects ────────────────────────────────────────────────────
 Rect g_home_buttons[6];
@@ -167,6 +169,7 @@ bool g_manga_open = false;
 char g_manga_path[ps3::library::MAX_PATH_LEN] = {};
 int g_manga_page = 0;
 std::string g_manga_error_msg;
+Screen g_manga_error_return = Screen::MangaLibrary;
 
 // ── Badge globals ─────────────────────────────────────────────────────
 bool g_badge_japanese = false;
@@ -351,9 +354,12 @@ void draw_footer(const char* left, const char* mid, const char* right) {
     fill_rect({0, y, w, kFooterH}, 15);
     draw_hline(0, y, w);
     const int bw = (w - 48) / 3;
-    g_footer_left = {12, y + 8, bw, kFooterH - 16};
-    g_footer_mid = {24 + bw, y + 8, bw, kFooterH - 16};
-    g_footer_right = {36 + bw * 2, y + 8, bw, kFooterH - 16};
+    const Rect left_rect{12, y + 8, bw, kFooterH - 16};
+    const Rect mid_rect{24 + bw, y + 8, bw, kFooterH - 16};
+    const Rect right_rect{36 + bw * 2, y + 8, bw, kFooterH - 16};
+    g_footer_left = left ? left_rect : Rect{};
+    g_footer_mid = mid ? mid_rect : Rect{};
+    g_footer_right = right ? right_rect : Rect{};
     if (left) draw_button(g_footer_left, left);
     if (mid) draw_button(g_footer_mid, mid);
     if (right) draw_button(g_footer_right, right);
@@ -830,9 +836,75 @@ void render_japanese(ps3::display::RefreshMode mode = ps3::display::RefreshMode:
 void render_japanese_feedback(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_japanese_font(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
 void render_settings(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16);
+void save_reader_state();
+void update_manga_progress();
 
-void render_current(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16) {
-    switch (g_screen) {
+void close_manga_book_if_open() {
+    if (!g_manga_open) return;
+    ps3::comic::page_loader::stop();
+    g_manga_book.close();
+    g_manga_open = false;
+}
+
+void nav_clear() {
+    g_nav_depth = 0;
+}
+
+void nav_push(Screen screen) {
+    if (screen == Screen::Home) {
+        nav_clear();
+    }
+    if (g_nav_depth > 0 && g_nav_stack[g_nav_depth - 1] == screen) return;
+    if (g_nav_depth >= static_cast<int>(sizeof(g_nav_stack) / sizeof(g_nav_stack[0]))) {
+        for (int i = 1; i < g_nav_depth; ++i) g_nav_stack[i - 1] = g_nav_stack[i];
+        --g_nav_depth;
+    }
+    g_nav_stack[g_nav_depth++] = screen;
+}
+
+Screen fallback_back_target(Screen screen) {
+    switch (screen) {
+        case Screen::Badge:
+        case Screen::Interview:
+        case Screen::Japanese:
+        case Screen::MangaLibrary:
+        case Screen::ReaderLibrary:
+        case Screen::Settings:
+            return Screen::Home;
+        case Screen::InterviewPractice:
+        case Screen::InterviewDrillQ:
+        case Screen::InterviewDrillFB:
+        case Screen::InterviewGlossary:
+        case Screen::InterviewResults:
+            return Screen::Interview;
+        case Screen::JapaneseFeedback:
+            return Screen::Japanese;
+        case Screen::JapaneseFont:
+            return g_nav_depth > 0 ? g_nav_stack[g_nav_depth - 1] : Screen::Japanese;
+        case Screen::MangaReading:
+        case Screen::MangaError:
+            return Screen::MangaLibrary;
+        case Screen::ReaderReading:
+        case Screen::ReaderError:
+            return Screen::ReaderLibrary;
+        case Screen::Home:
+        default:
+            return Screen::Home;
+    }
+}
+
+void before_leave_screen(Screen from, Screen to) {
+    if (from == Screen::ReaderReading && to != Screen::ReaderReading) {
+        save_reader_state();
+    }
+    if (from == Screen::MangaReading && to != Screen::MangaReading) {
+        update_manga_progress();
+        close_manga_book_if_open();
+    }
+}
+
+void render_screen(Screen screen, ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16) {
+    switch (screen) {
         case Screen::Home:               render_home(mode); break;
         case Screen::Badge:              render_badge(); break;
         case Screen::Interview:          render_interview(mode); break;
@@ -853,6 +925,52 @@ void render_current(ps3::display::RefreshMode mode = ps3::display::RefreshMode::
         case Screen::Settings:           render_settings(mode); break;
         default:                         render_home(mode); break;
     }
+}
+
+void navigate_to(Screen screen, ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16Full) {
+    const Screen from = g_screen;
+    before_leave_screen(from, screen);
+    if (screen == Screen::Home) nav_clear();
+    render_screen(screen, mode);
+}
+
+void navigate_back() {
+    Screen target = Screen::Home;
+    if (g_nav_depth > 0) {
+        target = g_nav_stack[--g_nav_depth];
+    } else {
+        target = fallback_back_target(g_screen);
+    }
+    navigate_to(target);
+}
+
+void navigate_home() {
+    navigate_to(Screen::Home);
+}
+
+bool screen_uses_header_nav(Screen screen) {
+    switch (screen) {
+        case Screen::Home:
+        case Screen::Badge:
+            return false;
+        default:
+            return true;
+    }
+}
+
+bool handle_header_nav(int x, int y) {
+    if (!screen_uses_header_nav(g_screen) || y >= kToolbarH) return false;
+    if (x < ps3::display::width() / 2) {
+        navigate_back();
+    } else {
+        navigate_home();
+    }
+    ps3::touch::drain();
+    return true;
+}
+
+void render_current(ps3::display::RefreshMode mode = ps3::display::RefreshMode::GC16) {
+    render_screen(g_screen, mode);
 }
 
 // ── Badge final-frame (persists on e-ink during sleep / power-off) ────
@@ -876,6 +994,7 @@ void draw_english_badge_final_frame() {
 // ── Home ───────────────────────────────────────────────────────────────
 void render_home(ps3::display::RefreshMode mode) {
     g_screen = Screen::Home;
+    nav_clear();
     ps3::display::clear();
     draw_header("PaperBadge", "ESP-IDF");
     const char* labels[] = {"Badge", "Interview", "日本語", "Manga", "Reader", "Settings"};
@@ -1087,7 +1206,7 @@ void render_interview_drill_fb(ps3::display::RefreshMode mode) {
         }
         right_label = has_next ? "Next" : nullptr;
     }
-    draw_footer("Menu", "Home", right_label);
+    draw_footer("Menu", nullptr, right_label);
     ps3::display::flush(mode);
 }
 
@@ -1142,7 +1261,7 @@ void render_interview_results(ps3::display::RefreshMode mode) {
     y += 12;
     draw_wrapped(30, y, ps3::display::width() - 60,
                  "Reset clears session stats for this run.\nSD progress persistence not yet implemented.", 4);
-    draw_footer("Menu", "Reset", "Home");
+    draw_footer("Menu", "Reset", nullptr);
     ps3::display::flush(mode);
 }
 
@@ -1253,7 +1372,7 @@ void render_manga_error(ps3::display::RefreshMode mode) {
     ps3::display::clear();
     draw_header("Manga - Cannot Open");
     draw_wrapped(34, 90, ps3::display::width() - 68, g_manga_error_msg);
-    draw_footer("Back", nullptr, nullptr);
+    draw_footer("Back", nullptr, "Home");
     ps3::display::flush(mode);
 }
 
@@ -1477,7 +1596,7 @@ void render_japanese(ps3::display::RefreshMode mode) {
         draw_button(g_jp_choices[i], label);
         y += 90;
     }
-    draw_footer(g_jp_index > 0 ? "Prev" : "Home", "Font", nullptr);
+    draw_footer(g_jp_index > 0 ? "Prev" : "Back", "Font", nullptr);
     ps3::display::flush(mode);
 }
 
@@ -1516,7 +1635,7 @@ void render_japanese_feedback(ps3::display::RefreshMode mode) {
         y = draw_wrapped(30, y, ps3::display::width() - 60, item.explanation, 8) + 12;
         draw_wrapped(30, y, ps3::display::width() - 60, item.english, 8);
     }
-    draw_footer(g_jp_index > 0 ? "Prev" : "Home", "Home",
+    draw_footer(g_jp_index > 0 ? "Prev" : "Back", nullptr,
                 g_jp_feedback_single ? (g_jp_index + 1 < static_cast<int>(sizeof(kJapaneseItems) / sizeof(kJapaneseItems[0])) ? "Next" : nullptr)
                                      : (g_jp_feedback_page == 0 ? "More" : "Next"));
     ps3::display::flush(mode);
@@ -1602,15 +1721,30 @@ void enter_light_sleep(const char* trigger) {
 
 // ── Touch handlers ────────────────────────────────────────────────────
 void handle_home(int x, int y) {
-    if (g_home_buttons[0].contains(x, y)) render_badge();
-    else if (g_home_buttons[1].contains(x, y)) render_interview();
+    if (g_home_buttons[0].contains(x, y)) {
+        nav_push(Screen::Home);
+        render_badge();
+    } else if (g_home_buttons[1].contains(x, y)) {
+        nav_push(Screen::Home);
+        render_interview();
+    }
     else if (g_home_buttons[2].contains(x, y)) {
+        nav_push(Screen::Home);
         g_jp_index = 0;
         g_jp_selected = -1;
         render_japanese();
-    } else if (g_home_buttons[3].contains(x, y)) render_manga_library();
-    else if (g_home_buttons[4].contains(x, y)) render_reader_library();
-    else if (g_home_buttons[5].contains(x, y)) render_settings();
+    } else if (g_home_buttons[3].contains(x, y)) {
+        nav_push(Screen::Home);
+        render_manga_library();
+    }
+    else if (g_home_buttons[4].contains(x, y)) {
+        nav_push(Screen::Home);
+        render_reader_library();
+    }
+    else if (g_home_buttons[5].contains(x, y)) {
+        nav_push(Screen::Home);
+        render_settings();
+    }
 }
 
 void handle_badge(int x, int y) {
@@ -1638,20 +1772,23 @@ void handle_badge(int x, int y) {
 
 void handle_interview_menu(int x, int y) {
     if (g_footer_left.contains(x, y)) {
-        render_home();
+        navigate_home();
         return;
     }
     if (g_iv_menu_buttons[0].contains(x, y)) {
+        nav_push(Screen::Interview);
         g_iv_card_idx = 0;
         g_iv_card_spoken = false;
         render_interview_practice();
     } else if (g_iv_menu_buttons[1].contains(x, y)) {
+        nav_push(Screen::Interview);
         g_iv_drill_idx = 0;
         g_iv_drill_answer = -1;
         g_iv_in_exam = false;
         render_interview_drill_q();
     } else if (g_iv_menu_buttons[2].contains(x, y)) {
         // Exam mode
+        nav_push(Screen::Interview);
         iv_build_exam();
         g_iv_in_exam = true;
         if (g_iv_exam_count > 0) {
@@ -1663,9 +1800,11 @@ void handle_interview_menu(int x, int y) {
             render_interview();
         }
     } else if (g_iv_menu_buttons[3].contains(x, y)) {
+        nav_push(Screen::Interview);
         g_iv_gloss_idx = 0;
         render_interview_glossary();
     } else if (g_iv_menu_buttons[4].contains(x, y)) {
+        nav_push(Screen::Interview);
         render_interview_results();
     }
 }
@@ -1828,7 +1967,10 @@ void handle_manga_library(int x, int y) {
             g_manga_error_msg =
                 "CBR/RAR archives are not supported.\n\n"
                 "Convert to CBZ format and copy the CBZ file to:\n/paperBadge/content/manga";
+            g_manga_error_return = Screen::MangaLibrary;
+            ps3::touch::drain();
             render_manga_error();
+            ps3::touch::drain();
             return;
         }
 
@@ -1851,7 +1993,10 @@ void handle_manga_library(int x, int y) {
                 "without ZIP64 (zip -0 or use a non-ZIP64 tool).",
                 mb, mb);
             g_manga_error_msg = buf;
+            g_manga_error_return = Screen::MangaLibrary;
+            ps3::touch::drain();
             render_manga_error();
+            ps3::touch::drain();
             return;
         }
 
@@ -1875,8 +2020,12 @@ void handle_manga_library(int x, int y) {
                 "  - Insufficient PSRAM for page index\n"
                 "\nCheck serial log (cbz: tag) for details.";
             g_manga_error_msg = diag;
+            g_manga_error_return = Screen::MangaLibrary;
+            ps3::touch::drain();
             render_manga_error();
+            ps3::touch::drain();
         } else {
+            nav_push(Screen::MangaLibrary);
             render_manga_page(ps3::display::RefreshMode::GC16Full);
         }
         return;
@@ -1911,9 +2060,14 @@ void handle_manga_reading(int x, int y) {
     render_manga_page(clean ? ps3::display::RefreshMode::GC16Full : ps3::display::RefreshMode::GL16);
 }
 
-void handle_manga_error(int /*x*/, int /*y*/) {
-    render_manga_library();
-    ps3::touch::drain();  // drop taps buffered during render to prevent phantom navigation
+void handle_manga_error(int x, int y) {
+    if (g_footer_left.contains(x, y)) {
+        navigate_to(g_manga_error_return);
+        ps3::touch::drain();
+    } else if (g_footer_right.contains(x, y)) {
+        navigate_home();
+        ps3::touch::drain();
+    }
 }
 
 void handle_reader_library(int x, int y) {
@@ -1935,6 +2089,7 @@ void handle_reader_library(int x, int y) {
             show_reader_error(error.empty() ? "Could not open reader file." : error,
                               Screen::ReaderLibrary);
         } else {
+            nav_push(Screen::ReaderLibrary);
             render_reader_page(ps3::display::RefreshMode::GC16);
             ps3::touch::drain();
         }
@@ -1947,7 +2102,7 @@ void handle_reader_reading(int x, int y) {
                                                         g_reader_lines_per_page));
     if (g_footer_left.contains(x, y)) {
         save_reader_state();
-        render_reader_library();
+        navigate_back();
     } else if ((g_footer_mid.contains(x, y) || x < ps3::display::width() / 3) && g_reader_page > 0) {
         --g_reader_page;
         save_reader_state();
@@ -1985,11 +2140,13 @@ void handle_japanese(int x, int y) {
         return;
     }
     if (g_footer_mid.contains(x, y)) {
+        nav_push(Screen::Japanese);
         render_japanese_font();
         return;
     }
     for (int i = 0; i < 4; ++i) {
         if (g_jp_choices[i].contains(x, y)) {
+            nav_push(Screen::Japanese);
             g_jp_selected = i;
             g_jp_feedback_page = 0;
             render_japanese_feedback();
@@ -2026,7 +2183,7 @@ void handle_japanese_feedback(int x, int y) {
 
 void handle_japanese_font(int x, int y) {
     if (g_footer_left.contains(x, y)) {
-        render_japanese();
+        navigate_back();
     } else if (g_footer_mid.contains(x, y)) {
         select_japanese_font(g_jp_font == JapaneseFontFace::BizUdGothic ? JapaneseFontFace::IpaCurrent : JapaneseFontFace::BizUdGothic);
         render_japanese_font(ps3::display::RefreshMode::GL16);
@@ -2039,6 +2196,7 @@ void handle_settings(int x, int y) {
         return;
     }
     if (g_settings_buttons[0].contains(x, y)) {
+        nav_push(Screen::Settings);
         render_japanese_font();
     } else if (g_settings_buttons[1].contains(x, y)) {
         enter_light_sleep("settings");
@@ -2054,6 +2212,7 @@ void handle_settings(int x, int y) {
 
 void handle_tap(int x, int y) {
     mark_activity();
+    if (handle_header_nav(x, y)) return;
     switch (g_screen) {
         case Screen::Home:              handle_home(x, y); break;
         case Screen::Badge:             handle_badge(x, y); break;
