@@ -2040,6 +2040,12 @@ int japanese_item_count() {
     return static_cast<int>(sizeof(kJapaneseItems) / sizeof(kJapaneseItems[0]));
 }
 
+bool japanese_sd_registry_available() {
+    struct stat st{};
+    return stat((std::string(kJapaneseRoot) + "/source_registry.json").c_str(), &st) == 0 &&
+           S_ISREG(st.st_mode);
+}
+
 void reset_japanese_mock() {
     for (int i = 0; i < japanese_item_count(); ++i) g_jp_mock_answers[i] = -1;
     g_jp_mock_index = 0;
@@ -2070,7 +2076,9 @@ void render_japanese_source(ps3::display::RefreshMode mode) {
     g_jp_menu_buttons[0] = {34, 130, ps3::display::width() - 68, 88};
     draw_button(g_jp_menu_buttons[0], "Embedded N3 Samples");
     draw_wrapped(34, 250, ps3::display::width() - 68,
-                 "Future external sources will be loaded from SD registry sidecars.");
+                 japanese_sd_registry_available()
+                     ? "SD source_registry.json detected. Embedded samples remain available as fallback."
+                     : "No SD source_registry.json yet. Embedded samples are active; external sources can use JSON-LD sidecars later.");
     draw_footer("Back", nullptr, nullptr);
     ps3::display::flush(mode);
 }

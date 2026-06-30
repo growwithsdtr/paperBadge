@@ -1,0 +1,14 @@
+{
+  "@context": "https://paperbadge.local/schema/japanese.jsonld",
+  "@type": "SourceRegistry",
+  "sources": [
+    {
+      "@type": "Source",
+      "source_id": "embedded-n3-sample",
+      "title": "Embedded N3 Samples",
+      "sections_path": "embedded_n3_sections.json",
+      "concepts_path": "embedded_n3_concepts.json",
+      "version": "0.1.0"
+    }
+  ]
+}

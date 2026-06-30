@@ -1,0 +1,20 @@
+{
+  "@context": "https://paperbadge.local/schema/japanese.jsonld",
+  "@type": "Exercise",
+  "exercise_id": "embedded-n3-w1d1-q001",
+  "source_id": "embedded-n3-sample",
+  "section_id": "w1d1",
+  "exercise_type": "MCQ",
+  "prompt": "「郵便局」の読み方として正しいものはどれですか。",
+  "choices": ["ゆうびんきょく", "ゆうべんきょく", "ゆびんきょく", "ゆうびんきょうく"],
+  "answer_index": 0,
+  "concept_refs": ["vocab:yuubinkyoku", "kanji:郵", "kanji:便", "kanji:局"],
+  "cross_references": [
+    {
+      "@type": "CrossReference",
+      "concept_id": "vocab:yuubinkyoku",
+      "source_ref": "embedded-n3-w1d1-q001",
+      "ocr_quote_ref": null
+    }
+  ]
+}
