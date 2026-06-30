@@ -283,6 +283,7 @@ bool save() {
     std::fprintf(fp, "bookshelf_contrast=%d\n", s_state.bookshelf_contrast);
     std::fprintf(fp, "reading_contrast=%d\n",   s_state.reading_contrast);
     std::fprintf(fp, "full_refresh_pages=%d\n", s_state.full_refresh_pages);
+    std::fprintf(fp, "refresh_profile=%d\n",    s_state.refresh_profile);
     std::fprintf(fp, "right_binding=%d\n",
                  s_state.right_binding ? 1 : 0);
     std::fclose(fp);
@@ -295,13 +296,13 @@ bool save() {
     ESP_LOGI(TAG,
              "saved %s: sleep=%d power_off=%d rot=%d sleep_img=%s pw_img=%s "
              "bookshelf_contrast=%d reading_contrast=%d full_refresh_pages=%d "
-             "right_binding=%d",
+             "refresh_profile=%d right_binding=%d",
              SETTINGS_PATH, s_state.sleep_minutes,
              s_state.power_off_minutes,
              s_state.rotation_inverted ? 1 : 0,
              s_state.sleep_image, s_state.power_off_image,
              s_state.bookshelf_contrast, s_state.reading_contrast,
-             s_state.full_refresh_pages,
+             s_state.full_refresh_pages, s_state.refresh_profile,
              s_state.right_binding ? 1 : 0);
     return true;
 }
@@ -379,6 +380,9 @@ bool load() {
                     s_state.full_refresh_pages = 10;
                     break;
             }
+        } else if (std::strcmp(key, "refresh_profile") == 0) {
+            const int v = std::atoi(val);
+            s_state.refresh_profile = (v >= 0 && v <= 2) ? v : 1;
         } else if (std::strcmp(key, "right_binding") == 0) {
             s_state.right_binding = (std::atoi(val) != 0);
         }
@@ -390,13 +394,13 @@ bool load() {
     ESP_LOGI(TAG,
              "loaded %s: sleep=%d power_off=%d rot=%d sleep_img=%s pw_img=%s "
              "bookshelf_contrast=%d reading_contrast=%d full_refresh_pages=%d "
-             "right_binding=%d",
+             "refresh_profile=%d right_binding=%d",
              SETTINGS_PATH, s_state.sleep_minutes,
              s_state.power_off_minutes,
              s_state.rotation_inverted ? 1 : 0,
              s_state.sleep_image, s_state.power_off_image,
              s_state.bookshelf_contrast, s_state.reading_contrast,
-             s_state.full_refresh_pages,
+             s_state.full_refresh_pages, s_state.refresh_profile,
              s_state.right_binding ? 1 : 0);
     return true;
 }

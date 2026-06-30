@@ -42,6 +42,9 @@ struct State {
     // time at the cost of more lingering ghost. Allowed values come
     // from kFullRefreshOptions in src/system/menu.cpp's cycle.
     int  full_refresh_pages  = 10;
+    // 0 = Fast, 1 = Balanced, 2 = Clean. Higher quality profiles
+    // trade speed for lower ghosting on reveal/error/page transitions.
+    int  refresh_profile     = 1;
     // Page-flip direction in Reading mode.
     //   false = 左綴じ (Western / current default): MiddleRight tap
     //           advances to the next page, MiddleLeft goes back.

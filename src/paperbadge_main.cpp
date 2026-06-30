@@ -177,7 +177,7 @@ Rect g_footer_right;
 Rect g_list_rows[10];
 Rect g_jp_choices[4];
 Rect g_jp_menu_buttons[4];
-Rect g_settings_buttons[5];
+Rect g_settings_buttons[6];
 Rect g_badge_qr_rect;
 
 // Interview menu / sub-screen rects
@@ -864,6 +864,40 @@ void reflow_reader_pages_preserving_line() {
     const int max_page = std::max(0, static_cast<int>((g_reader_lines.size() + g_reader_lines_per_page - 1) /
                                                      g_reader_lines_per_page) - 1);
     g_reader_page = std::max(0, std::min(g_reader_page, max_page));
+}
+
+const char* refresh_profile_name() {
+    switch (ps3::settings::state().refresh_profile) {
+        case 0: return "Fast";
+        case 2: return "Clean";
+        case 1:
+        default: return "Balanced";
+    }
+}
+
+ps3::display::RefreshMode refresh_page_turn_mode() {
+    switch (ps3::settings::state().refresh_profile) {
+        case 0: return ps3::display::RefreshMode::GL16;
+        case 2: return ps3::display::RefreshMode::GC16Full;
+        case 1:
+        default: return ps3::display::RefreshMode::GL16;
+    }
+}
+
+ps3::display::RefreshMode refresh_reveal_mode() {
+    switch (ps3::settings::state().refresh_profile) {
+        case 0: return ps3::display::RefreshMode::GL16;
+        case 2: return ps3::display::RefreshMode::GC16Full;
+        case 1:
+        default: return ps3::display::RefreshMode::GC16;
+    }
+}
+
+void cycle_refresh_profile() {
+    auto& s = ps3::settings::state();
+    s.refresh_profile = (s.refresh_profile + 1) % 3;
+    ps3::settings::save();
+    ESP_LOGI(TAG, "refresh profile: %s", refresh_profile_name());
 }
 
 void cycle_manga_fit_mode() {
@@ -2233,12 +2267,13 @@ void render_settings(ps3::display::RefreshMode mode) {
     draw_wrapped(30, 92, ps3::display::width() - 60,
                  "Battery: " + std::to_string(mv) + " mV  " + std::to_string(pct) + "%  " +
                      (ps3::battery::is_charging() ? "charging" : "battery"));
-    const char* labels[] = {"JP font", "Sleep now", "Power off", "Sleep timeout", "Clean refresh"};
-    for (int i = 0; i < 5; ++i) {
-        g_settings_buttons[i] = {34, 180 + i * 92, ps3::display::width() - 68, 74};
+    const char* labels[] = {"JP font", "Sleep now", "Power off", "Sleep timeout", "Refresh profile", "Clean refresh"};
+    for (int i = 0; i < 6; ++i) {
+        g_settings_buttons[i] = {34, 170 + i * 78, ps3::display::width() - 68, 64};
         std::string label = labels[i];
         if (i == 0) label += std::string(": ") + font_face_name();
         if (i == 3) label += ": " + std::to_string(g_sleep_minutes) + "m";
+        if (i == 4) label += std::string(": ") + refresh_profile_name();
         draw_button(g_settings_buttons[i], label);
     }
     draw_footer("Home", nullptr, nullptr);
@@ -2462,7 +2497,7 @@ void handle_interview_practice(int x, int y) {
             g_iv_card_idx = prev;
             g_iv_card_spoken = false;
             g_iv_answer_page = 0;
-            render_interview_practice(ps3::display::RefreshMode::GL16);
+            render_interview_practice(refresh_reveal_mode());
         } else {
             navigate_back();
         }
@@ -2480,14 +2515,14 @@ void handle_interview_practice(int x, int y) {
                 g_iv_answer_page = 0;
             }
         }
-        render_interview_practice(ps3::display::RefreshMode::GL16);
+        render_interview_practice(refresh_reveal_mode());
     } else if (g_footer_right.contains(x, y)) {
         const int next = iv_next_filtered_card(g_iv_card_idx, +1);
         if (next >= 0) {
             g_iv_card_idx = next;
             g_iv_card_spoken = false;
             g_iv_answer_page = 0;
-            render_interview_practice(ps3::display::RefreshMode::GL16);
+            render_interview_practice(refresh_reveal_mode());
         }
     }
 }
@@ -2787,9 +2822,10 @@ void handle_manga_reading(int x, int y) {
     update_manga_progress();
     ++g_pages_since_full;
     const int cadence = std::max(1, ps3::settings::state().full_refresh_pages);
-    const bool clean = g_pages_since_full >= cadence;
+    const bool clean = ps3::settings::state().refresh_profile == 2 ||
+                       g_pages_since_full >= cadence;
     if (clean) g_pages_since_full = 0;
-    render_manga_page(clean ? ps3::display::RefreshMode::GC16Full : ps3::display::RefreshMode::GL16);
+    render_manga_page(clean ? ps3::display::RefreshMode::GC16Full : refresh_page_turn_mode());
 }
 
 void handle_manga_error(int x, int y) {
@@ -2843,11 +2879,11 @@ void handle_reader_reading(int x, int y) {
     } else if (x < ps3::display::width() / 3 && g_reader_page > 0) {
         --g_reader_page;
         save_reader_state();
-        render_reader_page(ps3::display::RefreshMode::GL16);
+        render_reader_page(refresh_page_turn_mode());
     } else if ((g_footer_right.contains(x, y) || x > ps3::display::width() * 2 / 3) && g_reader_page + 1 < total_pages) {
         ++g_reader_page;
         save_reader_state();
-        render_reader_page(ps3::display::RefreshMode::GL16);
+        render_reader_page(refresh_page_turn_mode());
     }
 }
 
@@ -3010,7 +3046,7 @@ void handle_japanese_feedback(int x, int y) {
     } else if (g_footer_right.contains(x, y)) {
         if (!g_jp_feedback_single && g_jp_feedback_page == 0) {
             g_jp_feedback_page = 1;
-            render_japanese_feedback(ps3::display::RefreshMode::GL16);
+            render_japanese_feedback(refresh_reveal_mode());
         } else if (g_jp_index + 1 < count) {
             ++g_jp_index;
             g_jp_selected = -1;
@@ -3045,6 +3081,9 @@ void handle_settings(int x, int y) {
         g_sleep_minutes = g_sleep_minutes == 0 ? 5 : (g_sleep_minutes == 5 ? 10 : (g_sleep_minutes == 10 ? 15 : 0));
         render_settings(ps3::display::RefreshMode::GL16);
     } else if (g_settings_buttons[4].contains(x, y)) {
+        cycle_refresh_profile();
+        render_settings(ps3::display::RefreshMode::GC16Full);
+    } else if (g_settings_buttons[5].contains(x, y)) {
         ps3::display::flush(ps3::display::RefreshMode::GC16Full);
     }
 }
