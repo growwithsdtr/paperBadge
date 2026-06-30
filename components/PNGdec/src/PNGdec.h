@@ -57,7 +57,12 @@
 // Defaults to 320 32-bit pixels max width
 // but can be overidden with a macro defined at compile time
 #ifndef PNG_MAX_BUFFERED_PIXELS
-#define PNG_MAX_BUFFERED_PIXELS ((320*4 + 1)*2)
+// Default sized for 320-wide images; override here to 4400 so that the
+// M5PaperS3's 540-wide panel can decode full-width PNGs.
+// Required: buffer >= 2*(iPitch+1)+~32 bytes; for 540 RGBA iPitch=2160
+// → needs ~4352 bytes; guard check requires PNG_MAX_BUFFERED_PIXELS/2 > iPitch.
+// 4400 satisfies both: 4400/2=2200 > 2160 and 4400 >= 4352.
+#define PNG_MAX_BUFFERED_PIXELS 4400
 #endif
 
 #ifndef __PNGENC__

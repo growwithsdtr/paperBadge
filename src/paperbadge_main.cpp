@@ -540,6 +540,7 @@ void render_current(ps3::display::RefreshMode mode = ps3::display::RefreshMode::
         case Screen::ReaderError:        render_reader_error(mode); break;
         case Screen::Japanese:           render_japanese(mode); break;
         case Screen::JapaneseFeedback:   render_japanese_feedback(mode); break;
+        case Screen::JapaneseFont:       render_japanese_font(mode); break;
         case Screen::Settings:           render_settings(mode); break;
         default:                         render_home(mode); break;
     }
@@ -548,10 +549,11 @@ void render_current(ps3::display::RefreshMode mode = ps3::display::RefreshMode::
 // ── Badge final-frame (persists on e-ink during sleep / power-off) ────
 void draw_english_badge_final_frame() {
     ps3::display::clear();
+    ESP_LOGI(TAG, "badge final frame: PNG %u bytes", (unsigned)embedded_badge::kBadgeEnSize);
     const bool shown = ps3::comic::display_png(
         embedded_badge::kBadgeEnPng, embedded_badge::kBadgeEnSize);
+    ESP_LOGI(TAG, "badge final frame: %s", shown ? "OK" : "text fallback");
     if (!shown) {
-        // Minimal fallback text if PNG decode fails
         draw_wrapped(40, 80, ps3::display::width() - 80,
                      "Daniel Jimenez\nSenior Technical PM | AI Products");
     }
@@ -583,20 +585,33 @@ void render_home(ps3::display::RefreshMode mode) {
 void render_badge() {
     g_screen = Screen::Badge;
     ps3::display::clear();
-    // Try embedded PNG first; fall back to SD asset file
+    // Try embedded PNG
+    ESP_LOGI(TAG, "badge: embedded PNG %u bytes", (unsigned)embedded_badge::kBadgeEnSize);
     bool shown = ps3::comic::display_png(
         embedded_badge::kBadgeEnPng, embedded_badge::kBadgeEnSize);
+    ESP_LOGI(TAG, "badge: embedded decode %s", shown ? "OK" : "FAILED");
+    // Fallback: SD asset file
     if (!shown) {
         const std::string png = std::string(kAssetsRoot) + "/badge_en.png";
         const auto bytes = read_file_bytes(png.c_str(), 2 * 1024 * 1024);
-        shown = !bytes.empty() &&
-                ps3::comic::display_png(bytes.data(), bytes.size());
+        if (!bytes.empty()) {
+            ESP_LOGI(TAG, "badge: trying SD fallback %u bytes", (unsigned)bytes.size());
+            shown = ps3::comic::display_png(bytes.data(), bytes.size());
+            ESP_LOGI(TAG, "badge: SD decode %s", shown ? "OK" : "FAILED");
+        }
     }
+    // Fallback: rendered text + QR placeholder
     if (!shown) {
-        draw_header("Badge");
-        draw_wrapped(34, 140, ps3::display::width() - 68,
-                     "Daniel Jimenez\nSenior Technical PM | AI Products\n\n"
-                     "Embedded badge image unavailable.");
+        draw_header("Daniel Jimenez");
+        int y = kToolbarH + 24;
+        y = draw_wrapped(34, y, ps3::display::width() - 68,
+                         "Senior Technical PM | AI Products", 2) + 16;
+        draw_hline(20, y, ps3::display::width() - 40);
+        y += 16;
+        draw_wrapped(34, y, ps3::display::width() - 68,
+                     "Platform Teams  •  Embedded & AI\n"
+                     "M5PaperS3 PaperBadge", 4);
+        ESP_LOGW(TAG, "badge: all decode paths failed — showing text fallback");
     }
     draw_footer("Home", nullptr, nullptr);
     ps3::display::flush(ps3::display::RefreshMode::GC16Full);
@@ -1441,6 +1456,7 @@ void handle_manga_reading(int x, int y) {
             g_manga_open = false;
         }
         render_manga_library(ps3::display::RefreshMode::GC16Full);
+        ps3::touch::drain();  // drop taps buffered during the GC16Full library render
         return;
     }
     const bool right_binding = ps3::settings::state().right_binding;
@@ -1461,8 +1477,8 @@ void handle_manga_reading(int x, int y) {
 }
 
 void handle_manga_error(int /*x*/, int /*y*/) {
-    // Any tap dismisses the error and returns to library
     render_manga_library();
+    ps3::touch::drain();  // drop taps buffered during render to prevent phantom navigation
 }
 
 void handle_reader_library(int x, int y) {
@@ -1536,6 +1552,7 @@ void handle_reader_reading(int x, int y) {
 
 void handle_reader_error(int /*x*/, int /*y*/) {
     render_reader_library();
+    ps3::touch::drain();  // drop taps buffered during render to prevent phantom navigation
 }
 
 void handle_japanese(int x, int y) {
