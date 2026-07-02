@@ -1035,7 +1035,7 @@ const char* size_level_name(int level) {
 }
 
 const char* western_profile_name() {
-    return ps3::settings::state().western_font_profile == 1 ? "FontLab Inter preview" : "Firmware sans";
+    return ps3::settings::state().western_font_profile == 1 ? "Inter only" : "Off";
 }
 
 int reader_line_gap() {
@@ -2650,7 +2650,7 @@ void render_settings(ps3::display::RefreshMode mode) {
         int count = 0;
         if (g_settings_page == 1) {
             labels[count++] = "Font Lab";
-            labels[count++] = std::string("Western: ") + western_profile_name();
+            labels[count++] = std::string("Lab preview: ") + western_profile_name();
             labels[count++] = std::string("JP font: ") + font_face_name();
             labels[count++] = std::string("Interview size: ") + size_level_name(g_interview_font_level);
             labels[count++] = std::string("Japanese size: ") + size_level_name(g_japanese_font_level);
