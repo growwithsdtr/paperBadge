@@ -1,3 +1,39 @@
+# QA Font/Manga/Interview Fixes
+
+Branch: `qa-font-manga-interview-fixes`
+Base: `e5ea710` (`font-manga-reader-sprint`)
+
+## Commits
+
+- `4a5a56b` — fix font lab readability
+- `f7ac6f7` — clarify font runtime model
+- `c16d3b9` — fix manga slice nav and sort
+- `0dbdf2d` — add manga reading overlay
+- `7ea6aa9` — fix manga touch zones
+- `1941711` — stabilize manga landscape navigation
+- `4f55c13` — add png manga slice view
+- `19d7628` — probe imu manga autorotate
+- `f7c299b` — fix interview practice pagination
+- `efc0380` — wire interview size setting
+- `4c5d783` — improve epub cap messages
+- `e7fa611` — improve manga error diagnostics
+
+## Summary
+
+- Font Lab now uses spacious summary, production-font, index, and one-candidate pages. Full-cell sample boxes prevent the 24 px and 48 px previews from clipping or overlapping, and Latin-only candidates no longer render fake Japanese boxes.
+- Runtime font docs and UI copy now make the model explicit: production rendering is BIZ UDGothic or IPAex Gothic only; Font Lab assets are fixed bitmap QA preview subsets, not runtime variable/outline fonts.
+- Manga landscape/backward navigation now lands on the previous page's last slice, CBZ files use natural numeric sort, and hidden dotfiles / `__MACOSX` entries are ignored.
+- Manga reading has subtle chrome, first-use hints, page/slice/fit/orientation status, and a center-tap overlay for Fit, Orientation, Refresh, Clean now, Library, and Close.
+- Manga touch zones no longer use the old fixed bottom controls: top strip returns to library, center opens the overlay, portrait left/right thirds page, and landscape left/right regions step slices/pages.
+- Manga decode failures now show page/slice/fit/orientation diagnostics instead of silently bouncing, and archive-open failures distinguish ZIP64, CBR/RAR, WebP-only/no JPEG/PNG, corrupt/unreadable ZIP, and allocation failures.
+- PNG-in-CBZ now uses the same fit/slice view path as JPEG pages, subject to PNGdec row-buffer limits.
+- IMU work is probe-only in this branch: firmware logs I2C reads at BMI270 candidate addresses `0x68` and `0x69`; manga auto-rotation remains manual until hardware response is confirmed on-device.
+- Interview Practice answers now paginate across all answer sections using available screen height, and Interview Size now affects practice/drill/glossary layout spacing.
+- EPUB text extraction now uses UTF-8-safe truncation and distinguishes oversized spine-entry skips from total extracted-text cap truncation.
+
+Build checkpoints: all stage `pio run` checks passed. Latest checked firmware flash 1,550,241 bytes / 11,534,336 bytes, RAM 27,632 bytes / 327,680 bytes.
+Flash: NOT RUN by explicit request. Manual command: `pio run -t upload --upload-port /dev/cu.usbmodem1101`.
+
 # Font Manga Reader Sprint
 
 Branch: `font-manga-reader-sprint`

@@ -14,3 +14,10 @@
 - JPEG manga fit/slice rendering now maps decoder output into a viewport; cache invalidation is required when fit, orientation, or slice changes.
 - The old Arduino/M5Unified app explicitly set `cfg.internal_imu = false`; ESP-IDF auto-rotation still needs a confirmed IMU driver/config.
 - ZIP64 should be detected from central-directory markers rather than guessed from file size.
+- Backward manga navigation across a page boundary needs a pending-last-slice flag because the true slice count is known only after the target page is decoded.
+- Manga reading controls should stay visible but unobtrusive: full-bleed pages still need slice/page/fit/orientation status and a discoverable center overlay.
+- `CbzBook::open()` now records last-open status and entry counts; use those counters for user diagnostics instead of collapsing every failure into "could not open."
+- PNG manga can share the same fit/slice viewport model as JPEG, but wide PNGs remain bounded by the PNGdec row-buffer limit.
+- The IMU path is currently a register probe only. Do not add autorotation until serial confirms the candidate chip/address and GT911 touch remains responsive on the shared I2C bus.
+- EPUB extraction has two separate caps: per-spine-entry HTML bytes and total extracted text bytes. User messages should identify which cap was hit.
+- Interview answer rendering should derive page count from measured answer sections and available screen height, not from a fixed line-count assumption.

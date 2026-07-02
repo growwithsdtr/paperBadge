@@ -6,6 +6,7 @@ On-device path:
 - Normal firmware embeds Font Lab bitmap subsets in `src/font/font_lab_assets.*`; no SD font copy is required.
 - Production runtime fonts remain BIZ UDGothic Regular and IPAex Gothic.
 - Font Lab candidates are QA-only preview subsets. Selecting or viewing them does not change Reader, Interview, Japanese, Badge, Manga, or Settings runtime text.
+- Settings labels this feature as `Lab preview` so it is not confused with a live Western/runtime font picker.
 
 ## Runtime Model
 
@@ -16,6 +17,7 @@ Current embedded candidate preview sizes:
 - 24 px native bitmap cells.
 - 48 px preview by 2x scaling the 24 px bitmap.
 - 20, 28, 32, 36, and 40 px candidate previews are not embedded yet. They would require regenerated fixed bitmap assets, not a variable-size runtime slider.
+- There is no runtime variable font rendering, no TTF/OTF parser, and no runtime outline rasterizer in the ESP32 firmware.
 
 Production runtime fonts:
 
@@ -47,6 +49,7 @@ The on-device Font Lab flow is intentionally spacious:
 - Page 3 is the candidate index.
 - Later pages show one candidate per page with 24 px native and 48 px scaled samples.
 - Latin-only candidates are labeled Latin only and do not show Japanese tofu-box rows.
+- Preview samples draw inside taller fixed cells with conservative tracking so 24 px and 48 px samples do not clip into labels, neighboring lines, or the footer.
 
 ## Promotion Checklist
 
