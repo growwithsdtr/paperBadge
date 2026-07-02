@@ -181,6 +181,7 @@ Rect g_jp_choices[4];
 Rect g_jp_menu_buttons[4];
 Rect g_settings_buttons[6];
 Rect g_badge_qr_rect;
+Rect g_manga_overlay_buttons[6];
 
 // Interview menu / sub-screen rects
 Rect g_iv_menu_buttons[5];   // Practice, Drills, Exam, Glossary, Results
@@ -202,6 +203,8 @@ bool g_manga_landscape = false;
 int g_manga_slice = 0;
 int g_manga_slice_count = 1;
 bool g_manga_pending_last_slice = false;
+bool g_manga_overlay_visible = false;
+int g_manga_hint_pages_remaining = 0;
 
 // ── Badge globals ─────────────────────────────────────────────────────
 bool g_badge_japanese = false;
@@ -1006,6 +1009,15 @@ const char* manga_fit_name() {
     return "fit page";
 }
 
+const char* manga_fit_label() {
+    switch (g_manga_fit_mode) {
+        case MangaFitMode::FitPage: return "Page";
+        case MangaFitMode::FitWidth: return "Width";
+        case MangaFitMode::FitHeight: return "Height";
+    }
+    return "Page";
+}
+
 ps3::comic::ImageFit manga_image_fit() {
     switch (g_manga_fit_mode) {
         case MangaFitMode::FitWidth: return ps3::comic::ImageFit::Width;
@@ -1130,6 +1142,85 @@ ps3::display::RefreshMode refresh_reveal_mode() {
     }
 }
 
+void draw_manga_label(int x, int y, const std::string& text) {
+    const int pad_x = 8;
+    const int pad_y = 5;
+    const int w = text_width(text) + pad_x * 2;
+    const int h = active_font().height() + pad_y * 2;
+    x = std::max(2, std::min(x, ps3::display::width() - w - 2));
+    y = std::max(2, std::min(y, ps3::display::height() - h - 2));
+    fill_rect({x, y, w, h}, 15);
+    draw_rect({x, y, w, h}, 0);
+    draw_text(x + pad_x, y + pad_y, text);
+}
+
+void draw_manga_edge_markers() {
+    const int y = std::max(70, ps3::display::height() / 2 - active_font().height());
+    draw_manga_label(8, y, "<");
+    draw_manga_label(ps3::display::width() - 42, y, ">");
+}
+
+void draw_manga_hints() {
+    const int w = std::min(ps3::display::width() - 36, 430);
+    const int line_h = active_font().height() + 7;
+    const int h = line_h * 3 + 18;
+    const int x = (ps3::display::width() - w) / 2;
+    const int y = std::max(78, ps3::display::height() - h - 26);
+    fill_rect({x, y, w, h}, 15);
+    draw_rect({x, y, w, h}, 0);
+    draw_text(x + 12, y + 10, "Left/right: page");
+    draw_text(x + 12, y + 10 + line_h, "Center: menu");
+    draw_text(x + 12, y + 10 + line_h * 2, "Top: library");
+}
+
+void draw_manga_overlay_menu() {
+    for (auto& r : g_manga_overlay_buttons) r = {};
+    const int menu_w = std::min(ps3::display::width() - 40, 470);
+    const int button_h = 48;
+    const int gap = 8;
+    const int menu_h = 22 + 6 * button_h + 5 * gap;
+    const int x = (ps3::display::width() - menu_w) / 2;
+    const int y = std::max(66, (ps3::display::height() - menu_h) / 2);
+    fill_rect({x, y, menu_w, menu_h}, 15);
+    draw_rect({x, y, menu_w, menu_h}, 0);
+    const std::string labels[] = {
+        std::string("Fit: ") + manga_fit_label(),
+        std::string("Orientation: ") + (g_manga_landscape ? "Landscape" : "Portrait"),
+        std::string("Refresh: ") + refresh_profile_name(),
+        "Clean now",
+        "Library",
+        "Close",
+    };
+    int by = y + 11;
+    for (int i = 0; i < 6; ++i) {
+        g_manga_overlay_buttons[i] = {x + 12, by, menu_w - 24, button_h};
+        draw_button(g_manga_overlay_buttons[i], labels[i]);
+        by += button_h + gap;
+    }
+}
+
+void draw_manga_chrome() {
+    for (auto& r : g_manga_overlay_buttons) r = {};
+    draw_manga_label(8, 8,
+                     std::string("P ") + std::to_string(g_manga_page + 1) + "/" +
+                     std::to_string(std::max(1, g_manga_book.page_count())));
+    if (g_manga_slice_count > 1) {
+        draw_manga_label(ps3::display::width() - 122, 8,
+                         std::string("S ") + std::to_string(g_manga_slice + 1) + "/" +
+                         std::to_string(g_manga_slice_count));
+    }
+    draw_manga_label(8, ps3::display::height() - active_font().height() - 18,
+                     std::string(manga_fit_label()) + " " +
+                     (g_manga_landscape ? "Land" : "Port") + " " +
+                     refresh_profile_name());
+    draw_manga_edge_markers();
+    if (g_manga_overlay_visible) {
+        draw_manga_overlay_menu();
+    } else if (g_manga_hint_pages_remaining > 0) {
+        draw_manga_hints();
+    }
+}
+
 void cycle_refresh_profile() {
     auto& s = ps3::settings::state();
     s.refresh_profile = (s.refresh_profile + 1) % 3;
@@ -1164,6 +1255,8 @@ void toggle_manga_orientation() {
     g_manga_slice = 0;
     g_manga_slice_count = 1;
     g_manga_pending_last_slice = false;
+    g_manga_overlay_visible = false;
+    g_manga_hint_pages_remaining = 4;
     if (g_manga_landscape && g_manga_fit_mode == MangaFitMode::FitPage) {
         g_manga_fit_mode = MangaFitMode::FitWidth;
     } else if (!g_manga_landscape && g_manga_fit_mode == MangaFitMode::FitWidth) {
@@ -1384,6 +1477,9 @@ void close_manga_book_if_open() {
     ps3::comic::page_loader::stop();
     g_manga_book.close();
     g_manga_open = false;
+    g_manga_overlay_visible = false;
+    g_manga_hint_pages_remaining = 0;
+    g_manga_pending_last_slice = false;
 }
 
 void nav_clear() {
@@ -2056,6 +2152,8 @@ bool open_manga_book(const char* path) {
     g_pages_since_full = 0;
     g_manga_slice = 0;
     g_manga_pending_last_slice = false;
+    g_manga_overlay_visible = false;
+    g_manga_hint_pages_remaining = 4;
     ps3::comic::page_loader::request(g_manga_page);
     g_manga_open = true;
     return true;
@@ -2112,6 +2210,7 @@ void render_manga_page(ps3::display::RefreshMode mode) {
                  g_manga_page + 1, g_manga_book.page_count(), manga_fit_name(),
                  g_manga_landscape ? "landscape" : "portrait",
                  g_manga_slice + 1, g_manga_slice_count);
+        draw_manga_chrome();
     }
     ps3::display::flush(mode);
     ps3::comic::page_loader::request(g_manga_page);
@@ -3295,6 +3394,35 @@ void handle_manga_library(int x, int y) {
 }
 
 void handle_manga_reading(int x, int y) {
+    if (g_manga_overlay_visible) {
+        for (int i = 0; i < 6; ++i) {
+            if (!g_manga_overlay_buttons[i].contains(x, y)) continue;
+            if (i == 0) {
+                cycle_manga_fit_mode();
+                render_manga_page(ps3::display::RefreshMode::GC16Full);
+            } else if (i == 1) {
+                toggle_manga_orientation();
+                render_manga_page(ps3::display::RefreshMode::GC16Full);
+            } else if (i == 2) {
+                cycle_refresh_profile();
+                render_manga_page(ps3::display::RefreshMode::GL16);
+            } else if (i == 3) {
+                g_pages_since_full = 0;
+                render_manga_page(ps3::display::RefreshMode::GC16Full);
+            } else if (i == 4) {
+                close_manga_book_if_open();
+                render_manga_library(ps3::display::RefreshMode::GC16Full);
+                ps3::touch::drain();
+            } else {
+                g_manga_overlay_visible = false;
+                render_manga_page(ps3::display::RefreshMode::GL16);
+            }
+            return;
+        }
+        g_manga_overlay_visible = false;
+        render_manga_page(ps3::display::RefreshMode::GL16);
+        return;
+    }
     if (y < 120) {
         close_manga_book_if_open();
         render_manga_library(ps3::display::RefreshMode::GC16Full);
@@ -3315,7 +3443,14 @@ void handle_manga_reading(int x, int y) {
         return;
     }
     const bool right_binding = ps3::settings::state().right_binding;
-    const bool advance = right_binding ? x < ps3::display::width() / 2 : x >= ps3::display::width() / 2;
+    const int third = ps3::display::width() / 3;
+    if (x >= third && x < third * 2) {
+        g_manga_overlay_visible = true;
+        g_manga_hint_pages_remaining = 0;
+        render_manga_page(ps3::display::RefreshMode::GL16);
+        return;
+    }
+    const bool advance = right_binding ? x < third : x >= third * 2;
     if (advance) {
         if (g_manga_slice + 1 < g_manga_slice_count) {
             ++g_manga_slice;
@@ -3343,6 +3478,7 @@ void handle_manga_reading(int x, int y) {
     const int profile = ps3::settings::state().refresh_profile;
     const bool clean = profile == 2 || (profile == 1 && g_pages_since_full >= cadence);
     if (clean) g_pages_since_full = 0;
+    if (g_manga_hint_pages_remaining > 0) --g_manga_hint_pages_remaining;
     render_manga_page(clean ? ps3::display::RefreshMode::GC16Full : refresh_page_turn_mode());
 }
 
