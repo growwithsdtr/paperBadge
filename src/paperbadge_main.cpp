@@ -201,6 +201,7 @@ MangaFitMode g_manga_fit_mode = MangaFitMode::FitPage;
 bool g_manga_landscape = false;
 int g_manga_slice = 0;
 int g_manga_slice_count = 1;
+bool g_manga_pending_last_slice = false;
 
 // ── Badge globals ─────────────────────────────────────────────────────
 bool g_badge_japanese = false;
@@ -1154,6 +1155,7 @@ void cycle_manga_fit_mode() {
         case MangaFitMode::FitWidth: g_manga_fit_mode = MangaFitMode::FitHeight; break;
         case MangaFitMode::FitHeight: g_manga_fit_mode = MangaFitMode::FitPage; break;
     }
+    g_manga_pending_last_slice = false;
     ps3::comic::page_loader::invalidate();
 }
 
@@ -1161,6 +1163,7 @@ void toggle_manga_orientation() {
     g_manga_landscape = !g_manga_landscape;
     g_manga_slice = 0;
     g_manga_slice_count = 1;
+    g_manga_pending_last_slice = false;
     if (g_manga_landscape && g_manga_fit_mode == MangaFitMode::FitPage) {
         g_manga_fit_mode = MangaFitMode::FitWidth;
     } else if (!g_manga_landscape && g_manga_fit_mode == MangaFitMode::FitWidth) {
@@ -2052,6 +2055,7 @@ bool open_manga_book(const char* path) {
     }
     g_pages_since_full = 0;
     g_manga_slice = 0;
+    g_manga_pending_last_slice = false;
     ps3::comic::page_loader::request(g_manga_page);
     g_manga_open = true;
     return true;
@@ -2072,15 +2076,33 @@ void render_manga_page(ps3::display::RefreshMode mode) {
         render_manga_library(ps3::display::RefreshMode::GC16);
         return;
     }
-    ps3::comic::page_loader::set_view(manga_image_fit(), g_manga_slice);
     const size_t fb_size = static_cast<size_t>(epd_width()) * epd_height() / 2;
-    bool ok = ps3::comic::page_loader::try_consume(g_manga_page, ps3::display::framebuffer(), fb_size);
-    if (!ok) {
-        ok = ps3::comic::page_loader::fetch_and_consume(g_manga_page, ps3::display::framebuffer(), fb_size);
+    auto consume_current_slice = [&]() {
+        ps3::comic::page_loader::set_view(manga_image_fit(), g_manga_slice);
+        bool consumed = ps3::comic::page_loader::try_consume(g_manga_page,
+                                                             ps3::display::framebuffer(),
+                                                             fb_size);
+        if (!consumed) {
+            consumed = ps3::comic::page_loader::fetch_and_consume(g_manga_page,
+                                                                  ps3::display::framebuffer(),
+                                                                  fb_size);
+        }
+        g_manga_slice_count = ps3::comic::page_loader::current_slice_count();
+        if (g_manga_slice_count < 1) g_manga_slice_count = 1;
+        return consumed;
+    };
+
+    bool ok = consume_current_slice();
+    if (g_manga_pending_last_slice) {
+        g_manga_pending_last_slice = false;
+        const int last_slice = std::max(0, g_manga_slice_count - 1);
+        if (g_manga_slice != last_slice) {
+            g_manga_slice = last_slice;
+            ok = consume_current_slice();
+        }
+    } else if (g_manga_slice >= g_manga_slice_count) {
+        g_manga_slice = g_manga_slice_count - 1;
     }
-    g_manga_slice_count = ps3::comic::page_loader::current_slice_count();
-    if (g_manga_slice_count < 1) g_manga_slice_count = 1;
-    if (g_manga_slice >= g_manga_slice_count) g_manga_slice = g_manga_slice_count - 1;
     if (!ok) {
         ps3::display::clear();
         draw_header("Manga error");
@@ -3301,6 +3323,7 @@ void handle_manga_reading(int x, int y) {
             ++g_manga_page;
             g_manga_slice = 0;
             g_manga_slice_count = 1;
+            g_manga_pending_last_slice = false;
         } else {
             return;
         }
@@ -3308,8 +3331,9 @@ void handle_manga_reading(int x, int y) {
         --g_manga_slice;
     } else if (g_manga_page > 0) {
         --g_manga_page;
-        g_manga_slice = 999;
+        g_manga_slice = 0;
         g_manga_slice_count = 1;
+        g_manga_pending_last_slice = true;
     } else {
         return;
     }

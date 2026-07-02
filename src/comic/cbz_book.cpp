@@ -1,6 +1,7 @@
 #include "cbz_book.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 
@@ -48,6 +49,67 @@ bool has_png_extension(const char* name, size_t len) {
 namespace {
 constexpr const char* TAG = "cbz";
 
+char lower_ascii(char c) {
+    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+}
+
+bool segment_equals_ci(const char* start, size_t len, const char* needle) {
+    const size_t needle_len = std::strlen(needle);
+    if (len != needle_len) return false;
+    for (size_t i = 0; i < len; ++i) {
+        if (lower_ascii(start[i]) != lower_ascii(needle[i])) return false;
+    }
+    return true;
+}
+
+bool entry_has_hidden_or_macosx_segment(const char* name, size_t len) {
+    const char* segment = name;
+    const char* end = name + len;
+    for (const char* p = name; p <= end; ++p) {
+        if (p != end && *p != '/') continue;
+        const size_t segment_len = static_cast<size_t>(p - segment);
+        if (segment_len > 0) {
+            if (segment[0] == '.') return true;
+            if (segment_equals_ci(segment, segment_len, "__MACOSX")) return true;
+        }
+        segment = p + 1;
+    }
+    return false;
+}
+
+int natural_compare(const char* a, const char* b) {
+    while (*a != '\0' || *b != '\0') {
+        const unsigned char ca = static_cast<unsigned char>(*a);
+        const unsigned char cb = static_cast<unsigned char>(*b);
+        if (std::isdigit(ca) && std::isdigit(cb)) {
+            const char* a_run = a;
+            const char* b_run = b;
+            while (*a == '0') ++a;
+            while (*b == '0') ++b;
+            const char* a_sig = a;
+            const char* b_sig = b;
+            while (std::isdigit(static_cast<unsigned char>(*a))) ++a;
+            while (std::isdigit(static_cast<unsigned char>(*b))) ++b;
+            const int a_sig_len = static_cast<int>(a - a_sig);
+            const int b_sig_len = static_cast<int>(b - b_sig);
+            if (a_sig_len != b_sig_len) return a_sig_len < b_sig_len ? -1 : 1;
+            for (int i = 0; i < a_sig_len; ++i) {
+                if (a_sig[i] != b_sig[i]) return a_sig[i] < b_sig[i] ? -1 : 1;
+            }
+            const int a_run_len = static_cast<int>(a - a_run);
+            const int b_run_len = static_cast<int>(b - b_run);
+            if (a_run_len != b_run_len) return a_run_len < b_run_len ? -1 : 1;
+            continue;
+        }
+        const char la = lower_ascii(*a);
+        const char lb = lower_ascii(*b);
+        if (la != lb) return la < lb ? -1 : 1;
+        if (*a != '\0') ++a;
+        if (*b != '\0') ++b;
+    }
+    return 0;
+}
+
 // Filter by displayable page extensions at open time and surface the
 // "no usable pages" condition as an open() failure, instead of
 // silently building a page list whose first decode would just fail.
@@ -61,6 +123,7 @@ bool entry_looks_like_file(const mz_zip_archive_file_stat& st) {
     const size_t len = std::strlen(st.m_filename);
     if (len == 0) return false;
     if (st.m_filename[len - 1] == '/') return false;
+    if (entry_has_hidden_or_macosx_segment(st.m_filename, len)) return false;
     if (!has_jpeg_extension(st.m_filename, len) &&
         !has_png_extension(st.m_filename, len)) return false;
     return true;
@@ -118,7 +181,7 @@ bool CbzBook::open(const char* path) {
         return false;
     }
 
-    // Second pass: sort by entry filename so page order is stable.
+    // Second pass: natural-sort by entry filename so page10 follows page9.
     // Selection sort is simple and `count` (<= a few hundred) is small.
     for (int i = 0; i < count - 1; ++i) {
         int min_pos = i;
@@ -127,7 +190,7 @@ bool CbzBook::open(const char* path) {
         for (int j = i + 1; j < count; ++j) {
             mz_zip_archive_file_stat st_j;
             mz_zip_reader_file_stat(zip, tmp[j], &st_j);
-            if (std::strcmp(st_j.m_filename, st_min.m_filename) < 0) {
+            if (natural_compare(st_j.m_filename, st_min.m_filename) < 0) {
                 min_pos = j;
                 st_min = st_j;
             }
