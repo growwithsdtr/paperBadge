@@ -4,6 +4,7 @@ idf_component_register(
         "hal/battery.cpp"
         "hal/display.cpp"
         "hal/epdiy_paper_s3_board.c"
+        "hal/imu.cpp"
         "hal/sd.cpp"
         "hal/touch.cpp"
         "font/builtin_ui_font.cpp"

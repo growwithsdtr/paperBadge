@@ -33,6 +33,7 @@ extern "C" {
 #include "font/xteink_font.hpp"
 #include "hal/battery.hpp"
 #include "hal/display.hpp"
+#include "hal/imu.hpp"
 #include "hal/sd.hpp"
 #include "hal/touch.hpp"
 #include "library/book_db.hpp"
@@ -3847,6 +3848,7 @@ extern "C" void app_main(void) {
     reset_japanese_mock();
     ps3::battery::init();
     ps3::touch::init();
+    ps3::imu::probe();
     ps3::sd::mount();
     ensure_dirs();
     ps3::settings::load();
