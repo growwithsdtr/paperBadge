@@ -360,6 +360,8 @@ void draw_text_font(int x, int y, const std::string& s, ps3::font::XTEinkFont& f
     ps3::font::draw_text(x, y, s.c_str(), font, fg, bg);
 }
 
+int draw_wrapped(int x, int y, int max_w, const std::string& text, int max_lines);
+
 bool bind_font_lab_face(int idx) {
     if (idx < 0 || idx >= ps3::font::kFontLabFaceCount) return false;
     return g_font_lab_font.bind_sparse(ps3::font::kFontLabCodepoints,
@@ -368,7 +370,70 @@ bool bind_font_lab_face(int idx) {
 }
 
 int font_lab_page_count() {
-    return 5 + ps3::font::kFontLabFaceCount;
+    return 3 + ps3::font::kFontLabFaceCount;
+}
+
+bool font_lab_face_supports_japanese(const ps3::font::FontLabFace& face) {
+    return std::strstr(face.key, "Inter-") == nullptr &&
+           std::strstr(face.key, "SourceSerif") == nullptr;
+}
+
+std::string font_lab_face_status(const ps3::font::FontLabFace& face) {
+    std::string status = std::string(face.display_name) + " " + face.weight;
+    status += font_lab_face_supports_japanese(face) ? " - JP subset" : " - Latin only";
+    return status;
+}
+
+int draw_font_lab_sample_line(int x, int y, const std::string& s,
+                              ps3::font::XTEinkFont& font,
+                              int scale,
+                              int tracking,
+                              uint8_t fg = 0,
+                              uint8_t bg = 15) {
+    if (scale < 1) scale = 1;
+    if (tracking < 0) tracking = 0;
+    const int start_x = x;
+    const int full_w = font.width();
+    uint32_t cp = 0;
+    const char* p = s.c_str();
+    while ((p = ps3::font::utf8_next(p, cp)) != nullptr) {
+        if (cp == 0) break;
+        if (cp == '\n') {
+            x = start_x;
+            y += (font.height() + tracking) * scale;
+            continue;
+        }
+        for (int gy = 0; gy < font.height(); ++gy) {
+            for (int gx = 0; gx < full_w; ++gx) {
+                const uint8_t color = font.pixel(cp, gx, gy) ? fg : bg;
+                for (int sy = 0; sy < scale; ++sy) {
+                    for (int sx = 0; sx < scale; ++sx) {
+                        ps3::display::put_pixel(x + gx * scale + sx,
+                                                y + gy * scale + sy,
+                                                color);
+                    }
+                }
+            }
+        }
+        x += full_w * scale + tracking;
+    }
+    return y + font.height() * scale;
+}
+
+int draw_font_lab_sample_box(int x, int y, int w, const std::string& label,
+                             const std::string& sample,
+                             int scale,
+                             int tracking) {
+    const int pad = scale == 1 ? 10 : 14;
+    const int sample_h = g_font_lab_font.height() * std::max(1, scale);
+    const int box_h = sample_h + pad * 2;
+    draw_text(x, y, label);
+    y += active_font().height() + 8;
+    fill_rect({x, y, w, box_h}, 15);
+    draw_rect({x, y, w, box_h}, 4);
+    draw_font_lab_sample_line(x + pad, y + pad, sample, g_font_lab_font,
+                              scale, tracking);
+    return y + box_h + 20;
 }
 
 int draw_text_font_scaled(int x, int y, const std::string& s,
@@ -409,11 +474,9 @@ int draw_font_lab_candidate_row(int face_idx, int x, int y, int w,
                                 const char* sample) {
     if (!bind_font_lab_face(face_idx)) return y;
     const auto& face = ps3::font::kFontLabFaces[face_idx];
-    (void)w;
-    draw_text(x, y, std::string(face.display_name) + " " + face.weight);
-    y += active_font().height() + 4;
-    draw_text_font(x + 12, y, sample, g_font_lab_font);
-    return y + g_font_lab_font.height() + 14;
+    y = draw_wrapped(x, y, w, font_lab_face_status(face), 2) + 2;
+    return draw_font_lab_sample_box(x + 10, y, w - 10, "24 px native sparse preview",
+                                    sample, 1, 4);
 }
 
 std::vector<std::string> wrap_text(const std::string& text, int max_w, int max_lines = 0) {
@@ -2488,77 +2551,68 @@ void render_japanese_font(ps3::display::RefreshMode mode) {
     int y = 86;
     if (g_font_lab_page == 0) {
         y = draw_wrapped(34, y, ps3::display::width() - 68,
-                         std::string("Selected JP: ") + font_face_name() +
-                         "\nProduction runtime faces: BIZ UDGothic, IPAex Gothic\n"
-                         "Font Lab embedded test faces: " +
-                         std::to_string(ps3::font::kFontLabFaceCount), 4) + 14;
-        draw_text(34, y, "BIZ UDGothic:");
-        y += active_font().height() + 8;
-        draw_text_font(50, y, "郵便局で荷物を送ります。", g_biz_font);
-        y += 48;
-        draw_text_font(50, y, "EN: Post office / JP: 郵便局", g_biz_font);
-        y += 70;
-        draw_text(34, y, "IPAex Gothic:");
-        y += active_font().height() + 8;
-        draw_text_font(50, y, "郵便局で荷物を送ります。", g_ipa_font);
-        y += 48;
-        draw_text_font(50, y, "日本語の読みやすさ ABC123", g_ipa_font);
-        y += 66;
-        draw_text(34, y, "Candidates:");
-        y += active_font().height() + 8;
-        for (int i = 0; i < ps3::font::kFontLabFaceCount && i < 7; ++i) {
-            const auto& face = ps3::font::kFontLabFaces[i];
-            draw_text(50, y, std::string(face.display_name) + " " + face.weight);
-            y += active_font().height() + 6;
-        }
-    } else if (g_font_lab_page == 1) {
-        draw_text(34, y, "Japanese comparison");
-        y += active_font().height() + 12;
-        for (int i = 0; i < ps3::font::kFontLabFaceCount && y < ps3::display::height() - 92; ++i) {
-            y = draw_font_lab_candidate_row(i, 34, y, ps3::display::width() - 68,
-                                            "郵便局 荷物 違う 引っ越す");
-        }
-    } else if (g_font_lab_page == 2) {
-        draw_text(34, y, "Western comparison");
-        y += active_font().height() + 12;
-        for (int i = 0; i < ps3::font::kFontLabFaceCount && y < ps3::display::height() - 92; ++i) {
-            y = draw_font_lab_candidate_row(i, 34, y, ps3::display::width() - 68,
-                                            "Daniel Jimenez 12345");
-        }
-    } else if (g_font_lab_page == 3) {
-        draw_text(34, y, "Mixed EN/JP/number samples");
-        y += active_font().height() + 12;
-        const char* sample = "EN: Post office / JP: 郵便局";
-        for (int i = 0; i < ps3::font::kFontLabFaceCount && y < ps3::display::height() - 92; ++i) {
-            y = draw_font_lab_candidate_row(i, 34, y, ps3::display::width() - 68, sample);
-        }
-    } else if (g_font_lab_page == 4) {
+                         std::string("Selected runtime JP: ") + font_face_name() + "\n\n" +
+                         "Production runtime fonts: BIZ UDGothic and IPAex Gothic.\n\n"
+                         "Font Lab candidates are QA-only fixed bitmap previews. They are sparse subsets generated on Mac from outline fonts; runtime variable TTF rendering is not used on ESP32.\n\n"
+                         "Candidate pages show 24 px native bitmap samples and 48 px 2x scaled samples. Other fixed sizes need regenerated firmware assets.", 0) + 12;
         draw_wrapped(34, y, ps3::display::width() - 68,
-                     std::string("Size profiles\n") +
-                     "Reader: " + reader_size_name() + "\n" +
-                     "Interview: " + std::to_string(g_interview_font_level + 1) + "\n"
-                     "Japanese: " + std::to_string(g_japanese_font_level + 1) + "\n\n"
-                     "Font Lab candidate pages show 24 px native and 48 px scaled samples.\n"
-                     "Runtime-selectable production fonts stay BIZ/IPA until a full app-safe subset is chosen.");
+                     "Inter and Source Serif 4 are Latin-only in this sparse subset, so their pages do not show fake Japanese box rows.");
+    } else if (g_font_lab_page == 1) {
+        y = draw_wrapped(34, y, ps3::display::width() - 68,
+                         "Production runtime fonts only\n\n"
+                         "These are the faces used by Settings -> Fonts today. Font Lab candidates do not change Reader, Interview, Japanese, Badge, or Manga text.", 0) + 16;
+        draw_text(34, y, "BIZ UDGothic");
+        y += active_font().height() + 10;
+        draw_text_font(50, y, "郵便局で荷物を送ります。", g_biz_font);
+        y += g_biz_font.height() + 18;
+        draw_text_font(50, y, "EN: Post office / JP: 郵便局", g_biz_font);
+        y += g_biz_font.height() + 34;
+        draw_text(34, y, "IPAex Gothic");
+        y += active_font().height() + 10;
+        draw_text_font(50, y, "郵便局で荷物を送ります。", g_ipa_font);
+        y += g_ipa_font.height() + 18;
+        draw_text_font(50, y, "日本語の読みやすさ ABC123", g_ipa_font);
+    } else if (g_font_lab_page == 2) {
+        y = draw_wrapped(34, y, ps3::display::width() - 68,
+                         "Candidate index\nTap Next for one spacious page per face.", 0) + 8;
+        for (int i = 0; i < ps3::font::kFontLabFaceCount; ++i) {
+            const auto& face = ps3::font::kFontLabFaces[i];
+            y = draw_wrapped(46, y, ps3::display::width() - 92,
+                             std::to_string(i + 1) + ". " + font_lab_face_status(face), 2) + 4;
+        }
     } else {
-        const int face_idx = g_font_lab_page - 5;
+        const int face_idx = g_font_lab_page - 3;
         if (!bind_font_lab_face(face_idx)) {
             draw_wrapped(34, y, ps3::display::width() - 68, "Font Lab face failed to bind.");
         } else {
             const auto& face = ps3::font::kFontLabFaces[face_idx];
+            const bool jp = font_lab_face_supports_japanese(face);
             y = draw_wrapped(34, y, ps3::display::width() - 68,
-                             std::string(face.display_name) + " " + face.weight + "\n" +
-                             face.source + " / " + face.license, 3) + 12;
-            draw_text(34, y, "24 px native:");
-            y += active_font().height() + 8;
-            y = draw_text_font_scaled(50, y, "Daniel Jimenez", g_font_lab_font, 1) + 10;
-            y = draw_text_font_scaled(50, y, "郵便局 荷物 500問", g_font_lab_font, 1) + 18;
-            draw_text(34, y, "48 px scaled:");
-            y += active_font().height() + 8;
-            y = draw_text_font_scaled(50, y, "Practice 1/71", g_font_lab_font, 2) + 12;
-            y = draw_text_font_scaled(50, y, "郵便局", g_font_lab_font, 2) + 18;
-            draw_wrapped(34, y, ps3::display::width() - 68,
-                         "Source and license details are in generated-assets/fontlab/fontlab_manifest.json.", 2);
+                             font_lab_face_status(face) + "\n" +
+                             std::string(face.source) + " / " + face.license + "\n" +
+                             (jp ? "Coverage: Latin + sparse Japanese QA glyphs"
+                                 : "Coverage: Latin only; Japanese not included in this subset"),
+                             0) + 14;
+            y = draw_font_lab_sample_box(34, y, ps3::display::width() - 68,
+                                         "24 px native Latin",
+                                         "Daniel 12345", 1, 4);
+            if (jp) {
+                y = draw_font_lab_sample_box(34, y, ps3::display::width() - 68,
+                                             "24 px native Japanese",
+                                             "郵便局 荷物 500問", 1, 5);
+                y = draw_font_lab_sample_box(34, y, ps3::display::width() - 68,
+                                             "48 px scaled Japanese",
+                                             "郵便局", 2, 8);
+            } else {
+                y = draw_font_lab_sample_box(34, y, ps3::display::width() - 68,
+                                             "24 px native numbers",
+                                             "0123456789", 1, 4);
+                y = draw_font_lab_sample_box(34, y, ps3::display::width() - 68,
+                                             "48 px scaled Latin",
+                                             "Inter 48", 2, 8);
+                draw_wrapped(34, y, ps3::display::width() - 68,
+                             "Japanese: not included in this sparse subset.", 0);
+            }
         }
     }
     draw_footer("Back", "Switch", "Next");
