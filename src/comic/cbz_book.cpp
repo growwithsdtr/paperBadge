@@ -53,6 +53,31 @@ char lower_ascii(char c) {
     return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 }
 
+bool has_extension_icase(const char* name, size_t len, const char* ext) {
+    if (!name || !ext) return false;
+    const size_t ext_len = std::strlen(ext);
+    if (ext_len > len) return false;
+    const char* tail = name + len - ext_len;
+    for (size_t i = 0; i < ext_len; ++i) {
+        if (lower_ascii(tail[i]) != lower_ascii(ext[i])) return false;
+    }
+    return true;
+}
+
+bool has_webp_extension(const char* name, size_t len) {
+    return has_extension_icase(name, len, ".webp");
+}
+
+bool has_other_unsupported_image_extension(const char* name, size_t len) {
+    return has_extension_icase(name, len, ".gif") ||
+           has_extension_icase(name, len, ".bmp") ||
+           has_extension_icase(name, len, ".tif") ||
+           has_extension_icase(name, len, ".tiff") ||
+           has_extension_icase(name, len, ".avif") ||
+           has_extension_icase(name, len, ".heic") ||
+           has_extension_icase(name, len, ".heif");
+}
+
 bool segment_equals_ci(const char* start, size_t len, const char* needle) {
     const size_t needle_len = std::strlen(needle);
     if (len != needle_len) return false;
@@ -110,29 +135,14 @@ int natural_compare(const char* a, const char* b) {
     return 0;
 }
 
-// Filter by displayable page extensions at open time and surface the
-// "no usable pages" condition as an open() failure, instead of
-// silently building a page list whose first decode would just fail.
-//
-// Note: many Japanese-locale Windows zip tools store entry names in
-// CP932 and set the DOS "subdirectory" attribute on real files, so
-// we still can't trust `m_is_directory`; the '/' trailing-slash check
-// remains the directory guard.
-bool entry_looks_like_file(const mz_zip_archive_file_stat& st) {
-    if (st.m_uncomp_size == 0) return false;
-    const size_t len = std::strlen(st.m_filename);
-    if (len == 0) return false;
-    if (st.m_filename[len - 1] == '/') return false;
-    if (entry_has_hidden_or_macosx_segment(st.m_filename, len)) return false;
-    if (!has_jpeg_extension(st.m_filename, len) &&
-        !has_png_extension(st.m_filename, len)) return false;
-    return true;
-}
-
 }  // namespace
 
 CbzBook::CbzBook()
-    : zip_(nullptr), page_indices_(nullptr), page_count_(0) {}
+    : zip_(nullptr),
+      page_indices_(nullptr),
+      page_count_(0),
+      last_status_(CbzOpenStatus::None),
+      last_stats_{} {}
 
 CbzBook::~CbzBook() {
     close();
@@ -140,26 +150,39 @@ CbzBook::~CbzBook() {
 
 bool CbzBook::open(const char* path) {
     close();
+    last_status_ = CbzOpenStatus::None;
+    last_stats_ = {};
 
     mz_zip_archive* zip = static_cast<mz_zip_archive*>(
         std::calloc(1, sizeof(mz_zip_archive)));
     if (!zip) {
         ESP_LOGE(TAG, "alloc mz_zip_archive failed");
+        last_status_ = CbzOpenStatus::ArchiveAllocFailed;
         return false;
     }
 
     if (!mz_zip_reader_init_file(zip, path, 0)) {
         ESP_LOGE(TAG, "open %s failed (zip init returned 0)", path);
+        last_status_ = CbzOpenStatus::ZipInitFailed;
         std::free(zip);
         return false;
     }
 
     const int n = static_cast<int>(mz_zip_reader_get_num_files(zip));
+    last_stats_.total_entries = n;
+    if (n <= 0) {
+        ESP_LOGE(TAG, "no entries in %s", path);
+        last_status_ = CbzOpenStatus::NoDisplayablePages;
+        mz_zip_reader_end(zip);
+        std::free(zip);
+        return false;
+    }
 
     // First pass: collect candidate page indices.
     int* tmp = static_cast<int*>(std::malloc(sizeof(int) * n));
     if (!tmp) {
         ESP_LOGE(TAG, "alloc page index buffer failed");
+        last_status_ = CbzOpenStatus::PageIndexAllocFailed;
         mz_zip_reader_end(zip);
         std::free(zip);
         return false;
@@ -168,13 +191,45 @@ bool CbzBook::open(const char* path) {
     for (int i = 0; i < n; ++i) {
         mz_zip_archive_file_stat st;
         if (!mz_zip_reader_file_stat(zip, i, &st)) continue;
-        if (!entry_looks_like_file(st)) continue;
-        tmp[count++] = i;
+        const size_t len = std::strlen(st.m_filename);
+        // Japanese-locale Windows zip tools can set directory attributes on
+        // real files, so keep using payload size/trailing slash as the guard.
+        if (st.m_uncomp_size == 0 || len == 0 || st.m_filename[len - 1] == '/') {
+            ++last_stats_.directory_entries;
+            continue;
+        }
+        if (entry_has_hidden_or_macosx_segment(st.m_filename, len)) {
+            ++last_stats_.hidden_entries;
+            continue;
+        }
+        if (has_jpeg_extension(st.m_filename, len)) {
+            ++last_stats_.jpeg_pages;
+            tmp[count++] = i;
+            continue;
+        }
+        if (has_png_extension(st.m_filename, len)) {
+            ++last_stats_.png_pages;
+            tmp[count++] = i;
+            continue;
+        }
+        if (has_webp_extension(st.m_filename, len)) {
+            ++last_stats_.webp_entries;
+            continue;
+        }
+        if (has_other_unsupported_image_extension(st.m_filename, len)) {
+            ++last_stats_.unsupported_image_entries;
+        }
     }
+    last_stats_.displayable_pages = count;
 
     if (count == 0) {
-        ESP_LOGE(TAG, "no displayable (jpg/jpeg/png) entries in %s (had %d files)",
-                 path, n);
+        ESP_LOGE(TAG,
+                 "no displayable (jpg/jpeg/png) entries in %s "
+                 "(entries=%d webp=%d unsupported_images=%d hidden=%d dirs=%d)",
+                 path, n, last_stats_.webp_entries,
+                 last_stats_.unsupported_image_entries,
+                 last_stats_.hidden_entries, last_stats_.directory_entries);
+        last_status_ = CbzOpenStatus::NoDisplayablePages;
         std::free(tmp);
         mz_zip_reader_end(zip);
         std::free(zip);
@@ -205,6 +260,7 @@ bool CbzBook::open(const char* path) {
     zip_ = zip;
     page_indices_ = tmp;
     page_count_ = count;
+    last_status_ = CbzOpenStatus::Ok;
 
     ESP_LOGI(TAG, "opened %s: %d pages (of %d entries)", path, count, n);
     return true;

@@ -117,6 +117,12 @@ enum class MangaFitMode : uint8_t {
     FitHeight,
 };
 
+enum class MangaOpenFailure : uint8_t {
+    None,
+    Archive,
+    PageLoader,
+};
+
 struct BookFile {
     std::string path;
     std::string name;
@@ -199,6 +205,7 @@ char g_manga_path[ps3::library::MAX_PATH_LEN] = {};
 int g_manga_page = 0;
 std::string g_manga_error_msg;
 Screen g_manga_error_return = Screen::MangaLibrary;
+MangaOpenFailure g_manga_open_failure = MangaOpenFailure::None;
 MangaFitMode g_manga_fit_mode = MangaFitMode::FitPage;
 bool g_manga_landscape = false;
 int g_manga_slice = 0;
@@ -2250,14 +2257,19 @@ void render_manga_library(ps3::display::RefreshMode mode) {
 }
 
 bool open_manga_book(const char* path) {
+    g_manga_open_failure = MangaOpenFailure::None;
     if (g_manga_open) {
         ps3::comic::page_loader::stop();
         g_manga_book.close();
         g_manga_open = false;
     }
-    if (!g_manga_book.open(path)) return false;
+    if (!g_manga_book.open(path)) {
+        g_manga_open_failure = MangaOpenFailure::Archive;
+        return false;
+    }
     if (!ps3::comic::page_loader::start(&g_manga_book)) {
         g_manga_book.close();
+        g_manga_open_failure = MangaOpenFailure::PageLoader;
         return false;
     }
     std::strncpy(g_manga_path, path, sizeof(g_manga_path) - 1);
@@ -2277,7 +2289,87 @@ bool open_manga_book(const char* path) {
     g_manga_hint_pages_remaining = 4;
     ps3::comic::page_loader::request(g_manga_page);
     g_manga_open = true;
+    g_manga_open_failure = MangaOpenFailure::None;
     return true;
+}
+
+std::string manga_open_failure_message(const std::string& file_name,
+                                       long long file_size,
+                                       bool zip64_markers) {
+    const auto status = g_manga_book.last_open_status();
+    const auto& stats = g_manga_book.last_open_stats();
+
+    std::string diag;
+    if (g_manga_open_failure == MangaOpenFailure::PageLoader) {
+        diag =
+            "Archive opened, but the manga page cache could not start.\n\n"
+            "This usually means firmware could not allocate the background page buffers.";
+    } else if (status == ps3::comic::CbzOpenStatus::ZipInitFailed) {
+        diag =
+            "Archive parser could not read this ZIP/CBZ file.\n\n"
+            "Likely causes: not a standard ZIP file, corrupted/truncated archive, encrypted archive, or unsupported ZIP metadata.";
+    } else if (status == ps3::comic::CbzOpenStatus::ArchiveAllocFailed) {
+        diag =
+            "Firmware could not allocate the ZIP reader.\n\n"
+            "Try rebooting the device or using a smaller archive.";
+    } else if (status == ps3::comic::CbzOpenStatus::PageIndexAllocFailed) {
+        diag =
+            "Archive opened, but firmware could not allocate its page index.\n\n"
+            "Try splitting this CBZ into smaller volumes.";
+    } else if (status == ps3::comic::CbzOpenStatus::NoDisplayablePages) {
+        if (stats.webp_entries > 0 &&
+            stats.jpeg_pages == 0 && stats.png_pages == 0) {
+            diag =
+                "This archive has no JPEG or PNG manga pages.\n\n"
+                "WebP entries were found, but firmware currently displays JPEG and PNG only.";
+        } else if (stats.unsupported_image_entries > 0) {
+            diag =
+                "This archive has image files, but none are JPEG or PNG.\n\n"
+                "Re-export the pages as JPEG or PNG and rebuild the CBZ.";
+        } else if (stats.hidden_entries > 0 &&
+                   stats.hidden_entries + stats.directory_entries >= stats.total_entries) {
+            diag =
+                "This archive only contains hidden metadata or folders.\n\n"
+                "Rebuild the CBZ with page image files at normal paths.";
+        } else {
+            diag =
+                "This archive contains no displayable manga pages.\n\n"
+                "Firmware looks for .jpg, .jpeg, and .png entries inside CBZ/ZIP archives.";
+        }
+    } else {
+        diag =
+            "Could not open this archive.\n\n"
+            "Check the archive format and serial log tag cbz for details.";
+    }
+
+    diag += "\n\nDiagnostics:\n";
+    diag += "  File: " + file_name + "\n";
+    if (file_size > 0) {
+        char sz[64];
+        std::snprintf(sz, sizeof(sz), "  Size: %lld KB\n", file_size / 1024LL);
+        diag += sz;
+    }
+    diag += std::string("  ZIP64 markers: ") + (zip64_markers ? "yes\n" : "not found\n");
+    if (stats.total_entries > 0 ||
+        status == ps3::comic::CbzOpenStatus::NoDisplayablePages ||
+        status == ps3::comic::CbzOpenStatus::Ok) {
+        char counts[256];
+        std::snprintf(counts, sizeof(counts),
+                      "  ZIP entries: %d\n"
+                      "  Displayable: %d (JPEG %d, PNG %d)\n"
+                      "  WebP entries: %d\n"
+                      "  Other image entries: %d\n"
+                      "  Hidden/meta entries: %d\n",
+                      stats.total_entries,
+                      stats.displayable_pages,
+                      stats.jpeg_pages,
+                      stats.png_pages,
+                      stats.webp_entries,
+                      stats.unsupported_image_entries,
+                      stats.hidden_entries);
+        diag += counts;
+    }
+    return diag;
 }
 
 void update_manga_progress() {
@@ -3506,25 +3598,7 @@ void handle_manga_library(int x, int y) {
 
         // Try to open
         if (!open_manga_book(path)) {
-            // Best-effort diagnosis
-            std::string diag =
-                "Could not open this archive.\n\n"
-                "Diagnostics:\n"
-                "  File: " + std::string(e.name) + "\n";
-            if (file_size > 0) {
-                char sz[64];
-                std::snprintf(sz, sizeof(sz), "  Size: %lld KB\n", file_size / 1024LL);
-                diag += sz;
-            }
-            diag += std::string("  ZIP64 markers: ") + (zip64_markers ? "yes\n" : "not found\n");
-            diag +=
-                "\nPossible causes:\n"
-                "  - Archive contains only WebP or unsupported images\n"
-                "  - Corrupted or truncated archive\n"
-                "  - Unsupported compression method (requires Deflate)\n"
-                "  - Insufficient PSRAM for page index\n"
-                "\nCheck serial log (cbz: tag) for details.";
-            g_manga_error_msg = diag;
+            g_manga_error_msg = manga_open_failure_message(e.name, file_size, zip64_markers);
             g_manga_error_return = Screen::MangaLibrary;
             ps3::touch::drain();
             render_manga_error();

@@ -10,6 +10,26 @@ enum class PageImageFormat : uint8_t {
     Png,
 };
 
+enum class CbzOpenStatus : uint8_t {
+    None,
+    Ok,
+    ArchiveAllocFailed,
+    ZipInitFailed,
+    PageIndexAllocFailed,
+    NoDisplayablePages,
+};
+
+struct CbzOpenStats {
+    int total_entries = 0;
+    int displayable_pages = 0;
+    int jpeg_pages = 0;
+    int png_pages = 0;
+    int webp_entries = 0;
+    int unsupported_image_entries = 0;
+    int hidden_entries = 0;
+    int directory_entries = 0;
+};
+
 // True if `name` ends in `.jpg` or `.jpeg` (case-insensitive).
 // Used both when filtering CBZ entries on open() and when picking
 // the cover candidate for thumbnail generation — keep the two
@@ -40,6 +60,8 @@ class CbzBook {
     bool is_open() const { return zip_ != nullptr; }
 
     int page_count() const { return page_count_; }
+    CbzOpenStatus last_open_status() const { return last_status_; }
+    const CbzOpenStats& last_open_stats() const { return last_stats_; }
 
     // Decompress page `idx` (0-based) into a freshly heap-allocated
     // buffer. Caller frees with free(). Optionally fills `name_buf`
@@ -54,6 +76,8 @@ class CbzBook {
     void* zip_;            // mz_zip_archive* (PIMPL via void*)
     int*  page_indices_;   // entry indices, sorted by entry name
     int   page_count_;
+    CbzOpenStatus last_status_;
+    CbzOpenStats last_stats_;
 };
 
 }  // namespace ps3::comic
