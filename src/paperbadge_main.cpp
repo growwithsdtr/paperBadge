@@ -1388,21 +1388,6 @@ int iv_next_filtered_card(int from, int step) {
     return -1;
 }
 
-int iv_answer_page_count(const embedded_papercoach::Card& c) {
-    const int body_w = ps3::display::width() - 76;
-    const int spoken_lines = static_cast<int>(wrap_text(c.spoken ? c.spoken : "", body_w).size());
-    int pages = std::max(1, (spoken_lines + 11) / 12);
-    if ((c.anchor && c.anchor[0]) || (c.watch && c.watch[0])) ++pages;
-    if ((c.theme && c.theme[0]) || (c.confidence && c.confidence[0])) ++pages;
-    return pages;
-}
-
-int iv_spoken_page_count(const embedded_papercoach::Card& c) {
-    const int body_w = ps3::display::width() - 76;
-    const int spoken_lines = static_cast<int>(wrap_text(c.spoken ? c.spoken : "", body_w).size());
-    return std::max(1, (spoken_lines + 11) / 12);
-}
-
 int draw_labeled_block(int x, int y, int max_w, const std::string& label,
                        const char* body, int max_lines = 0) {
     if (!body || !body[0]) return y;
@@ -1410,6 +1395,60 @@ int draw_labeled_block(int x, int y, int max_w, const std::string& label,
     y += active_font().height() + 6;
     y = draw_wrapped(x + 16, y, max_w - 16, body, max_lines) + 12;
     return y;
+}
+
+struct IvAnswerLine {
+    std::string text;
+    bool heading = false;
+    bool indent = false;
+};
+
+int iv_practice_answer_start_y(const embedded_papercoach::Card& c) {
+    int y = 80;
+    y += static_cast<int>(wrap_text(std::string(c.section) + " " + c.number,
+                                    ps3::display::width() - 60, 1).size()) *
+         (active_font().height() + 8);
+    y += 4;
+    y += static_cast<int>(wrap_text(c.title ? c.title : "",
+                                    ps3::display::width() - 60, 3).size()) *
+         (active_font().height() + 8);
+    y += 10 + 12;
+    return y;
+}
+
+std::vector<IvAnswerLine> iv_answer_lines(const embedded_papercoach::Card& c) {
+    std::vector<IvAnswerLine> lines;
+    const int body_w = ps3::display::width() - 76;
+    auto add_section = [&](const char* heading, const char* body) {
+        if (!body || !body[0]) return;
+        lines.push_back({heading, true, false});
+        const auto wrapped = wrap_text(body, body_w);
+        for (const auto& line : wrapped) {
+            lines.push_back({line, false, true});
+        }
+        lines.push_back({"", false, false});
+    };
+    add_section("Spoken answer", c.spoken);
+    add_section("Anchor", c.anchor);
+    add_section("Watch-out", c.watch);
+    add_section("Theme", c.theme);
+    add_section("Confidence / defense", c.confidence);
+    add_section("Section", c.section);
+    if (!lines.empty() && lines.back().text.empty()) lines.pop_back();
+    return lines;
+}
+
+int iv_answer_lines_per_page(const embedded_papercoach::Card& c) {
+    const int top = iv_practice_answer_start_y(c);
+    const int bottom = ps3::display::height() - kFooterH - 12;
+    const int line_h = active_font().height() + 8;
+    return std::max(1, (bottom - top) / std::max(1, line_h));
+}
+
+int iv_answer_page_count(const embedded_papercoach::Card& c) {
+    const auto lines = iv_answer_lines(c);
+    const int per_page = iv_answer_lines_per_page(c);
+    return std::max(1, static_cast<int>((lines.size() + per_page - 1) / per_page));
 }
 
 std::vector<const char*> iv_glossary_categories() {
@@ -1846,11 +1885,18 @@ void render_interview_practice(ps3::display::RefreshMode mode) {
     restore_app_orientation();
     g_screen = Screen::InterviewPractice;
     const auto& c = embedded_papercoach::kCards[g_iv_card_idx];
+    const int page_count = g_iv_card_spoken ? iv_answer_page_count(c) : 1;
+    if (g_iv_card_spoken) {
+        g_iv_answer_page = std::max(0, std::min(g_iv_answer_page, page_count - 1));
+    }
     ps3::display::clear();
     const std::string idx_str = std::to_string(g_iv_card_idx + 1) + "/" +
                                  std::to_string(embedded_papercoach::kCardCount);
     draw_header(std::string("Practice ") + idx_str,
-                c.mustMaster ? "MUST" : "");
+                g_iv_card_spoken
+                    ? (std::string("A ") + std::to_string(g_iv_answer_page + 1) + "/" +
+                       std::to_string(page_count))
+                    : (c.mustMaster ? "MUST" : ""));
     int y = 80;
     // Section + number + title
     y = draw_wrapped(30, y, ps3::display::width() - 60,
@@ -1859,28 +1905,16 @@ void render_interview_practice(ps3::display::RefreshMode mode) {
     draw_hline(20, y, ps3::display::width() - 40);
     y += 12;
     if (g_iv_card_spoken) {
-        const int page_count = iv_answer_page_count(c);
-        g_iv_answer_page = std::max(0, std::min(g_iv_answer_page, page_count - 1));
-        const int spoken_pages = iv_spoken_page_count(c);
-        if (g_iv_answer_page < spoken_pages) {
-            draw_text(30, y, "Spoken answer");
-            y += active_font().height() + 6;
-            const auto lines = wrap_text(c.spoken ? c.spoken : "", ps3::display::width() - 76);
-            const int first = g_iv_answer_page * 12;
-            for (int i = 0; i < 12 && first + i < static_cast<int>(lines.size()); ++i) {
-                draw_text(46, y, lines[first + i]);
-                y += active_font().height() + 8;
+        const auto lines = iv_answer_lines(c);
+        const int per_page = iv_answer_lines_per_page(c);
+        const int first = g_iv_answer_page * per_page;
+        const int last = std::min(static_cast<int>(lines.size()), first + per_page);
+        for (int i = first; i < last; ++i) {
+            const auto& line = lines[i];
+            if (!line.text.empty()) {
+                draw_text(line.indent ? 46 : 30, y, line.text);
             }
-        } else if (g_iv_answer_page == spoken_pages) {
-            y = draw_labeled_block(30, y, ps3::display::width() - 60,
-                                   "Anchor", c.anchor, 5);
-            draw_labeled_block(30, y, ps3::display::width() - 60,
-                               "Watch-out", c.watch, 6);
-        } else {
-            y = draw_labeled_block(30, y, ps3::display::width() - 60,
-                                   "Theme", c.theme, 3);
-            draw_labeled_block(30, y, ps3::display::width() - 60,
-                               "Confidence", c.confidence, 5);
+            y += active_font().height() + 8;
         }
     } else {
         // Show prompt to reveal
@@ -1891,7 +1925,6 @@ void render_interview_practice(ps3::display::RefreshMode mode) {
     }
     const int prev = iv_next_filtered_card(g_iv_card_idx, -1);
     const int next = iv_next_filtered_card(g_iv_card_idx, +1);
-    const int page_count = g_iv_card_spoken ? iv_answer_page_count(c) : 1;
     draw_footer(prev >= 0 ? "Prev" : "List",
                 g_iv_card_spoken
                     ? (g_iv_answer_page + 1 < page_count ? "More" : "Question")
