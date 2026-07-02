@@ -557,6 +557,74 @@ bool display_png_fit(const uint8_t* data, size_t size,
     return ok;
 }
 
+bool display_png_view(const uint8_t* data, size_t size,
+                      ImageFit fit,
+                      int slice_index,
+                      int* out_slice_count,
+                      uint8_t* dest_fb,
+                      ps3::settings::ContrastContext ctx) {
+    int src_w = 0, src_h = 0;
+    if (!png_size(data, size, &src_w, &src_h)) return false;
+    if (src_w <= 0 || src_h <= 0) return false;
+    if (src_w > PNG_ROW_BUF_PIXELS) {
+        ESP_LOGE(TAG, "PNG view source width %d exceeds row buffer %d",
+                 src_w, PNG_ROW_BUF_PIXELS);
+        return false;
+    }
+
+    const int screen_w = ps3::display::width();
+    const int screen_h = ps3::display::height();
+    int dst_w = screen_w;
+    int dst_h = screen_h;
+    if (fit == ImageFit::Width) {
+        dst_w = screen_w;
+        dst_h = std::max(1, (src_h * screen_w) / std::max(1, src_w));
+    } else if (fit == ImageFit::Height) {
+        dst_h = screen_h;
+        dst_w = std::max(1, (src_w * screen_h) / std::max(1, src_h));
+    } else {
+        if (src_w <= screen_w && src_h <= screen_h) {
+            dst_w = src_w;
+            dst_h = src_h;
+        } else if (static_cast<int64_t>(src_w) * screen_h >
+                   static_cast<int64_t>(src_h) * screen_w) {
+            dst_w = screen_w;
+            dst_h = std::max(1, (src_h * screen_w) / std::max(1, src_w));
+        } else {
+            dst_h = screen_h;
+            dst_w = std::max(1, (src_w * screen_h) / std::max(1, src_h));
+        }
+    }
+
+    int slice_count = dst_h > screen_h ? (dst_h + screen_h - 1) / screen_h : 1;
+    if (slice_count < 1) slice_count = 1;
+    if (out_slice_count) *out_slice_count = slice_count;
+    if (slice_index < 0) slice_index = 0;
+    if (slice_index >= slice_count) slice_index = slice_count - 1;
+    int slice_y = 0;
+    if (slice_count > 1) {
+        slice_y = slice_index * screen_h;
+        const int max_slice_y = std::max(0, dst_h - screen_h);
+        if (slice_y > max_slice_y) slice_y = max_slice_y;
+    }
+
+    s_png_scaled = true;
+    s_png_src_w = src_w;
+    s_png_src_h = src_h;
+    s_png_dst_w = dst_w;
+    s_png_dst_h = dst_h;
+    const int dst_x = (screen_w - dst_w) / 2;
+    const int dst_y = (dst_h <= screen_h) ? (screen_h - dst_h) / 2 : -slice_y;
+    const bool ok = display_png_impl(data, size, dst_x, dst_y, dest_fb, ctx);
+    s_png_scaled = false;
+    s_png_src_w = s_png_src_h = s_png_dst_w = s_png_dst_h = 0;
+    if (ok) {
+        ESP_LOGI(TAG, "PNG view %dx%d->%dx%d slice=%d/%d",
+                 src_w, src_h, dst_w, dst_h, slice_index + 1, slice_count);
+    }
+    return ok;
+}
+
 // --- BMP path ---------------------------------------------------------
 //
 // Bog-standard Windows BMP loader, only what we need for a loading

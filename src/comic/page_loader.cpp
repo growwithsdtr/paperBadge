@@ -426,10 +426,9 @@ void decode_task(void*) {
             int slice_count = 1;
             bool ok = false;
             if (fmt == PageImageFormat::Png) {
-                ok = display_png_fit(jpg, jpg_size, ps3::display::width(), ps3::display::height(),
-                                     s_slots[slot].fb,
-                                     ps3::settings::ContrastContext::Reading);
-                slice_count = 1;
+                ok = display_png_view(jpg, jpg_size, s_fit, s_slice_index,
+                                      &slice_count, s_slots[slot].fb,
+                                      ps3::settings::ContrastContext::Reading);
             } else {
                 ok = display_jpeg_view(jpg, jpg_size, s_fit, s_slice_index,
                                        &slice_count, s_slots[slot].fb,

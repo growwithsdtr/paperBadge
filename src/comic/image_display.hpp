@@ -94,4 +94,12 @@ bool display_png_fit(const uint8_t* data, size_t size,
                      ps3::settings::ContrastContext ctx
                          = ps3::settings::ContrastContext::Off);
 
+bool display_png_view(const uint8_t* data, size_t size,
+                      ImageFit fit,
+                      int slice_index,
+                      int* out_slice_count,
+                      uint8_t* dest_fb = nullptr,
+                      ps3::settings::ContrastContext ctx
+                          = ps3::settings::ContrastContext::Off);
+
 }  // namespace ps3::comic
