@@ -1221,6 +1221,10 @@ void draw_manga_chrome() {
     }
 }
 
+int manga_top_strip_h() {
+    return std::max(44, std::min(104, ps3::display::height() * 11 / 100));
+}
+
 void cycle_refresh_profile() {
     auto& s = ps3::settings::state();
     s.refresh_profile = (s.refresh_profile + 1) % 3;
@@ -3423,34 +3427,33 @@ void handle_manga_reading(int x, int y) {
         render_manga_page(ps3::display::RefreshMode::GL16);
         return;
     }
-    if (y < 120) {
+    const int top_strip_h = manga_top_strip_h();
+    if (y < top_strip_h) {
         close_manga_book_if_open();
         render_manga_library(ps3::display::RefreshMode::GC16Full);
         ps3::touch::drain();  // drop taps buffered during the GC16Full library render
         return;
     }
-    if (y > ps3::display::height() - 86) {
-        if (x < ps3::display::width() / 2) {
-            cycle_manga_fit_mode();
-            ESP_LOGI(TAG, "manga fit mode: %s", manga_fit_name());
-        } else {
-            toggle_manga_orientation();
-            ESP_LOGI(TAG, "manga orientation mode: %s",
-                     g_manga_landscape ? "landscape slices" : "portrait");
-        }
-        render_manga_page(ps3::display::RefreshMode::GC16Full);
-        ps3::touch::drain();
-        return;
-    }
     const bool right_binding = ps3::settings::state().right_binding;
-    const int third = ps3::display::width() / 3;
-    if (x >= third && x < third * 2) {
+    const int w = ps3::display::width();
+    const int h = ps3::display::height();
+    const int body_h = std::max(1, h - top_strip_h);
+    const Rect center_zone{
+        g_manga_landscape ? (w * 3 / 8) : (w / 3),
+        top_strip_h,
+        g_manga_landscape ? (w / 4) : (w / 3),
+        body_h,
+    };
+    if (center_zone.contains(x, y)) {
         g_manga_overlay_visible = true;
         g_manga_hint_pages_remaining = 0;
         render_manga_page(ps3::display::RefreshMode::GL16);
         return;
     }
-    const bool advance = right_binding ? x < third : x >= third * 2;
+    const bool on_forward_side = g_manga_landscape
+        ? x >= w / 2
+        : x >= (w * 2 / 3);
+    const bool advance = right_binding ? !on_forward_side : on_forward_side;
     if (advance) {
         if (g_manga_slice + 1 < g_manga_slice_count) {
             ++g_manga_slice;
