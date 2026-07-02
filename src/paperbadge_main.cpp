@@ -722,6 +722,15 @@ struct EpubReadResult {
     bool truncated = false;
 };
 
+size_t utf8_safe_prefix_len(const std::string& s, size_t limit) {
+    if (limit >= s.size()) return s.size();
+    while (limit > 0 &&
+           (static_cast<unsigned char>(s[limit]) & 0xC0) == 0x80) {
+        --limit;
+    }
+    return limit;
+}
+
 std::string xml_attr_unescape(const std::string& value) {
     return strip_html(value.c_str(), value.size());
 }
@@ -952,31 +961,75 @@ EpubReadResult read_epub_text(const char* path) {
         return result;
     }
 
-    for (const auto& entry : spine_entries) {
-        if (result.text.size() >= kMaxExtractedTextBytes) break;
+    int skipped_large_entries = 0;
+    int skipped_other_entries = 0;
+    int extracted_entries = 0;
+    std::string first_large_entry;
+    for (size_t entry_idx = 0; entry_idx < spine_entries.size(); ++entry_idx) {
+        const auto& entry = spine_entries[entry_idx];
+        if (result.text.size() >= kMaxExtractedTextBytes) {
+            result.truncated = true;
+            break;
+        }
         std::string html;
         if (!zip_entry_text(&zip, entry, kMaxHtmlEntryBytes, &html, &err)) {
             ESP_LOGW(TAG, "EPUB skip entry %s: %s", entry.c_str(), err.c_str());
+            if (err.find("too large") != std::string::npos) {
+                ++skipped_large_entries;
+                if (first_large_entry.empty()) first_large_entry = entry;
+            } else {
+                ++skipped_other_entries;
+            }
             continue;
         }
         std::string stripped = strip_html(html.c_str(), html.size());
         if (stripped.empty()) continue;
         const size_t room = kMaxExtractedTextBytes - result.text.size();
         if (stripped.size() > room) {
-            stripped.resize(room);
+            stripped.resize(utf8_safe_prefix_len(stripped, room));
             result.truncated = true;
         }
         result.text += stripped;
         result.text += "\n\n";
+        ++extracted_entries;
     }
 
     mz_zip_reader_end(&zip);
     if (result.text.empty()) {
-        result.error = "EPUB parsed, but no readable text was extracted.";
+        if (skipped_large_entries > 0) {
+            result.error =
+                "EPUB parsed, but no readable text was extracted because spine XHTML entries exceeded the per-entry firmware cap.\n\n"
+                "First skipped entry: " + first_large_entry + "\n"
+                "Per-entry cap: " + std::to_string(kMaxHtmlEntryBytes / 1024) + " KB\n\n"
+                "Convert or split the EPUB into smaller XHTML chapters.";
+        } else if (skipped_other_entries > 0) {
+            result.error =
+                "EPUB parsed, but no readable text was extracted because spine entries could not be read.\n\n"
+                "This can indicate malformed EPUB paths, unsupported compression, or corrupted chapter files.";
+        } else {
+            result.error = "EPUB parsed, but no readable text was extracted.";
+        }
         return result;
     }
+    if (skipped_large_entries > 0) {
+        result.text += "\n[EPUB notice: ";
+        result.text += std::to_string(skipped_large_entries);
+        result.text += " oversized spine entr";
+        result.text += skipped_large_entries == 1 ? "y was" : "ies were";
+        result.text += " skipped by the ";
+        result.text += std::to_string(kMaxHtmlEntryBytes / 1024);
+        result.text += " KB per-entry cap. First: ";
+        result.text += first_large_entry;
+        result.text += "]\n";
+    }
     if (result.truncated) {
-        result.text += "\n[Partial EPUB: firmware reached the safe text extraction cap.]\n";
+        result.text += "\n[Partial EPUB: firmware reached the ";
+        result.text += std::to_string(kMaxExtractedTextBytes / 1024);
+        result.text += " KB total extracted-text cap after ";
+        result.text += std::to_string(extracted_entries);
+        result.text += " readable entr";
+        result.text += extracted_entries == 1 ? "y" : "ies";
+        result.text += ". Later chapters were not loaded.]\n";
     }
     result.ok = true;
     return result;
