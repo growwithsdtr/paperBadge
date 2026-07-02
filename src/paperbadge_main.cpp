@@ -1062,6 +1062,26 @@ int reader_line_gap() {
     return 8;
 }
 
+int interview_line_gap() {
+    switch (g_interview_font_level) {
+        case 0: return 4;
+        case 1: return 8;
+        case 2: return 14;
+        case 3: return 20;
+    }
+    return 8;
+}
+
+int interview_choice_height() {
+    switch (g_interview_font_level) {
+        case 0: return 68;
+        case 1: return 78;
+        case 2: return 90;
+        case 3: return 104;
+    }
+    return 78;
+}
+
 int japanese_line_gap() {
     switch (g_japanese_font_level) {
         case 0: return 4;
@@ -1407,11 +1427,11 @@ int iv_practice_answer_start_y(const embedded_papercoach::Card& c) {
     int y = 80;
     y += static_cast<int>(wrap_text(std::string(c.section) + " " + c.number,
                                     ps3::display::width() - 60, 1).size()) *
-         (active_font().height() + 8);
+         (active_font().height() + interview_line_gap());
     y += 4;
     y += static_cast<int>(wrap_text(c.title ? c.title : "",
                                     ps3::display::width() - 60, 3).size()) *
-         (active_font().height() + 8);
+         (active_font().height() + interview_line_gap());
     y += 10 + 12;
     return y;
 }
@@ -1441,7 +1461,7 @@ std::vector<IvAnswerLine> iv_answer_lines(const embedded_papercoach::Card& c) {
 int iv_answer_lines_per_page(const embedded_papercoach::Card& c) {
     const int top = iv_practice_answer_start_y(c);
     const int bottom = ps3::display::height() - kFooterH - 12;
-    const int line_h = active_font().height() + 8;
+    const int line_h = active_font().height() + interview_line_gap();
     return std::max(1, (bottom - top) / std::max(1, line_h));
 }
 
@@ -1899,9 +1919,11 @@ void render_interview_practice(ps3::display::RefreshMode mode) {
                     : (c.mustMaster ? "MUST" : ""));
     int y = 80;
     // Section + number + title
-    y = draw_wrapped(30, y, ps3::display::width() - 60,
-                     std::string(c.section) + " " + c.number, 1) + 4;
-    y = draw_wrapped(30, y, ps3::display::width() - 60, c.title, 3) + 10;
+    y = draw_wrapped_gap(30, y, ps3::display::width() - 60,
+                         std::string(c.section) + " " + c.number, 1,
+                         interview_line_gap()) + 4;
+    y = draw_wrapped_gap(30, y, ps3::display::width() - 60, c.title, 3,
+                         interview_line_gap()) + 10;
     draw_hline(20, y, ps3::display::width() - 40);
     y += 12;
     if (g_iv_card_spoken) {
@@ -1914,14 +1936,15 @@ void render_interview_practice(ps3::display::RefreshMode mode) {
             if (!line.text.empty()) {
                 draw_text(line.indent ? 46 : 30, y, line.text);
             }
-            y += active_font().height() + 8;
+            y += active_font().height() + interview_line_gap();
         }
     } else {
         // Show prompt to reveal
-        draw_wrapped(30, y, ps3::display::width() - 60,
-                     "Tap REVEAL to see the answer.\n\n"
-                     "Theme: " + std::string(c.theme) + "\n"
-                     "Confidence: " + c.confidence, 6);
+        draw_wrapped_gap(30, y, ps3::display::width() - 60,
+                         "Tap REVEAL to see the answer.\n\n"
+                         "Theme: " + std::string(c.theme) + "\n"
+                         "Confidence: " + c.confidence, 6,
+                         interview_line_gap());
     }
     const int prev = iv_next_filtered_card(g_iv_card_idx, -1);
     const int next = iv_next_filtered_card(g_iv_card_idx, +1);
@@ -1967,15 +1990,17 @@ void render_interview_drill_q(ps3::display::RefreshMode mode) {
                     ? (std::to_string(g_iv_exam_current + 1) + "/" + std::to_string(g_iv_exam_count))
                     : std::to_string(mcq_pos));
     int y = 80;
-    y = draw_wrapped(30, y, ps3::display::width() - 60, d.prompt, 5) + 10;
+    y = draw_wrapped_gap(30, y, ps3::display::width() - 60, d.prompt, 5,
+                         interview_line_gap()) + 10;
+    const int choice_h = interview_choice_height();
     for (int i = 0; i < d.optionCount && i < 4; ++i) {
-        g_iv_choices[i] = {30, y, ps3::display::width() - 60, 78};
+        g_iv_choices[i] = {30, y, ps3::display::width() - 60, choice_h};
         std::string label;
         label.push_back(static_cast<char>('A' + i));
         label += ". ";
         label += d.options[i];
         draw_button(g_iv_choices[i], label, g_iv_drill_answer == i);
-        y += 90;
+        y += choice_h + 12;
     }
     draw_footer("Menu", nullptr, g_iv_drill_answer >= 0 ? "Submit" : nullptr);
     ps3::display::flush(mode);
@@ -2000,10 +2025,12 @@ void render_interview_drill_fb(ps3::display::RefreshMode mode) {
         ans += ". ";
         ans += d.options[d.correctIndex];
     }
-    y = draw_wrapped(30, y, ps3::display::width() - 60, ans, 3) + 10;
+    y = draw_wrapped_gap(30, y, ps3::display::width() - 60, ans, 3,
+                         interview_line_gap()) + 10;
     draw_hline(20, y, ps3::display::width() - 40);
     y += 12;
-    draw_wrapped(30, y, ps3::display::width() - 60, d.explanation, 10);
+    draw_wrapped_gap(30, y, ps3::display::width() - 60, d.explanation, 10,
+                     interview_line_gap());
     const char* right_label = nullptr;
     if (g_iv_in_exam) {
         right_label = (g_iv_exam_current + 1 < g_iv_exam_count) ? "Next" : "Results";
@@ -2076,13 +2103,16 @@ void render_interview_glossary(ps3::display::RefreshMode mode) {
                                  std::to_string(embedded_papercoach::kGlossaryCount);
     draw_header("Glossary " + idx_str, g.category ? g.category : "");
     int y = 80;
-    y = draw_wrapped(30, y, ps3::display::width() - 60, g.term, 2) + 6;
+    y = draw_wrapped_gap(30, y, ps3::display::width() - 60, g.term, 2,
+                         interview_line_gap()) + 6;
     draw_hline(20, y, ps3::display::width() - 40);
     y += 10;
-    y = draw_wrapped(30, y, ps3::display::width() - 60, g.definition, 8) + 10;
+    y = draw_wrapped_gap(30, y, ps3::display::width() - 60, g.definition, 8,
+                         interview_line_gap()) + 10;
     if (g.example && g.example[0]) {
-        draw_wrapped(30, y, ps3::display::width() - 60,
-                     std::string("Example: ") + g.example, 5);
+        draw_wrapped_gap(30, y, ps3::display::width() - 60,
+                         std::string("Example: ") + g.example, 5,
+                         interview_line_gap());
     }
     draw_footer(g_iv_gloss_idx > 0 ? "Prev" : "Menu",
                 "Menu",
